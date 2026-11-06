@@ -12,12 +12,15 @@ workspace = true
 
 [dependencies]
 materialcraft-engine = { workspace = true }
+materialcraft-automation = { workspace = true }
 materialcraft-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "persistence"] }
 egui = { workspace = true }
 image = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# A start that never opens a window says why in an error dialog (src/start_failure.rs).
+rfd = { workspace = true }
 
 [build-dependencies]
 winresource = "0.1"

@@ -89,6 +89,12 @@ session.
 
 ## Alpha in the 3D view
 
+The 3D view reads OpenGL normal maps by default, matching the Normal node's default format.
+For a DirectX normal map, enable **Display ▸ Flip normal map Y (DirectX)**, or run
+`view.3d {"normalYFlip": true}`. Choose the corresponding format in the Normal node's properties.
+The setting affects both the interactive view and headless renders, appears as `view3d.normalYFlip`
+in `session.inspect`, and returns to OpenGL when the scene is reset.
+
 <p align="center">
   <img src="images/materialcraft-alpha-channel.png" alt="The same sphere in the alpha channel view: the opaque grid lines are white and the clear gaps black" width="100%">
   <br><sub>The alpha channel view: white is opaque, black is clear</sub>
@@ -106,7 +112,7 @@ Where the alpha is below one, the surface lets light through: each camera ray co
 surfaces it meets front to back (`color × alpha`, the rest passes on) through up to eight layers,
 then shows what lies behind: the backdrop, or the environment when **Display ▸ Environment
 background** is on. Back faces seen through a clear front are shaded facing the viewer, so a
-cut-out sphere shows its inside. Parallax from the height output applies to every layer.
+cut-out sphere shows its inside. Every layer is the mesh as the height output displaced it.
 
 **Display ▸ Transparency (alpha)** turns this off, so the alpha is ignored and the mesh is opaque.
 It is on by default.

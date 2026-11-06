@@ -29,7 +29,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "3D view settings",
             [],
             None,
-            "{scene? (cube|cylinder|plane|sphere|material_ball|rounded_cube|torus), tiling?, yaw?, pitch?, distance?, target? ([x, y, z] orbit point in mesh radii from its center, within the pan limit preference), environment? (studio|sunset|overcast|night), envRotation?, exposure?, heightScale?, axis?, grid?, transparency? (see through where alpha < 1), alphaView? (show the alpha channel)}",
+            "{scene? (cube|cylinder|plane|sphere|material_ball|rounded_cube|torus), tiling?, yaw?, pitch?, distance?, target? ([x, y, z] orbit point in mesh radii from its center, within the pan limit preference), environment? (studio|sunset|overcast|night), envRotation?, exposure?, heightScale? (displacement depth in mesh radii, 0..0.5), heightLevel? (height that stays on the surface, 0..1; 0 = rises out), normalYFlip? (DirectX normal maps; default false/OpenGL), axis?, grid?, transparency? (see through where alpha < 1), alphaView? (show the alpha channel)}",
             always,
             view3d
         ),
@@ -61,6 +61,11 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 }
 
 fn view2d(s: &mut Session, p: &J) -> Result<J> {
+    // Validate the channel before applying any part of the request.
+    let channel = strp(p, "channel");
+    if channel.is_some_and(|c| !["rgba", "r", "g", "b", "a"].contains(&c)) {
+        return Err(bad("view.2d", "`channel` is rgba, r, g, b or a"));
+    }
     if let Some(n) = u64p(p, "node") {
         s.graph()?.node(NodeId(n)).map_err(|_| bad("view.2d", format!("no node {n}")))?;
         s.view2d.node = Some(NodeId(n));
@@ -75,10 +80,7 @@ fn view2d(s: &mut Session, p: &J) -> Result<J> {
     if let Some(h) = boolp(p, "histogram") {
         s.view2d.histogram = h;
     }
-    if let Some(c) = strp(p, "channel") {
-        if !["rgba", "r", "g", "b", "a"].contains(&c) {
-            return Err(bad("view.2d", "`channel` is rgba, r, g, b or a"));
-        }
+    if let Some(c) = channel {
         s.view2d.channel = c.into();
     }
     Ok(serde_json::to_value(&s.view2d).unwrap_or(J::Null))
@@ -97,6 +99,13 @@ fn view3d(s: &mut Session, p: &J) -> Result<J> {
             }
         }
     };
+    // A rejected environment must not leave a new scene applied.
+    let environment = strp(p, "environment");
+    if let Some(e) = environment
+        && !ENVIRONMENTS.iter().any(|(id, _)| *id == e)
+    {
+        return Err(bad("view.3d", format!("unknown environment `{e}`")));
+    }
     if let Some(sc) = strp(p, "scene") {
         if sc == "custom" && s.custom_mesh.is_none() {
             return Err(bad("view.3d", "no mesh is loaded: use view.3d.loadMesh"));
@@ -108,10 +117,7 @@ fn view3d(s: &mut Session, p: &J) -> Result<J> {
         v.scene = sc.into();
     }
     let v = &mut s.view3d;
-    if let Some(e) = strp(p, "environment") {
-        if !ENVIRONMENTS.iter().any(|(id, _)| *id == e) {
-            return Err(bad("view.3d", format!("unknown environment `{e}`")));
-        }
+    if let Some(e) = environment {
         v.environment = e.into();
     }
     if let Some(t) = f32p(p, "tiling") {
@@ -137,6 +143,12 @@ fn view3d(s: &mut Session, p: &J) -> Result<J> {
     }
     if let Some(t) = f32p(p, "heightScale") {
         v.height_scale = t.clamp(0.0, 0.5);
+    }
+    if let Some(t) = f32p(p, "heightLevel") {
+        v.height_level = t.clamp(0.0, 1.0);
+    }
+    if let Some(flip) = boolp(p, "normalYFlip") {
+        v.normal_y_flip = flip;
     }
     if let Some(b) = boolp(p, "axis") {
         v.show_axis = b;

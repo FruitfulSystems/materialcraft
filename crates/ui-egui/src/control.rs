@@ -208,6 +208,23 @@ pub fn parse_events(list: &[Value]) -> Result<Vec<Scripted>, String> {
     Ok(frames)
 }
 
+/// Recursive JSON merge: objects merge key by key, anything else in `patch` replaces `dst`.
+fn merge_json(dst: &mut Value, patch: &Value) {
+    match (dst, patch) {
+        (Value::Object(d), Value::Object(p)) => {
+            for (k, v) in p {
+                match d.get_mut(k) {
+                    Some(slot) => merge_json(slot, v),
+                    None => {
+                        d.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        (slot, v) => *slot = v.clone(),
+    }
+}
+
 pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: &Value) -> Value {
     match method {
         "ping" => ok(json!("pong")),
@@ -225,8 +242,16 @@ pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: 
         "command.run" => {
             let Some(id) = p.get("id").and_then(Value::as_str) else { return err("`id` is required") };
             let params = p.get("params").cloned().unwrap_or(Value::Null);
-            match materialcraft_engine::execute(&mut app.session, id, &params) {
-                Ok(v) => ok(v),
+            match crate::cook::guard("command request", || {
+                materialcraft_engine::commands::execute_request(&mut app.session, id, &params).map_err(|error| error.to_string())
+            }) {
+                Ok(v) => {
+                    if id == "view.previewSize" {
+                        app.ui.prefs.preview_size = app.session.preview_size.unwrap_or(0);
+                    }
+                    app.close_subgraph_after(id);
+                    ok(v)
+                }
                 Err(e) => err(e),
             }
         }
@@ -237,11 +262,31 @@ pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: 
         }
         "ui.inspect" => {
             let rect = |r: egui::Rect| json!([r.min.x, r.min.y, r.width(), r.height()]);
+            let target = crate::graph::editor_target::EditorTarget::resolve(app);
+            let (view, nodes, ports) = (app.graph.view, &app.graph.rects, &app.graph.ports);
             ok(json!({
                 "state": app.ui,
-                "graphView": rect(app.graph.view),
-                "nodes": app.graph.rects.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),
-                "ports": app.graph.ports.iter().map(|h| json!({"node": h.node.0, "port": h.port, "output": h.output, "pos": [h.pos.x, h.pos.y]})).collect::<Vec<_>>(),
+                "graphView": rect(view),
+                "selection": app.session.selection,
+                "inspectedNode": app.graph.inspected_node,
+                "subgraph": match target {
+                    crate::graph::editor_target::EditorTarget::Function => app.function_editor.as_ref()
+                        .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                    crate::graph::editor_target::EditorTarget::Pattern => app.pattern_editor.as_ref()
+                        .map(|editor| json!({"kind": "pattern", "graph": editor.graph, "node": editor.node.0, "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                    crate::graph::editor_target::EditorTarget::Material => None,
+                },
+                "annotationSelection": app.session.annotation_selection,
+                "frames": app.graph.frames.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
+                "comments": app.graph.comments.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
+                "nodes": nodes.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),
+                "ports": ports.iter().map(|port| json!({
+                    "node": port.node.0,
+                    "port": port.port,
+                    "label": port.label,
+                    "output": port.output,
+                    "pos": [port.pos.x, port.pos.y],
+                })).collect::<Vec<_>>(),
                 "fps": app.fps,
                 "uiMs": app.ui_ms,
                 "cooking": app.cooker.busy(),
@@ -260,13 +305,14 @@ pub fn handle(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p: 
         }
         "ui.set" => {
             let mut cur = serde_json::to_value(&app.ui).unwrap_or(Value::Null);
-            if let (Some(obj), Some(patch)) = (cur.as_object_mut(), p.as_object()) {
-                for (k, v) in patch {
-                    obj.insert(k.clone(), v.clone());
-                }
+            if p.is_object() {
+                merge_json(&mut cur, p);
             }
-            match serde_json::from_value(cur) {
-                Ok(ui) => {
+            match serde_json::from_value::<crate::state::UiState>(cur) {
+                Ok(mut ui) => {
+                    ui.graph_camera = ui.graph_camera.sanitized();
+                    ui.image_camera = ui.image_camera.sanitized();
+                    ui.windows.unsaved = app.ui.windows.unsaved.clone();
                     app.ui = ui;
                     ok(Value::Null)
                 }
@@ -315,5 +361,34 @@ mod tests {
         assert!(parse_events(&[json!({"type": "key", "key": "NoSuchKey"})]).is_err());
         assert!(parse_events(&[json!({"type": "click"})]).is_err());
         assert!(parse_events(&[json!({"pos": [1, 2]})]).is_err());
+    }
+
+    fn app() -> MaterialCraftApp {
+        MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::state::UiState::default())
+    }
+
+    #[test]
+    fn ui_set_merges_nested_objects_instead_of_resetting_siblings() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.ui.prefs.ui_scale = 1.5;
+        app.ui.prefs.autosave_minutes = 9;
+        let r = handle(&mut app, &ctx, "ui.set", &json!({"prefs": {"thumbnails": false}}));
+        assert_eq!(r["ok"], json!(true), "{r}");
+        assert!(!app.ui.prefs.thumbnails);
+        assert_eq!(app.ui.prefs.ui_scale, 1.5);
+        assert_eq!(app.ui.prefs.autosave_minutes, 9);
+    }
+
+    #[test]
+    fn ui_set_clamps_camera_zoom() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let r = handle(&mut app, &ctx, "ui.set", &json!({"graphCamera": {"zoom": 0.0}, "imageCamera": {"zoom": 0.0, "fit": false}}));
+        assert_eq!(r["ok"], json!(true), "{r}");
+        assert!(app.ui.graph_camera.zoom > 0.0);
+        assert!(app.ui.image_camera.zoom > 0.0);
+        let c = &app.ui.graph_camera;
+        assert!((c.pan[0] + 100.0 / c.zoom).is_finite());
     }
 }

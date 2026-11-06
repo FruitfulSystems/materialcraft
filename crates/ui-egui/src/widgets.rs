@@ -20,33 +20,57 @@ pub fn dnd_release<T: std::any::Any + Send + Sync>(resp: &Response) -> Option<st
 }
 
 /// A labelled slider in two rows: "Label ........ value" over a slim track with a round knob.
-/// Returns the response of the track (`.changed()` when dragged, `.drag_stopped()` at the end).
+/// Returns the track response (`.changed()` on a drag or valid numeric edit).
 pub fn slider(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>, decimals: usize) -> Response {
     let tk = Tokens::get(ui.ctx());
     let (lo, hi) = (*range.start(), *range.end());
     let w = ui.available_width();
+    let mut edited = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).color(tk.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut text = format!("{:.*}", decimals, value);
-            let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(44.0).align(egui::Align2::RIGHT_CENTER).frame(egui::Frame::NONE));
+            let id = ui.next_auto_id();
+            // Keep incomplete input (such as "-") across frames while editing.
+            let draft = id.with("numeric-draft");
+            let editing = ui.memory(|m| m.has_focus(id) || m.had_focus_last_frame(id));
+            let mut text = editing.then(|| ui.data(|d| d.get_temp::<String>(draft))).flatten().unwrap_or_else(|| format!("{:.*}", decimals, value));
+            let r = ui.add(egui::TextEdit::singleline(&mut text).id(id).desired_width(44.0).align(egui::Align2::RIGHT_CENTER).frame(egui::Frame::NONE));
             name(&r, egui::Role::TextInput, label);
-            if r.lost_focus()
+            if (r.changed() || r.lost_focus())
+                && !ui.input(|i| i.key_pressed(egui::Key::Escape))
                 && let Ok(v) = text.trim().parse::<f32>()
                 && v.is_finite()
             {
-                *value = v.clamp(lo, hi);
+                let v = v.clamp(lo, hi);
+                edited = v != *value;
+                *value = v;
             }
+            let focused = r.has_focus();
+            ui.data_mut(|d| {
+                if focused {
+                    d.insert_temp(draft, text);
+                } else {
+                    d.remove::<String>(draft);
+                }
+            });
         });
     });
     let (rect, mut resp) = ui.allocate_exact_size(vec2(w, 14.0), Sense::click_and_drag());
+    if edited {
+        resp.mark_changed();
+    }
     let (v, l) = (*value as f64, label.to_string());
     resp.widget_info(move || egui::WidgetInfo::slider(true, v, l.clone()));
     if (resp.dragged() || resp.clicked())
         && let Some(p) = resp.interact_pointer_pos()
     {
-        let t = ((p.x - rect.left() - 5.0) / (rect.width() - 10.0).max(1.0)).clamp(0.0, 1.0);
-        let v = lo + (hi - lo) * t;
+        let value_at = |x: f32| {
+            let t = ((x - rect.left() - 5.0) / (rect.width() - 10.0).max(1.0)).clamp(0.0, 1.0);
+            f64::from(lo) + (f64::from(hi) - f64::from(lo)) * f64::from(t)
+        };
+        // Use the same round-value aiming as egui's standard sliders, within one physical pixel.
+        let radius = ui.input(|i| i.aim_radius());
+        let v = egui::emath::smart_aim::best_in_range_f64(value_at(p.x - radius), value_at(p.x + radius)) as f32;
         if (v - *value).abs() > f32::EPSILON {
             *value = v;
             resp.mark_changed();

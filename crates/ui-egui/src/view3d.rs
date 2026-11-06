@@ -1,4 +1,4 @@
-//! The 3D view: the open graph's material on a built-in scene, rendered by
+//! The 3D view: assigned material channels on a built-in scene, rendered by
 //! `materialcraft-render` (one ray per pixel at half resolution while the camera moves, 2×2
 //! supersampled when it rests). Left-drag orbits, Alt+drag or middle-drag pans, the wheel zooms,
 //! Shift+drag turns the light and a double-click resets the camera.
@@ -7,6 +7,8 @@
 //! (a panel, divider or window drag changes the size on every step), then renders on a worker
 //! thread so the UI never waits for it; until it lands the last frame stays up, kept in proportion.
 //! A frame that is no longer wanted is cancelled. The browser has no threads and renders here.
+//!
+//! The height output raises the mesh for real ([`Scene::with_relief`]), built on a worker thread and cached until its inputs change.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +18,7 @@ use std::time::Duration;
 use egui::{Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::view_cmds::{ENVIRONMENTS, SCENES};
-use materialcraft_render::{Lighting, Maps, Scene, Settings};
+use materialcraft_render::{Lighting, Maps, Relief, Scene, Settings};
 use serde_json::json;
 
 use crate::MaterialCraftApp;
@@ -26,9 +28,16 @@ use crate::theme::Tokens;
 /// Seconds the view's size and the camera rest before the full-quality frame renders.
 pub const SETTLE: f64 = 0.15;
 
+/// Triangle budget of the displaced mesh; the browser builds it on the UI thread, so it gets a smaller one.
+const RELIEF_TRIANGLES: usize = if cfg!(target_arch = "wasm32") { 120_000 } else { materialcraft_render::VIEW_TRIANGLES };
+
 #[derive(Default)]
 pub struct View3dState {
     scene: Option<(String, Arc<Scene>)>,
+    /// The scene displaced by the height output, keyed by what it was built from (see [`relief_key`]).
+    displaced: Option<(u64, Arc<Scene>)>,
+    /// The displaced scene building on a worker thread.
+    relief_job: Option<ReliefJob>,
     light: Option<Arc<Lighting>>,
     tex: Option<TextureHandle>,
     /// What the texture shows: (content key, full quality).
@@ -50,9 +59,9 @@ pub struct View3dState {
 }
 
 impl View3dState {
-    /// A full-quality frame is rendering in the background.
+    /// A frame or its displaced geometry is still being built in the background.
     pub fn busy(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.relief_job.is_some()
     }
 }
 
@@ -79,6 +88,9 @@ impl Drop for Job {
     }
 }
 
+mod relief_job;
+use relief_job::ReliefJob;
+
 pub fn scene_label(app: &MaterialCraftApp) -> String {
     let id = &app.session.view3d.scene;
     if id == "custom"
@@ -93,6 +105,25 @@ fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(4, 1)).show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button(tr("Material"), |ui| {
+                let sources = app.session.material_preview.sources(&app.session.pkg);
+                for channel in materialcraft_engine::core::MaterialChannel::ALL {
+                    let source = sources.get(&channel);
+                    let label = source
+                        .and_then(|source| {
+                            let graph = app.session.pkg.graphs.get(source.graph)?;
+                            let node = graph.node(source.node).ok()?;
+                            Some(format!("{} / {}", graph.name, crate::graph::node_label(node)))
+                        })
+                        .unwrap_or_else(|| tr("Unassigned").to_string());
+                    ui.label(format!("{}: {label}", tr(channel.label())));
+                }
+                ui.separator();
+                if ui.button(tr("Clear material assignments")).clicked() {
+                    app.run("view.3d.clear", json!({}));
+                    ui.close();
+                }
+            });
             ui.menu_button(tr("Scene"), |ui| {
                 for (id, label) in SCENES {
                     if ui.selectable_label(app.session.view3d.scene == *id, tr(label)).clicked() {
@@ -141,6 +172,13 @@ fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
             });
             ui.menu_button(tr("Display"), |ui| {
+                crate::preview_resolution::show(app, ui);
+                ui.separator();
+                let mut flip = app.session.view3d.normal_y_flip;
+                if ui.checkbox(&mut flip, tr("Flip normal map Y (DirectX)")).changed() {
+                    app.run("view.3d", json!({"normalYFlip": flip}));
+                }
+                ui.separator();
                 ui.checkbox(&mut app.view3d.show_env, tr("Environment background"));
                 ui.separator();
                 let mut t = app.session.view3d.transparency;
@@ -153,9 +191,13 @@ fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
             });
             ui.menu_button(tr("Renderer"), |ui| {
-                let mut h = app.session.view3d.height_scale * 100.0;
-                if crate::widgets::slider(ui, tr("Height (parallax) depth"), &mut h, 0.0..=10.0, 2).changed() {
-                    app.run("view.3d", json!({"heightScale": h / 100.0}));
+                let mut depth_percent = app.session.view3d.height_scale * 100.0;
+                if crate::widgets::slider(ui, tr("Height depth (% of the mesh size)"), &mut depth_percent, 0.0..=20.0, 1).changed() {
+                    app.run("view.3d", json!({"heightScale": depth_percent / 100.0}));
+                }
+                let mut level = app.session.view3d.height_level;
+                if crate::widgets::slider(ui, tr("Height level (0 = rises out of the surface)"), &mut level, 0.0..=1.0, 2).changed() {
+                    app.run("view.3d", json!({"heightLevel": level}));
                 }
                 let mut t = app.session.view3d.tiling;
                 if crate::widgets::slider(ui, tr("Tiling"), &mut t, 0.25..=8.0, 2).changed() {
@@ -172,7 +214,12 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let avail = ui.available_size();
     let (rect, resp) = ui.allocate_exact_size(vec2(avail.x, (avail.y - 22.0).max(40.0)), Sense::click_and_drag());
     crate::widgets::name(&resp, egui::Role::Image, "3D view");
-    // Camera gestures.
+    let graph_hover = resp.dnd_hover_payload::<crate::graph_drag_payload::GraphDragPayload>().is_some();
+    if let Some(graph) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(&resp) {
+        app.run("view.3d.outputs", json!({"graph": graph.name}));
+    }
+
+    // Camera gestures
     let mut moving = false;
     if resp.dragged() {
         let d = resp.drag_delta();
@@ -217,7 +264,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         p.text(
             rect.center_top() + vec2(0.0, 18.0),
             egui::Align2::CENTER_TOP,
-            tr("Add Output nodes with usages (base color, normal, ...) to see the material"),
+            tr("Assign an image with View in 3D view, or connect Output nodes with material usages"),
             egui::FontId::proportional(11.0),
             tk.viewport_text,
         );
@@ -229,7 +276,18 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         egui::FontId::proportional(10.5),
         tk.viewport_text,
     );
-    // Bottom bar.
+    if graph_hover {
+        p.rect_stroke(rect.shrink(2.0), 4.0, egui::Stroke::new(2.0, tk.accent), egui::StrokeKind::Inside);
+        p.text(
+            rect.center_top() + vec2(0.0, 38.0),
+            egui::Align2::CENTER_TOP,
+            tr("Drop to apply graph outputs"),
+            egui::FontId::proportional(13.0),
+            tk.viewport_text,
+        );
+    }
+
+    // Bottom bar
     let bar = Rect::from_min_size(pos2(rect.left(), rect.bottom()), vec2(rect.width(), 22.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
         ui.painter().rect_filled(bar, 0.0, tk.panel);
@@ -273,19 +331,16 @@ fn frame_rect(rect: Rect, rendered: Option<(u32, u32)>) -> Rect {
     }
 }
 
-fn content_key(app: &MaterialCraftApp, w: u32, h: u32, show_env: bool) -> u64 {
+fn content_key(app: &MaterialCraftApp, w: u32, h: u32, show_env: bool, relief_shown: Option<u64>) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut hs = DefaultHasher::new();
     let v = &app.session.view3d;
-    (w, h, show_env, &v.scene, &v.environment, app.session.custom_mesh.as_ref().map(|(n, _)| n), v.transparency, v.alpha_view).hash(&mut hs);
-    for f in [v.yaw, v.pitch, v.distance, v.target[0], v.target[1], v.target[2], v.tiling, v.exposure, v.env_rotation, v.height_scale] {
+    (w, h, show_env, &v.scene, &v.environment, app.session.custom_mesh.as_ref().map(|(n, _)| n), v.transparency, v.alpha_view, relief_shown).hash(&mut hs);
+    v.normal_y_flip.hash(&mut hs);
+    for f in [v.yaw, v.pitch, v.distance, v.target[0], v.target[1], v.target[2], v.tiling, v.exposure, v.env_rotation, v.height_scale, v.height_level] {
         f.to_bits().hash(&mut hs);
     }
-    if let Ok(g) = app.session.graph() {
-        for (id, usage, _, _) in materialcraft_engine::eval::outputs(g, &app.session.cooked) {
-            (usage, app.session.cooked.nodes.get(&id).map(|r| r.key)).hash(&mut hs);
-        }
-    }
+    app.session.material_key().hash(&mut hs);
     hs.finish()
 }
 
@@ -298,7 +353,8 @@ fn render(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, moving: b
         app.view3d.changed_at = Some(now);
     }
     app.view3d.size = Some(size);
-    let key = content_key(app, size.0, size.1, app.view3d.show_env);
+    let relief_shown = update_relief(app, ctx);
+    let key = content_key(app, size.0, size.1, app.view3d.show_env, relief_shown);
     collect(app, ctx, key);
     if app.view3d.key == Some((key, true)) || (moving && app.view3d.key == Some((key, false))) {
         return;
@@ -338,23 +394,112 @@ fn collect(app: &mut MaterialCraftApp, ctx: &egui::Context, key: u64) {
     }
 }
 
-/// The scene, lighting, maps and settings of the current view (scene and lighting are cached).
-fn inputs(app: &mut MaterialCraftApp, supersample: u32) -> Option<(Arc<Scene>, Arc<Lighting>, Maps, Settings)> {
-    let v = app.session.view3d.clone();
+/// The plain scene of the current view and its cache key, building it when the scene changed.
+fn base_scene(app: &mut MaterialCraftApp) -> (String, Arc<Scene>) {
+    let v = &app.session.view3d;
     let scene_key = match (&*v.scene, &app.session.custom_mesh) {
         ("custom", Some((name, _))) => format!("custom:{name}"),
         _ => v.scene.clone(),
     };
-    if app.view3d.scene.as_ref().is_none_or(|(id, _)| *id != scene_key) {
-        let scene = match (&*v.scene, &app.session.custom_mesh) {
-            ("custom", Some((_, mesh))) => Scene::new((**mesh).clone()),
-            _ => Scene::builtin(&v.scene),
-        };
-        app.view3d.scene = Some((scene_key, Arc::new(scene)));
+
+    match &app.view3d.scene {
+        Some((key, scene)) if *key == scene_key => (scene_key, scene.clone()),
+        _ => {
+            let scene = match (&*v.scene, &app.session.custom_mesh) {
+                ("custom", Some((_, mesh))) => Scene::new((**mesh).clone()),
+                _ => Scene::builtin(&v.scene),
+            };
+            let scene = Arc::new(scene);
+            app.view3d.scene = Some((scene_key.clone(), scene.clone()));
+            (scene_key, scene)
+        }
     }
+}
+
+/// What the displaced scene depends on (scene, height output cook, relief settings, normal map); `None` when nothing is raised.
+fn relief_key(app: &MaterialCraftApp, scene_key: &str, maps: &Maps) -> Option<u64> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let v = &app.session.view3d;
+    if maps.height.is_none() || v.height_scale <= 0.0 {
+        return None;
+    }
+
+    let sources = app.session.material_preview.sources(&app.session.pkg);
+    let height_source = sources.get(&materialcraft_engine::core::MaterialChannel::Height)?;
+    let height_cook = app.session.material_source_key(height_source);
+
+    let mut hasher = DefaultHasher::new();
+    (scene_key, height_cook, maps.normal.is_some()).hash(&mut hasher);
+    for f in [v.height_scale, v.height_level, v.tiling] {
+        f.to_bits().hash(&mut hasher);
+    }
+    Some(hasher.finish())
+}
+
+/// Collect a finished relief build or start a missing one; returns the key of the displaced scene shown (`None` = plain mesh).
+fn update_relief(app: &mut MaterialCraftApp, ctx: &egui::Context) -> Option<u64> {
+    let (scene_key, base) = base_scene(app);
+    let maps = Maps::from_usages(app.session.material_maps());
+    let wanted = relief_key(app, &scene_key, &maps);
+
+    if let Some(job) = app.view3d.relief_job.take() {
+        match job.rx.try_recv() {
+            Ok(Some(scene)) if Some(job.key) == wanted => app.view3d.displaced = Some((job.key, scene)),
+            Ok(_) | Err(TryRecvError::Disconnected) => {}
+            // Finish the active build before starting a newer one. Dropping its receiver
+            // cannot cancel subdivision, so rapid edits must not accumulate workers.
+            Err(TryRecvError::Empty) => app.view3d.relief_job = Some(job),
+        }
+    }
+
+    let wanted = wanted?;
+
+    if app.view3d.displaced.as_ref().is_some_and(|(key, _)| *key == wanted) {
+        return Some(wanted);
+    }
+    if app.view3d.relief_job.is_none() {
+        let v = &app.session.view3d;
+        let relief = Relief { depth: v.height_scale, level: v.height_level };
+        start_relief(app, ctx, wanted, base, maps, relief, v.tiling);
+    }
+    None
+}
+
+/// Build the displaced scene on a worker thread.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_relief(app: &mut MaterialCraftApp, ctx: &egui::Context, key: u64, base: Arc<Scene>, maps: Maps, relief: Relief, tiling: f32) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (repaint, viewport) = (ctx.clone(), ctx.viewport_id());
+    let (thread_base, thread_maps) = (base.clone(), maps.clone());
+    let spawned = std::thread::Builder::new().name("materialcraft-relief".into()).spawn(move || {
+        let _ = tx.send(thread_base.with_relief(&thread_maps, relief, tiling, RELIEF_TRIANGLES).map(Arc::new));
+        repaint.request_repaint_of(viewport);
+    });
+
+    match spawned {
+        Ok(_) => app.view3d.relief_job = Some(ReliefJob { key, rx }),
+        Err(e) => {
+            log::warn!("could not start a 3D view relief thread ({e}); building it here");
+            app.view3d.displaced = base.with_relief(&maps, relief, tiling, RELIEF_TRIANGLES).map(|scene| (key, Arc::new(scene)));
+        }
+    }
+}
+
+/// The browser has no threads: the displaced scene builds here (the page pauses).
+#[cfg(target_arch = "wasm32")]
+fn start_relief(app: &mut MaterialCraftApp, _ctx: &egui::Context, key: u64, base: Arc<Scene>, maps: Maps, relief: Relief, tiling: f32) {
+    app.view3d.displaced = base.with_relief(&maps, relief, tiling, RELIEF_TRIANGLES).map(|scene| (key, Arc::new(scene)));
+}
+
+/// The scene, lighting, maps and settings of the current view: the displaced scene when it is current, else the plain one.
+fn inputs(app: &mut MaterialCraftApp, supersample: u32) -> Option<(Arc<Scene>, Arc<Lighting>, Maps, Settings)> {
+    let (scene_key, base) = base_scene(app);
+    let v = app.session.view3d.clone();
     if app.view3d.light.as_ref().is_none_or(|l| l.name != v.environment) {
         app.view3d.light = Some(Arc::new(Lighting::new(&v.environment)));
     }
+
     let settings = Settings {
         yaw: v.yaw,
         pitch: v.pitch,
@@ -363,7 +508,7 @@ fn inputs(app: &mut MaterialCraftApp, supersample: u32) -> Option<(Arc<Scene>, A
         tiling: v.tiling,
         exposure: v.exposure,
         env_rotation: v.env_rotation,
-        height_scale: v.height_scale,
+        normal_y_flip: v.normal_y_flip,
         show_env: app.view3d.show_env,
         supersample,
         transparency: v.transparency,
@@ -371,8 +516,13 @@ fn inputs(app: &mut MaterialCraftApp, supersample: u32) -> Option<(Arc<Scene>, A
         ..Settings::default()
     };
     let maps = Maps::from_usages(app.session.material_maps());
-    let (Some((_, scene)), Some(light)) = (&app.view3d.scene, &app.view3d.light) else { return None };
-    Some((scene.clone(), light.clone(), maps, settings))
+    let wanted = relief_key(app, &scene_key, &maps);
+    let scene = match &app.view3d.displaced {
+        Some((key, displaced)) if Some(*key) == wanted => displaced.clone(),
+        _ => base,
+    };
+    let light = app.view3d.light.clone()?;
+    Some((scene, light, maps, settings))
 }
 
 /// Texture pixels for `rect` at `scale` pixels per point.
@@ -440,6 +590,48 @@ fn show_frame(app: &mut MaterialCraftApp, ctx: &egui::Context, frame: Frame, key
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relief_tracks_assigned_height_while_another_graph_is_open() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        app.session.preview_size = Some(16);
+        app.session.cook();
+        let (scene_key, _) = base_scene(&mut app);
+        let original = relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())).unwrap();
+        app.session.pkg.graphs.push(materialcraft_engine::core::Graph::new("Other"));
+        app.session.graph = 1;
+        app.session.cook();
+        assert_eq!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+        app.session.pkg.graphs[0].seed += 1;
+        app.session.cook();
+        assert_ne!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+    }
+
+    #[test]
+    fn changing_relief_keeps_one_worker_and_discards_stale_geometry() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        app.session.cook();
+        let (scene_key, base) = base_scene(&mut app);
+        let maps = Maps::from_usages(app.session.material_maps());
+        let old_key = relief_key(&app, &scene_key, &maps).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.view3d.relief_job = Some(ReliefJob { key: old_key, rx });
+        let ctx = egui::Context::default();
+        for index in 1..=20 {
+            app.session.view3d.height_scale = index as f32 * 0.001;
+            assert_eq!(update_relief(&mut app, &ctx), None);
+            assert_eq!(app.view3d.relief_job.as_ref().unwrap().key, old_key, "a second subdivision worker started");
+            assert!(app.view3d.busy(), "geometry work must count as a busy view");
+        }
+        let wanted = relief_key(&app, &scene_key, &maps).unwrap();
+        assert_ne!(old_key, wanted);
+        app.view3d.displaced = Some((wanted, base.clone()));
+        tx.send(Some(Arc::new(Scene::builtin("sphere")))).unwrap();
+        assert_eq!(update_relief(&mut app, &ctx), Some(wanted));
+        assert!(app.view3d.relief_job.is_none());
+        assert!(!app.view3d.busy());
+        assert!(Arc::ptr_eq(&app.view3d.displaced.as_ref().unwrap().1, &base), "outdated geometry replaced the current scene");
+    }
 
     #[test]
     fn a_frame_for_another_size_keeps_its_proportions() {

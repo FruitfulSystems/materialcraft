@@ -94,62 +94,108 @@ fn box_1d(src: &Image, r: i64, horizontal: bool, tile: bool) -> Image {
 /// Squared Euclidean distance (pixels) from every pixel to the nearest pixel where `inside` is
 /// true (Felzenszwalb–Huttenlocher, exact, linear time). With `tile`, distances wrap.
 pub fn distance_sq(w: u32, h: u32, inside: impl Fn(usize) -> bool + Sync, tile: bool) -> Vec<f32> {
+    distance_transform::<false>(w, h, inside, tile).0
+}
+
+/// The same exact distance transform, also retaining the nearest mask pixel's row-major index.
+/// Empty masks have no nearest pixel: their indices are `usize::MAX`.
+pub fn distance_sq_with_sites(w: u32, h: u32, inside: impl Fn(usize) -> bool + Sync, tile: bool) -> (Vec<f32>, Vec<usize>) {
+    distance_transform::<true>(w, h, inside, tile)
+}
+
+const DISTANCE_INF: f32 = 1e20;
+
+fn edt_1d<const SITES: bool>(f: &[f32]) -> (Vec<f32>, Vec<usize>) {
+    let n = f.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let f: Vec<f64> = f.iter().map(|v| *v as f64).collect();
+    let mut d = vec![0.0f32; n];
+    // Distance-only callers do not allocate or propagate site indices.
+    let mut sites = if SITES { vec![usize::MAX; n] } else { Vec::new() };
+    let mut v = vec![0usize; n];
+    let mut z = vec![0.0f64; n + 1];
+    let mut k = 0usize;
+    z[0] = -(DISTANCE_INF as f64);
+    z[1] = DISTANCE_INF as f64;
+    let cross = |q: usize, p: usize| ((f[q] + (q * q) as f64) - (f[p] + (p * p) as f64)) / (2.0 * q as f64 - 2.0 * p as f64);
+    for q in 1..n {
+        let mut s = cross(q, v[k]);
+        while k > 0 && s <= z[k] {
+            k -= 1;
+            s = cross(q, v[k]);
+        }
+        k += 1;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = DISTANCE_INF as f64;
+    }
+    k = 0;
+    for (q, dq) in d.iter_mut().enumerate() {
+        while k + 1 < n && z[k + 1] < q as f64 {
+            k += 1;
+        }
+        let p = v[k];
+        *dq = ((q as f64 - p as f64).powi(2) + f[p]) as f32;
+        if SITES && f[p] < DISTANCE_INF as f64 {
+            sites[q] = p;
+        }
+    }
+    (d, sites)
+}
+
+fn distance_transform<const SITES: bool>(w: u32, h: u32, inside: impl Fn(usize) -> bool + Sync, tile: bool) -> (Vec<f32>, Vec<usize>) {
     let (w, h) = (w as usize, h as usize);
-    const INF: f32 = 1e20;
+    if w == 0 || h == 0 {
+        return (Vec::new(), Vec::new());
+    }
     // Tiling: run on a 3x tiled line so distances cross the edges.
     let rep = if tile { 3 } else { 1 };
-    let edt_1d = |f: &[f32]| -> Vec<f32> {
-        let n = f.len();
-        let f: Vec<f64> = f.iter().map(|v| *v as f64).collect();
-        let mut d = vec![0.0f32; n];
-        let mut v = vec![0usize; n];
-        let mut z = vec![0.0f64; n + 1];
-        let mut k = 0usize;
-        z[0] = -(INF as f64);
-        z[1] = INF as f64;
-        let cross = |q: usize, p: usize| ((f[q] + (q * q) as f64) - (f[p] + (p * p) as f64)) / (2.0 * q as f64 - 2.0 * p as f64);
-        for q in 1..n {
-            let mut s = cross(q, v[k]);
-            while k > 0 && s <= z[k] {
-                k -= 1;
-                s = cross(q, v[k]);
-            }
-            k += 1;
-            v[k] = q;
-            z[k] = s;
-            z[k + 1] = INF as f64;
-        }
-        k = 0;
-        for (q, dq) in d.iter_mut().enumerate() {
-            while k + 1 < n && z[k + 1] < q as f64 {
-                k += 1;
-            }
-            let p = v[k];
-            *dq = ((q as f64 - p as f64).powi(2) + f[p]) as f32;
-        }
-        d
-    };
-    // Columns.
-    let cols: Vec<Vec<f32>> = (0..w)
+    // Columns. Site indices are vertical coordinates at this stage.
+    let cols: Vec<_> = (0..w)
         .into_par_iter()
         .map(|x| {
-            let f: Vec<f32> = (0..h * rep).map(|y| if inside((y % h) * w + x) { 0.0 } else { INF }).collect();
-            let d = edt_1d(&f);
+            let f: Vec<f32> = (0..h * rep).map(|y| if inside((y % h) * w + x) { 0.0 } else { DISTANCE_INF }).collect();
+            let (d, sites) = edt_1d::<SITES>(&f);
             let off = if tile { h } else { 0 };
-            d[off..off + h].to_vec()
+            (d[off..off + h].to_vec(), if SITES { sites[off..off + h].to_vec() } else { Vec::new() })
         })
         .collect();
-    // Rows.
-    let rows: Vec<Vec<f32>> = (0..h)
+    // Rows. Carry the chosen column's vertical site through the horizontal transform.
+    let rows: Vec<_> = (0..h)
         .into_par_iter()
         .map(|y| {
-            let f: Vec<f32> = (0..w * rep).map(|x| cols[x % w][y]).collect();
-            let d = edt_1d(&f);
+            let f: Vec<f32> = (0..w * rep).map(|x| cols[x % w].0[y]).collect();
+            let (d, sites) = edt_1d::<SITES>(&f);
             let off = if tile { w } else { 0 };
-            d[off..off + w].to_vec()
+            let sites = if SITES {
+                sites[off..off + w]
+                    .iter()
+                    .map(|&x| {
+                        if x == usize::MAX {
+                            usize::MAX
+                        } else {
+                            let x = x % w;
+                            let sy = cols[x].1[y];
+                            if sy == usize::MAX { usize::MAX } else { (sy % h) * w + x }
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (d[off..off + w].to_vec(), sites)
         })
         .collect();
-    rows.concat()
+    drop(cols);
+    let mut distances = Vec::with_capacity(w * h);
+    let mut sites = if SITES { Vec::with_capacity(w * h) } else { Vec::new() };
+    for (row, row_sites) in rows {
+        distances.extend(row);
+        sites.extend(row_sites);
+    }
+    (distances, sites)
 }
 
 /// Slope (dx, dy) of a gray image by central differences, in value units per pixel.
@@ -323,6 +369,51 @@ mod tests {
         assert_eq!(d, vec![16.0, 9.0, 4.0, 1.0, 0.0, 1.0, 4.0, 9.0, 16.0]);
         let t = distance_sq(9, 1, |i| i == 0, true);
         assert_eq!(t[8], 1.0);
+    }
+
+    #[test]
+    fn edt_sites_match_brute_force() {
+        // Exhaust all small masks, including ties and empty/full masks. Larger rectangles use
+        // deterministic pseudo-random masks; the oracle measures every site independently.
+        for (w, h) in [(1usize, 1usize), (1, 7), (7, 1), (2, 3), (3, 3), (5, 7), (8, 6)] {
+            let cases = if w * h <= 9 { 1usize << (w * h) } else { 128 };
+            for case in 0..cases {
+                let mut state = case as u32 + 1;
+                let mask: Vec<bool> = (0..w * h)
+                    .map(|i| {
+                        if w * h <= 9 {
+                            case & (1 << i) != 0
+                        } else {
+                            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                            state.is_multiple_of(7)
+                        }
+                    })
+                    .collect();
+                for tile in [false, true] {
+                    let (d, sites) = distance_sq_with_sites(w as u32, h as u32, |i| mask[i], tile);
+                    assert_eq!(d, distance_sq(w as u32, h as u32, |i| mask[i], tile));
+                    for i in 0..w * h {
+                        let distance = |site: usize| {
+                            let dx = (i % w).abs_diff(site % w);
+                            let dy = (i / w).abs_diff(site / w);
+                            let (dx, dy) = if tile { (dx.min(w - dx), dy.min(h - dy)) } else { (dx, dy) };
+                            (dx * dx + dy * dy) as f32
+                        };
+                        let expected = (0..mask.len()).filter(|&site| mask[site]).map(distance).reduce(f32::min);
+                        if let Some(expected) = expected {
+                            assert_eq!(d[i], expected, "{w}x{h}, mask {case}, tile {tile}, pixel {i}");
+                            assert!(sites[i] < mask.len() && mask[sites[i]]);
+                            assert_eq!(distance(sites[i]), expected);
+                        } else {
+                            assert_eq!(sites[i], usize::MAX);
+                            assert!(d[i] >= DISTANCE_INF);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(distance_sq_with_sites(0, 3, |_| true, true).0.is_empty());
+        assert!(distance_sq_with_sites(3, 0, |_| true, false).1.is_empty());
     }
 
     #[test]

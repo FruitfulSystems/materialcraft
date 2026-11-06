@@ -23,6 +23,7 @@ image = { workspace = true }
 zip = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sys-locale = "0.3"
 rfd = { workspace = true }
 # Floating panels open as OS windows.
 craft-ui = { workspace = true, features = ["native-windows"] }
@@ -33,7 +34,7 @@ rfd = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "CssStyleDeclaration"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "CssStyleDeclaration", "Navigator"] }
 
 # winit needs a window system on Linux, so the crate's own tests build with X11.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

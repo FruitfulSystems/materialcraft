@@ -1,25 +1,8 @@
-//! Packages: the document. A package holds graphs and the resources (bitmaps) they use.
-
-use std::sync::Arc;
-
+use crate::Resource;
+use crate::{CoreError, Graph, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{CoreError, Graph, Result};
-
-/// The native package extension (a zip: `package.json` plus `resources/`).
-pub const PACKAGE_EXT: &str = "mcraft";
-
-/// An embedded file: a bitmap a Bitmap node shows, or an SVG.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Resource {
-    /// Unique name, referenced by nodes (`resource` parameter).
-    pub name: String,
-    /// File name inside the package's `resources/` folder.
-    pub file: String,
-    /// The file's bytes (stored in the zip, not in `package.json`).
-    #[serde(skip)]
-    pub bytes: Arc<Vec<u8>>,
-}
+pub const PACKAGE_EXT: &str = "sbs";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Package {
@@ -27,7 +10,7 @@ pub struct Package {
     pub graphs: Vec<Graph>,
     #[serde(default)]
     pub resources: Vec<Resource>,
-    /// Format version of `package.json`.
+    /// Format version of `package.json`
     #[serde(default = "version")]
     pub version: u32,
 }

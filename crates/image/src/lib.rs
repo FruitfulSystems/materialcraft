@@ -140,6 +140,8 @@ impl Image {
         if !fx.is_finite() || !fy.is_finite() {
             return [0.0, 0.0, 0.0, 1.0];
         }
+        // Huge but finite coordinates would saturate the i64 cast and overflow at `+ 1`.
+        let (fx, fy) = (fx.clamp(-1.0e9, 1.0e9), fy.clamp(-1.0e9, 1.0e9));
         let (x0, y0) = (fx.floor(), fy.floor());
         let (tx, ty) = (fx - x0, fy - y0);
         let (x0, y0) = (x0 as i64, y0 as i64);
@@ -300,9 +302,52 @@ pub fn srgb_to_linear(v: f32) -> f32 {
     if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
 }
 
+/// Encode the bitmap name and its requested color space without ambiguity.
+/// Plain sRGB names remain readable by simple resource callbacks.
+pub fn resource_key(name: &str, linear: bool) -> String {
+    if linear {
+        format!("\u{1}L{name}")
+    } else if name.starts_with('\u{1}') {
+        format!("\u{1}S{name}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// Split a key made by [`resource_key`] into its name and data-map flag.
+pub fn split_resource_key(key: &str) -> (&str, bool) {
+    if let Some(name) = key.strip_prefix("\u{1}L") {
+        (name, true)
+    } else if let Some(name) = key.strip_prefix("\u{1}S") {
+        (name, false)
+    } else {
+        (key, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_survives_huge_coordinates() {
+        let img = Image::gray(8, 8, |x, _| x as f32);
+        for u in [1.0e30_f32, -1.0e30, f32::MAX, f32::MIN] {
+            for tile in [true, false] {
+                let p = img.sample(u, u, tile);
+                assert!(p.iter().all(|c| c.is_finite()));
+            }
+        }
+    }
+
+    #[test]
+    fn resource_keys_round_trip() {
+        for name in ["n", "", "\u{1}Lnormal", "\u{1}Sn", "n\u{1}linear"] {
+            for linear in [false, true] {
+                assert_eq!(split_resource_key(&resource_key(name, linear)), (name, linear));
+            }
+        }
+    }
 
     #[test]
     fn sample_wraps_and_clamps() {

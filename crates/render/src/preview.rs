@@ -1,12 +1,13 @@
 //! The 3D view's renderer: one ray per pixel (plus 2×2 supersampling when idle) against the
-//! scene mesh's BVH, the material's maps sampled with tiling and parallax occlusion from the
-//! height output, then metallic/roughness GGX shading under image-based light (SH diffuse,
-//! prefiltered specular, an analytic environment BRDF), exposure and ACES tone mapping.
+//! scene mesh's BVH, the material's maps sampled with tiling, then metallic/roughness GGX shading
+//! under image-based light (SH diffuse, prefiltered specular, an analytic environment BRDF),
+//! exposure and ACES tone mapping. The height output displaces real geometry ([`Scene::with_relief`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::{Displacement, Relief};
 use materialcraft_geom::glam::{Vec2, Vec3};
 use materialcraft_geom::{Bvh, Mesh, OrbitCamera};
 use materialcraft_image::{Image, linear_to_srgb};
@@ -32,16 +33,18 @@ impl Maps {
     pub fn from_usages<'a>(items: impl IntoIterator<Item = (&'a str, &'a Image)>) -> Maps {
         let mut m = Maps::default();
         for (usage, img) in items {
-            let slot = match usage {
-                "baseColor" => &mut m.base_color,
-                "normal" => &mut m.normal,
-                "roughness" => &mut m.roughness,
-                "metallic" => &mut m.metallic,
-                "height" => &mut m.height,
-                "ambientOcclusion" => &mut m.ao,
-                "emissive" => &mut m.emissive,
-                "opacity" => &mut m.opacity,
-                _ => continue,
+            use materialcraft_core::MaterialChannel;
+            let Some(channel) = MaterialChannel::from_id(usage) else { continue };
+
+            let slot = match channel {
+                MaterialChannel::BaseColor => &mut m.base_color,
+                MaterialChannel::Normal => &mut m.normal,
+                MaterialChannel::Roughness => &mut m.roughness,
+                MaterialChannel::Metallic => &mut m.metallic,
+                MaterialChannel::Height => &mut m.height,
+                MaterialChannel::AmbientOcclusion => &mut m.ao,
+                MaterialChannel::Emissive => &mut m.emissive,
+                MaterialChannel::Opacity => &mut m.opacity,
             };
             if slot.is_none() {
                 *slot = Some(img.clone());
@@ -80,36 +83,74 @@ impl Scene {
         Scene::new(builtin_mesh(id))
     }
 
-    /// `base` subdivided to at most `max_tris` triangles and pushed along its normals by
-    /// `depth × (height − 0.5)` (the height map repeated `tiling` times): real silhouettes and
-    /// self-occlusion for offline renders. Coincident vertices (UV seams, hard edges) move
-    /// together, so the surface stays closed.
-    pub fn displaced(base: &Mesh, height: &Image, tiling: f32, depth: f32, max_tris: usize) -> Scene {
+    /// `base` subdivided and moved along its normals by `depth × (height − level)`; vertices at one spot move together so it stays closed.
+    pub fn displaced(base: &Mesh, height: &Image, displacement: &Displacement) -> Scene {
         let mut mesh = base.clone();
         if mesh.normals.len() != mesh.positions.len() {
             mesh.compute_normals();
         }
-        while mesh.triangle_count() > 0 && mesh.triangle_count() * 4 <= max_tris {
+        while mesh.triangle_count() > 0 && mesh.triangle_count() * 4 <= displacement.max_triangles {
             mesh = mesh.subdivided();
         }
-        // Pre-filtered so fine detail (left to the normal map) does not spike the silhouette.
+
+        // Pre-filtered so detail finer than the mesh (left to the normal map) does not spike the silhouette
         let height = height.resize(height.w.min(512), height.h.min(512), true);
-        let key = |p: Vec3| (p * 1e4).round().as_ivec3().to_array();
-        let mut welded: HashMap<[i32; 3], (Vec3, f32, f32)> = HashMap::new();
-        for ((p, n), uv) in mesh.positions.iter().zip(&mesh.normals).zip(&mesh.uvs) {
-            let e = welded.entry(key(*p)).or_default();
-            e.0 += *n;
-            e.1 += height.sample_gray(uv.x * tiling, uv.y * tiling, true);
-            e.2 += 1.0;
+        let level = if displacement.level.is_finite() { displacement.level.clamp(0.0, 1.0) } else { 0.0 };
+        let depth = if displacement.depth.is_finite() { displacement.depth } else { 0.0 };
+        let tiling = if displacement.tiling.is_finite() { displacement.tiling.max(0.01) } else { 1.0 };
+
+        // Vertices at the same spot (to 0.1 mm) are one point of the surface
+        let spots: Vec<[i32; 3]> = mesh.positions.iter().map(|p| (*p * 1e4).round().as_ivec3().to_array()).collect();
+        let mut spot_sums: HashMap<[i32; 3], (Vec3, f32, f32)> = HashMap::new();
+        for ((spot, n), uv) in spots.iter().zip(&mesh.normals).zip(&mesh.uvs) {
+            let (normal_sum, height_sum, count) = spot_sums.entry(*spot).or_default();
+            *normal_sum += *n;
+            *height_sum += height.sample_gray(uv.x * tiling, uv.y * tiling, true);
+            *count += 1.0;
         }
-        for p in &mut mesh.positions {
-            if let Some((n, h, count)) = welded.get(&key(*p)) {
-                *p += n.normalize_or_zero() * depth * (h / count - 0.5);
+        let offsets: Vec<Vec3> =
+            spots.iter().map(|spot| spot_sums.get(spot).map_or(Vec3::ZERO, |(n, h, count)| n.normalize_or_zero() * depth * (h / count - level))).collect();
+
+        if displacement.shade_relief {
+            // Normals of the displaced surface, shared per spot so seams don't show
+            let moved = |i: u32| mesh.positions.get(i as usize).zip(offsets.get(i as usize)).map(|(p, o)| *p + *o);
+            let mut face_sums: HashMap<[i32; 3], Vec3> = HashMap::new();
+            for triangle in mesh.indices.chunks_exact(3) {
+                let (Some(a), Some(b), Some(c)) = (moved(triangle[0]), moved(triangle[1]), moved(triangle[2])) else { continue };
+                let face = (b - a).cross(c - a);
+                for spot in triangle.iter().filter_map(|&i| spots.get(i as usize)) {
+                    *face_sums.entry(*spot).or_default() += face;
+                }
             }
+            for (spot, n) in spots.iter().zip(mesh.normals.iter_mut()) {
+                if let Some(sum) = face_sums.get(spot).and_then(|s| s.try_normalize()) {
+                    *n = sum;
+                }
+            }
+            mesh.tangents.clear();
+        }
+
+        for (p, offset) in mesh.positions.iter_mut().zip(&offsets) {
+            *p += *offset;
         }
         Scene::new(mesh)
     }
+
+    /// The scene the 3D view shows for `maps`: displaced by the height output, or `None` when nothing moves.
+    pub fn with_relief(&self, maps: &Maps, relief: Relief, tiling: f32, max_triangles: usize) -> Option<Scene> {
+        let height = maps.height.as_ref()?;
+        if !(relief.depth.is_finite() && relief.depth > 0.0) {
+            return None;
+        }
+
+        // Without a normal map the displaced surface's own normals show the relief
+        let displacement = Displacement { depth: relief.depth * self.radius, level: relief.level, tiling, max_triangles, shade_relief: maps.normal.is_none() };
+        Some(Scene::displaced(&self.mesh, height, &displacement))
+    }
 }
+
+/// Triangle budget of a displaced scene in the interactive 3D view (builds in about 0.2–0.3 s on two cores).
+pub const VIEW_TRIANGLES: usize = 500_000;
 
 /// A built-in mesh by id; unknown ids give the rounded cube.
 pub fn builtin_mesh(id: &str) -> Mesh {
@@ -171,8 +212,8 @@ pub struct Settings {
     pub exposure: f32,
     /// Degrees.
     pub env_rotation: f32,
-    /// Parallax depth in UV units (0 = off).
-    pub height_scale: f32,
+    /// Interpret the green channel as DirectX (-Y) instead of OpenGL (+Y).
+    pub normal_y_flip: bool,
     /// Show the (blurred) environment behind the mesh instead of the flat backdrop.
     pub show_env: bool,
     /// 1 = one ray per pixel, 2 = 2×2 supersampling.
@@ -199,7 +240,7 @@ impl Default for Settings {
             tiling: 1.0,
             exposure: 0.0,
             env_rotation: 0.0,
-            height_scale: 0.03,
+            normal_y_flip: false,
             show_env: false,
             supersample: 1,
             ao_rays: 0,
@@ -346,36 +387,8 @@ fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
     let tan = (tan - nrm * nrm.dot(tan)).normalize_or_zero();
     let bit = nrm.cross(tan) * sign;
     let uv0 = *m.uvs.get(i0)? * w0 + *m.uvs.get(i1)? * w1 + *m.uvs.get(i2)? * w2;
-    let mut uv = uv0 * s.tiling;
+    let uv = uv0 * s.tiling;
     let v = -dir;
-    // Parallax occlusion: march the height field along the view direction in tangent space.
-    if s.height_scale > 0.0
-        && let Some(h) = &maps.height
-    {
-        let vt = Vec3::new(v.dot(tan), v.dot(bit), v.dot(nrm).max(0.05));
-        let steps = 32;
-        let delta = Vec2::new(vt.x, -vt.y) / vt.z * s.height_scale * s.tiling / steps as f32;
-        let mut layer = 1.0;
-        let mut cur = uv;
-        let mut prev_h = h.sample_gray(cur.x, cur.y, true);
-        let mut prev_layer = layer;
-        for _ in 0..steps {
-            let hv = h.sample_gray(cur.x, cur.y, true);
-            if hv >= layer {
-                // Linear refinement between the last two samples.
-                let a = prev_h - prev_layer;
-                let b = hv - layer;
-                let t = if (b - a).abs() > 1e-6 { a / (a - b) } else { 0.0 };
-                cur -= delta * (1.0 - t.clamp(0.0, 1.0));
-                break;
-            }
-            prev_h = hv;
-            prev_layer = layer;
-            layer -= 1.0 / steps as f32;
-            cur -= delta;
-        }
-        uv = cur;
-    }
     let a = alpha(maps, uv);
     if s.alpha_view {
         return Some(Shaded { color: Vec3::splat(a), alpha: 1.0, t: hit.t });
@@ -386,7 +399,10 @@ fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
     let ao = tex_gray(&maps.ao, uv, 1.0).clamp(0.0, 1.0);
     let n = match tex(&maps.normal, uv) {
         Some(c) => {
-            let t = Vec3::new(c[0] * 2.0 - 1.0, c[1] * 2.0 - 1.0, c[2] * 2.0 - 1.0);
+            let mut t = Vec3::new(c[0] * 2.0 - 1.0, c[1] * 2.0 - 1.0, c[2] * 2.0 - 1.0);
+            if s.normal_y_flip {
+                t.y = -t.y;
+            }
             // OpenGL convention: green points along +v in texture space, which is -bitangent
             // with top-left UVs.
             (tan * t.x - bit * t.y + nrm * t.z.max(0.05)).normalize_or_zero()
@@ -564,6 +580,80 @@ mod tests {
         assert!(px[c].abs_diff(128) <= 1 && px[c] == px[c + 1], "alpha view: {:?}", &px[c..c + 3]);
         let px = render(&scene, &red(1.0), &light, &Settings { alpha_view: true, ..s }, 64, 48);
         assert_eq!(&px[c..c + 3], &[255, 255, 255]);
+    }
+
+    fn flat(value: f32) -> Image {
+        Image::filled(8, 8, Kind::Gray, [value; 4])
+    }
+
+    fn displacement(depth: f32, level: f32) -> Displacement {
+        Displacement { depth, level, tiling: 1.0, max_triangles: 2048, shade_relief: false }
+    }
+
+    /// Heights of a displaced plane's vertices (it faces +y and starts at y = 0).
+    fn plane_heights(height: &Image, displacement: &Displacement) -> Vec<f32> {
+        let plane = materialcraft_geom::primitives::plane(2.0, 4);
+        Scene::displaced(&plane, height, displacement).mesh.positions.iter().map(|p| p.y).collect()
+    }
+
+    /// At level 0 the relief rises out of the surface: black stays on it and nothing sinks in.
+    #[test]
+    fn the_relief_rises_out_of_the_surface() {
+        let near = |heights: Vec<f32>, expected: f32| heights.iter().all(|y| (y - expected).abs() < 1e-5);
+
+        assert!(near(plane_heights(&flat(0.0), &displacement(0.2, 0.0)), 0.0), "black stays on the surface");
+        assert!(near(plane_heights(&flat(1.0), &displacement(0.2, 0.0)), 0.2), "white rises by the depth");
+        assert!(near(plane_heights(&flat(0.5), &displacement(0.2, 0.5)), 0.0), "the level height stays on the surface");
+        assert!(near(plane_heights(&flat(0.0), &displacement(0.2, 0.5)), -0.1), "below the level sinks");
+        assert!(near(plane_heights(&flat(1.0), &displacement(0.2, f32::NAN)), 0.2), "a broken level reads as 0");
+    }
+
+    /// Vertices at one spot (UV seams, hard edges) move together, so a displaced cube stays closed.
+    #[test]
+    fn a_displaced_cube_stays_closed() {
+        // No subdivision, so vertex i of the result is vertex i of the cube
+        let cube = builtin_mesh("cube");
+        let ramp = Image::gray(32, 32, |x, y| ((x + y) % 32) as f32 / 31.0);
+        let displaced = Scene::displaced(&cube, &ramp, &Displacement { max_triangles: 0, ..displacement(0.1, 0.0) });
+        assert_eq!(displaced.mesh.positions.len(), cube.positions.len());
+
+        let spot = |p: Vec3| (p * 1e4).round().as_ivec3().to_array();
+        let mut moved_to: HashMap<[i32; 3], Vec3> = HashMap::new();
+        for (before, after) in cube.positions.iter().zip(&displaced.mesh.positions) {
+            let first = *moved_to.entry(spot(*before)).or_insert(*after);
+            assert!((first - *after).length() < 1e-4, "{before:?} split into {first:?} and {after:?}");
+        }
+    }
+
+    /// Without a normal map the displaced surface's own normals shade the relief; with one, the original normals stay.
+    #[test]
+    fn relief_normals_follow_the_displaced_surface_only_when_asked() {
+        let plane = materialcraft_geom::primitives::plane(2.0, 8);
+        let slope = Image::gray(16, 16, |x, _| x as f32 / 15.0);
+        let tilted = |shade_relief| {
+            let scene = Scene::displaced(&plane, &slope, &Displacement { shade_relief, ..displacement(0.5, 0.0) });
+            scene.mesh.normals.iter().map(|n| n.x.abs()).fold(0.0f32, f32::max)
+        };
+
+        assert!(tilted(true) > 0.1, "a slope tilts the normals");
+        assert!(tilted(false) < 1e-5, "the original normals are kept");
+    }
+
+    #[test]
+    fn with_relief_needs_a_height_output_and_a_depth() {
+        let scene = Scene::builtin("plane");
+        let maps = Maps { height: Some(flat(1.0)), ..Maps::default() };
+        let relief = Relief { depth: 0.1, level: 0.0 };
+
+        assert!(scene.with_relief(&Maps::default(), relief, 1.0, 2048).is_none());
+        for depth in [0.0, -1.0, f32::NAN] {
+            assert!(scene.with_relief(&maps, Relief { depth, ..relief }, 1.0, 2048).is_none(), "{depth}");
+        }
+
+        // The depth is in scene radii
+        let raised = scene.with_relief(&maps, relief, 1.0, 2048).unwrap();
+        let top = raised.mesh.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        assert!((top - 0.1 * scene.radius).abs() < 1e-4, "{top} vs {}", 0.1 * scene.radius);
     }
 
     #[test]
