@@ -48,12 +48,11 @@ pub fn status_bar(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let cache = app.session.cache.lock().map(|c| c.bytes()).unwrap_or(0);
-                let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+                let engine = crate::tool_windows::engine_label(app);
                 let preview = app.session.preview_size.map_or_else(|| tr("full size").to_string(), |p| format!("{p} px"));
                 let text = format!(
-                    "{}: CPU ({threads} {})  |  {}: {:.0} ms  |  {}: {preview}  |  {}: {} MB  |  {} {}",
-                    tr("Engine"),
-                    tr("threads"),
+                    "{}: {engine}  |  {}: {:.0} ms  |  {}: {preview}  |  {}: {} MB  |  {} {}",
+                    tr("MC Engine"),
                     tr("Last compute"),
                     app.session.cooked.ms,
                     tr("Preview"),

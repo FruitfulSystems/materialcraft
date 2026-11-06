@@ -24,10 +24,63 @@ pub struct Prefs {
     pub thumbnails: bool,
     /// Library tiles: large icons or a list.
     pub library_list: bool,
+    /// Library tile size (icons view), 56..160 px.
+    pub library_tile: f32,
     /// Open the home screen when the app starts.
     pub show_home: bool,
     /// 3D view camera: pan limit and speed.
     pub camera: CameraPrefs,
+    /// Show the main toolbar under the menu bar (Windows ▸ Main toolbar).
+    pub show_main_toolbar: bool,
+    /// Worker threads the cook may use (Tools ▸ Switch engine; 0 = every core).
+    pub cook_threads: usize,
+    /// Graph toolbar: show each node's cook time.
+    pub node_timings: bool,
+    /// Graph toolbar: straight wires instead of curves.
+    pub straight_wires: bool,
+    /// Graph toolbar: dropped nodes land on the grid.
+    pub snap_grid: bool,
+    /// Graph toolbar: draw the background grid.
+    pub show_grid: bool,
+    /// General: how many recent packages the File menu keeps.
+    pub recent_count: u32,
+    /// General: undo steps kept.
+    pub history_size: u32,
+    /// General: wheel zooms the other way in every view.
+    pub invert_zoom: bool,
+    /// General: where file dialogs open: `last`, `package` or `custom` (`save_path`).
+    pub save_path_mode: String,
+    pub save_path: String,
+    /// General: the auto-backup folder (empty = Documents/MaterialCraft/autosave).
+    pub temp_dir: String,
+    /// General: the cooked image cache's size in MB (0 = automatic).
+    pub cache_mb: u32,
+    /// General: auto-backup versions kept per package.
+    pub backup_versions: u32,
+    /// General: cap on every cook's larger side in px (0 = none).
+    pub cook_limit: u32,
+    /// Projects: lights on in a new session when no default 3D state is saved (ambient, point 1, point 2).
+    pub default_lights: [bool; 3],
+    /// Graph: Tab opens the node search.
+    pub tab_key_menu: bool,
+    /// Graph: dragging a wire into empty space opens the node search.
+    pub drag_create: bool,
+    /// Graph: show the 3D view when a graph opens.
+    pub view_3d_on_open: bool,
+    /// Graph: show the graph's output in the 2D view when it opens.
+    pub view_2d_on_open: bool,
+    /// Graph: show a newly added node in the 2D view.
+    pub auto_display_new_node: bool,
+    /// Graph: insert a conversion node when a color wire meets a grayscale input (or the reverse).
+    pub auto_convert: bool,
+    /// 3D view: the environment is hidden behind the mesh by default.
+    pub env_hidden: bool,
+    /// 3D view: default viewport render scale (0 = auto).
+    pub viewport_scale: f32,
+    /// 3D view: default samples per pixel of the resting frame (n × n).
+    pub sample_count: u32,
+    /// Bakers: worker threads (0 = every core).
+    pub bake_threads: u32,
 }
 
 impl Default for Prefs {
@@ -41,8 +94,35 @@ impl Default for Prefs {
             autosave_minutes: 5,
             thumbnails: true,
             library_list: false,
+            library_tile: 78.0,
             show_home: true,
             camera: CameraPrefs::default(),
+            show_main_toolbar: true,
+            cook_threads: 0,
+            node_timings: false,
+            straight_wires: false,
+            snap_grid: false,
+            show_grid: true,
+            recent_count: 12,
+            history_size: 200,
+            invert_zoom: false,
+            save_path_mode: "last".into(),
+            save_path: String::new(),
+            temp_dir: String::new(),
+            cache_mb: 0,
+            backup_versions: 6,
+            cook_limit: 8192,
+            default_lights: [true, false, false],
+            tab_key_menu: true,
+            drag_create: true,
+            view_3d_on_open: true,
+            view_2d_on_open: true,
+            auto_display_new_node: true,
+            auto_convert: false,
+            env_hidden: true,
+            viewport_scale: 0.0,
+            sample_count: 2,
+            bake_threads: 0,
         }
     }
 }
@@ -57,6 +137,10 @@ pub struct Windows {
     pub preferences: bool,
     pub shortcuts: bool,
     pub home: bool,
+    pub plugin_manager: bool,
+    pub switch_engine: bool,
+    /// The Dependency Manager window (Windows menu).
+    pub dependencies: bool,
     /// The action waiting on the "unsaved changes" dialog (readable over the control channel;
     /// never restored from a saved layout).
     #[serde(skip_deserializing)]
@@ -126,12 +210,34 @@ pub struct UiState {
     /// Library: the selected category path ("" = all) and the search text.
     pub library_category: String,
     pub library_search: String,
+    /// Library entries starred by the user (node ids, `@graph`, `fn:op`).
+    pub library_favorites: Vec<String>,
+    /// Library tree groups that are folded shut.
+    pub library_collapsed: Vec<String>,
     /// Recently opened or saved packages, newest first.
     pub recent: Vec<String>,
+    /// Plugins (file or folder paths in the plugins folder) whose graphs the library offers.
+    pub plugins_loaded: Vec<String>,
+    /// 3D view ▸ Scene ▸ Save Current State As Default: the state new sessions and Reset Scene use.
+    pub view3d_default: Option<serde_json::Value>,
+    /// The folder the last file dialog ended in (Preferences ▸ Save/Export path: Last path).
+    pub last_dir: String,
+    /// Preferences ▸ Shortcuts: node creation shortcuts, def id → shortcut ("Ctrl+Shift+B").
+    pub node_shortcuts: Vec<(String, String)>,
     /// New graph dialog fields.
     pub new_graph_template: String,
     pub new_graph_name: String,
     pub new_graph_size: u32,
+    /// New graph height when the two sizes are unlinked (0 = same as the width).
+    pub new_graph_height: u32,
+    /// Keep width and height the same in the new graph dialog.
+    pub new_graph_link: bool,
+    /// Template category shown in the new graph dialog (empty = all).
+    pub new_graph_category: String,
+    /// Graph toolbar: the parent size's width and height change together.
+    pub parent_link: bool,
+    /// Graph toolbar: the align buttons also stack the nodes (no gaps).
+    pub stack_align: bool,
     /// Export dialog fields.
     pub export_dir: String,
     pub export_format: String,
@@ -154,10 +260,21 @@ impl Default for UiState {
             image_camera: ImageCamera::default(),
             library_category: String::new(),
             library_search: String::new(),
+            library_favorites: Vec::new(),
+            library_collapsed: Vec::new(),
             recent: Vec::new(),
+            plugins_loaded: Vec::new(),
+            view3d_default: None,
+            last_dir: String::new(),
+            node_shortcuts: Vec::new(),
             new_graph_template: "pbr".into(),
-            new_graph_name: "New_graph".into(),
+            new_graph_name: "Material_Graph".into(),
             new_graph_size: 1024,
+            new_graph_height: 0,
+            new_graph_link: true,
+            new_graph_category: String::new(),
+            parent_link: true,
+            stack_align: true,
             export_dir: String::new(),
             export_format: "png".into(),
             export_depth: 0,
@@ -173,7 +290,7 @@ impl UiState {
     pub fn add_recent(&mut self, path: &str) {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_string());
-        self.recent.truncate(12);
+        self.recent.truncate(self.prefs.recent_count.clamp(1, 50) as usize);
     }
 }
 

@@ -134,6 +134,26 @@ impl Cache {
         self.bytes
     }
 
+    /// The cache's size limit in bytes.
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// Change the size limit (at least 16 MB), evicting the least recently used entries past it.
+    pub fn set_cap(&mut self, cap_bytes: usize) {
+        self.cap = cap_bytes.max(16 << 20);
+        self.evict();
+    }
+
+    fn evict(&mut self) {
+        while self.bytes > self.cap && self.entries.len() > 1 {
+            let Some((&k, _)) = self.entries.iter().min_by_key(|(_, e)| e.2) else { break };
+            if let Some(e) = self.entries.remove(&k) {
+                self.bytes = self.bytes.saturating_sub(e.1);
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -164,12 +184,7 @@ impl Cache {
             self.bytes = self.bytes.saturating_sub(old.1);
         }
         self.bytes += size;
-        while self.bytes > self.cap && self.entries.len() > 1 {
-            let Some((&k, _)) = self.entries.iter().min_by_key(|(_, e)| e.2) else { break };
-            if let Some(e) = self.entries.remove(&k) {
-                self.bytes = self.bytes.saturating_sub(e.1);
-            }
-        }
+        self.evict();
     }
 }
 

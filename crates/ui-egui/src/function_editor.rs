@@ -117,6 +117,27 @@ fn commit(app: &mut MaterialCraftApp, node: NodeId, param: &str, g: &FnGraph) {
     app.run("graph.node.param", json!({"id": node.0, "param": param, "value": v}));
 }
 
+/// Add a function node of `op` to the open function editor (the library's Function nodes).
+/// Returns false when no function graph is open.
+pub fn add_op(app: &mut MaterialCraftApp, op: &str) -> bool {
+    let Some(e) = app.fn_editor.as_ref() else { return false };
+    let (node, param) = (e.node, e.param.clone());
+    let Some(mut g) = current(app, e) else { return false };
+    if !FN_OPS.iter().any(|o| o.0 == op) || g.nodes.len() >= 10_000 {
+        return false;
+    }
+    let id = g.nodes.iter().map(|n| n.id + 1).max().unwrap_or(1);
+    // Below the lowest node, so new nodes never stack on one another.
+    let bottom = g.nodes.iter().map(|n| n.pos[1]).fold(-ROW * 4.0, f32::max) + ROW * 4.0;
+    let left = g.nodes.iter().map(|n| n.pos[0]).fold(0.0, f32::min);
+    g.nodes.push(FnNode { id, op: op.into(), inputs: vec![None; arity(op)], value: default_value(op), pos: [left, bottom] });
+    if g.output.is_none() {
+        g.output = Some(id);
+    }
+    commit(app, node, &param, &g);
+    true
+}
+
 /// Draw the editor window when one is open.
 pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let Some(mut e) = app.fn_editor.take() else { return };

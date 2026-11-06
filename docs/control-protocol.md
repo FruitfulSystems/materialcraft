@@ -81,7 +81,14 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `graph.preset.save` / `.apply` / `.delete` | `{name}`: store, restore or remove the current input values |
 | `graph.createFromSelection` | `{name?, ids?}`: move nodes into a sub-graph and replace them with an instance |
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
+| `view.3d` (nested) | `camera? {focalLength, projection, background, backgroundColor, overrideResolution, resolution, resolutionScale, autoClip, near, far}`, `lights? {ambientOn, ambient, point: [{on, color, intensity, position}, …]}`, `renderer? {useViewportResolution, resolution, scale, samples, aoRays}`, `display? {wireframe, backfaceCulling, boundingBox, lights, resolution, stats, fps}`, `material? {shader, common: {…}, useMap: {…}, tessellation, uvScale}`, `envEnabled?`: the keys given change, the rest stays; values are clamped |
+| `view.3d.reset` / `view.3d.state` / `view.3d.loadState` | `{what?: all\|scene\|camera\|lights\|environment\|material\|renderer\|display}` / `{}` → the state as JSON / `{state, keepScene?}` |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
+| `file.linkBitmap` / `file.reloadResources` / `file.deleteResource` | `{path, name?}` a bitmap read from disk (a relative link when it lies in the package's folder) / `{}` / `{name}` |
+| `file.importGraph` / `file.packageGraphs` | `{path, graph?}` copies a graph with its instances and bitmaps from another package / `{path}` lists a package file's graphs |
+| `file.saveCopy` / `file.exportWithDependencies` | `{path}` / `{dir}` the package and copies of its linked bitmaps |
+| `graph.add` | `{graph}`: a graph as JSON, added under a unique name |
+| `session.settings` | `{historySize?, cacheMb?, cookLimit?}` (preferences) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
 
 ## Function graphs

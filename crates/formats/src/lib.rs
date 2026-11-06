@@ -369,7 +369,7 @@ mod tests {
     fn zip_resources(resources: &[(&str, &str)], entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut p = Package::new("T");
         for (n, f) in resources {
-            p.resources.push(Resource { name: (*n).into(), file: (*f).into(), bytes: ResourceBytes::default() });
+            p.resources.push(Resource::new(*n, *f, ResourceBytes::default()));
         }
         let json = serde_json::to_vec(&p).unwrap();
         let mut buf = Cursor::new(Vec::new());
@@ -418,7 +418,7 @@ mod tests {
     fn colliding_resource_file_names_save_and_load() {
         let mut p = Package::new("T");
         for (n, f, b) in [("a", "a/x.png", 1u8), ("b", "b/x.png", 2)] {
-            p.resources.push(Resource { name: n.into(), file: f.into(), bytes: ResourceBytes::new(vec![b; 8]) });
+            p.resources.push(Resource::new(n, f, ResourceBytes::new(vec![b; 8])));
         }
         let q = load_package(&save_package(&p).unwrap()).unwrap();
         assert_eq!(q.resources[0].bytes.as_slice()[0], 1);

@@ -21,14 +21,18 @@ pub mod levels_editor;
 mod lib_test;
 pub mod library;
 pub mod menus;
+pub mod plugins;
+pub mod preferences;
 pub mod properties;
 pub mod state;
 pub mod theme;
 pub mod thumbs;
+pub mod tool_windows;
 pub mod toolbar;
 pub mod unsaved;
 pub mod view2d;
 pub mod view3d;
+pub mod view3d_props;
 pub mod web_files;
 pub mod widgets;
 pub mod windows;
@@ -60,6 +64,21 @@ pub struct MaterialCraftApp {
     pub graph: graph_view::GraphView,
     pub view3d: view3d::View3dState,
     pub view2d: view2d::View2dState,
+    /// The plugins folder's packages (Tools ▸ Plugin Manager).
+    pub plugins: plugins::Plugins,
+    /// A graph copied in the explorer.
+    pub explorer_clipboard: explorer::GraphClipboard,
+    /// The explorer's rename-in-place field.
+    pub explorer_rename: explorer::Rename,
+    /// Import graph: the package file picked and its graphs, waiting for a choice.
+    pub import_pick: Option<(String, Vec<String>)>,
+    /// The 3D view property page shown in the Properties panel, and the selection when it opened
+    /// (selecting a node closes it).
+    pub props3d: Option<(view3d::Page3d, Vec<materialcraft_engine::core::NodeId>)>,
+    /// The cache size last pushed into the session (MB; preferences).
+    applied_cache_mb: u32,
+    /// The Preferences window's working copy.
+    pub prefs_editor: preferences::PrefsEditor,
     /// The function graph editor window, when open.
     pub fn_editor: Option<function_editor::FnEditor>,
     /// Synthetic input from the control channel, fed to egui on the next frames.
@@ -93,6 +112,17 @@ impl MaterialCraftApp {
         i18n::set_language(&app.ui.prefs.language);
         app.fonts_ready = true;
         app.ui.windows.home = app.ui.prefs.show_home;
+        // The 3D view's saved default state, else the default lighting preference.
+        match app.ui.view3d_default.clone() {
+            Some(state) => {
+                app.run("view.3d.loadState", serde_json::json!({"state": state}));
+            }
+            None => {
+                let [ambient, p1, p2] = app.ui.prefs.default_lights;
+                app.run("view.3d", serde_json::json!({"lights": {"ambientOn": ambient, "point": [{"on": p1}, {"on": p2}]}}));
+            }
+        }
+        app.view3d.show_env = !app.ui.prefs.env_hidden;
         app
     }
 
@@ -112,6 +142,13 @@ impl MaterialCraftApp {
             graph: graph_view::GraphView::default(),
             view3d: view3d::View3dState::default(),
             view2d: view2d::View2dState::default(),
+            plugins: plugins::Plugins::default(),
+            explorer_clipboard: explorer::GraphClipboard::default(),
+            explorer_rename: explorer::Rename::default(),
+            import_pick: None,
+            props3d: None,
+            applied_cache_mb: u32::MAX,
+            prefs_editor: preferences::PrefsEditor::default(),
             fn_editor: None,
             input_queue: VecDeque::new(),
             pending_screenshots: Vec::new(),
@@ -133,6 +170,14 @@ impl MaterialCraftApp {
 
     /// Push the preferences that live in the session (preview size, 3D camera).
     pub fn apply_prefs(&mut self) {
+        self.cooker.threads = self.ui.prefs.cook_threads;
+        let p = &self.ui.prefs;
+        let settings = serde_json::json!({"historySize": p.history_size.clamp(1, 10_000), "cacheMb": if p.cache_mb == 0 { 1024 } else { p.cache_mb }, "cookLimit": p.cook_limit});
+        if self.session.max_undo != p.history_size as usize || self.session.cook_limit.unwrap_or(0) != p.cook_limit || p.cache_mb != self.applied_cache_mb {
+            self.applied_cache_mb = p.cache_mb;
+            self.run("session.settings", settings);
+        }
+        self.ui.recent.truncate(self.ui.prefs.recent_count.clamp(1, 50) as usize);
         if self.session.camera != self.ui.prefs.camera.sanitized() {
             self.session.set_camera_prefs(self.ui.prefs.camera);
         }
@@ -142,12 +187,38 @@ impl MaterialCraftApp {
         }
     }
 
+    /// Preferences ▸ Graph: what happens when a graph opens (3D view, 2D view, frame all).
+    fn graph_opened(&mut self) {
+        self.ui.frame_all = true;
+        if self.ui.prefs.view_3d_on_open && !self.ui.dock.is_open(docking::Panel::View3d) {
+            self.ui.dock.toggle(docking::Panel::View3d);
+        }
+        let output = self.session.graph().ok().and_then(|g| g.nodes.iter().find(|n| n.def == "output").map(|n| n.id.0));
+        if self.ui.prefs.view_2d_on_open
+            && let Some(out) = output
+        {
+            let _ = cook::execute_guarded(&mut self.session, "view.2d", &serde_json::json!({"node": out, "port": 0}));
+        }
+    }
+
     /// Run an engine command, reporting errors as toasts. Returns the result on success.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
+        let graph_before = (self.session.graph, self.session.pkg.graphs.len());
         match cook::execute_guarded(&mut self.session, id, &params) {
             Ok(v) => {
                 if id == "view.previewSize" {
                     self.ui.prefs.preview_size = self.session.preview_size.unwrap_or(0);
+                }
+                if id == "graph.node.add" && self.ui.prefs.auto_display_new_node {
+                    // Preferences ▸ Graph: a new node shows in the 2D view.
+                    if let Some(n) = v.get("id").and_then(Value::as_u64) {
+                        let _ = cook::execute_guarded(&mut self.session, "view.2d", &serde_json::json!({"node": n, "port": 0}));
+                    }
+                }
+                if (self.session.graph, self.session.pkg.graphs.len()) != graph_before
+                    && matches!(id, "graph.open" | "file.new" | "file.open" | "file.newPackage" | "file.importGraph" | "graph.add" | "graph.duplicate")
+                {
+                    self.graph_opened();
                 }
                 Some(v)
             }
@@ -177,10 +248,20 @@ impl MaterialCraftApp {
             return;
         }
         self.next_autosave = now + period;
-        let dir = user_dir("autosave");
-        let path = dir.join(format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));
+        let dir = if self.ui.prefs.temp_dir.trim().is_empty() { user_dir("autosave") } else { std::path::PathBuf::from(self.ui.prefs.temp_dir.trim()) };
+        let stem = materialcraft_engine::formats::safe_file_name(&self.session.pkg.name);
+        let path = dir.join(format!("{stem}.sbs"));
+        let versions = self.ui.prefs.backup_versions.clamp(1, 50) as usize;
         let pkg = self.session.pkg.clone();
         let spawned = std::thread::Builder::new().name("materialcraft-autosave".into()).spawn(move || {
+            // Older backups shift down one slot: name.sbs, name.1.sbs, name.2.sbs, …
+            let slot = |i: usize| if i == 0 { dir.join(format!("{stem}.sbs")) } else { dir.join(format!("{stem}.{i}.sbs")) };
+            for i in (1..versions).rev() {
+                if slot(i - 1).exists() {
+                    let _ = std::fs::rename(slot(i - 1), slot(i));
+                }
+            }
+            let _ = std::fs::remove_file(slot(versions));
             let result = std::fs::create_dir_all(&dir)
                 .map_err(|e| e.to_string())
                 .and_then(|_| materialcraft_engine::formats::sbs::write_sbs(&pkg).map_err(|e| e.to_string()))
@@ -272,7 +353,9 @@ impl MaterialCraftApp {
         // Tab can focus a menu or toolbar button while drawing; preserve keyboard ownership.
         self.graph.keyboard_was_focused = ctx.egui_wants_keyboard_input();
         menus::menu_bar(self, ui);
-        toolbar::main_toolbar(self, ui);
+        if self.ui.prefs.show_main_toolbar {
+            toolbar::main_toolbar(self, ui);
+        }
         toolbar::status_bar(self, ui);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::Tokens::get(&ctx).chrome)).show(ui, |ui| docking::show(self, ui));
         windows::show(self, &ctx);

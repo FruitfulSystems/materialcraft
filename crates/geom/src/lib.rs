@@ -10,6 +10,7 @@ pub mod bvh;
 pub mod camera;
 pub mod gbuffer;
 pub mod mesh;
+pub mod preview;
 pub mod primitives;
 pub mod unwrap;
 

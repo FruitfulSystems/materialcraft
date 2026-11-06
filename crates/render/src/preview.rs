@@ -12,6 +12,8 @@ use materialcraft_geom::{Bvh, Mesh, OrbitCamera};
 use materialcraft_image::{Image, linear_to_srgb};
 use rayon::prelude::*;
 
+pub use materialcraft_geom::preview::{Background, Common, MapUse, PointLight, Shader};
+
 use crate::ibl::{self, EnvImage};
 
 /// The material's maps (any may be missing: defaults are mid gray, flat, rough 0.5, dielectric).
@@ -25,6 +27,10 @@ pub struct Maps {
     pub ao: Option<Image>,
     pub emissive: Option<Image>,
     pub opacity: Option<Image>,
+    /// Specular color (the specular/glossiness workflow and OpenPBR's specular weight).
+    pub specular: Option<Image>,
+    /// Glossiness (the specular/glossiness workflow: 1 − roughness).
+    pub glossiness: Option<Image>,
 }
 
 impl Maps {
@@ -41,6 +47,8 @@ impl Maps {
                 "ambientOcclusion" => &mut m.ao,
                 "emissive" => &mut m.emissive,
                 "opacity" => &mut m.opacity,
+                "specular" => &mut m.specular,
+                "glossiness" => &mut m.glossiness,
                 _ => continue,
             };
             if slot.is_none() {
@@ -175,8 +183,9 @@ pub const VIEW_TRIANGLES: usize = 500_000;
 
 /// A built-in mesh by id; unknown ids give the rounded cube.
 pub fn builtin_mesh(id: &str) -> Mesh {
-    let mut m = materialcraft_geom::primitives::builtin(id).unwrap_or_else(|| materialcraft_geom::primitives::rounded_box(Vec3::ONE, 0.15));
-    if id == "sphere" {
+    let base = if id == "sphere_2_tiles" { "sphere" } else { id };
+    let mut m = materialcraft_geom::primitives::builtin(base).unwrap_or_else(|| materialcraft_geom::primitives::rounded_box(Vec3::ONE, 0.15));
+    if id == "sphere_2_tiles" {
         // The texture wraps twice around, so texels are square at the equator.
         m.uvs.iter_mut().for_each(|uv| uv.x *= 2.0);
     }
@@ -219,7 +228,7 @@ impl Lighting {
 }
 
 /// Camera and look.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     /// Degrees.
     pub yaw: f32,
@@ -249,6 +258,27 @@ pub struct Settings {
     pub transparency: bool,
     /// Show the material's alpha channel on the mesh, unlit (white = opaque, black = clear).
     pub alpha_view: bool,
+    /// Vertical field of view, degrees (perspective).
+    pub fov: f32,
+    /// Orthographic projection.
+    pub ortho: bool,
+    /// What a miss shows (`show_env` = true overrides it with the environment).
+    pub background: Background,
+    /// Fixed near and far clip distances in scene radii from the camera (`None` = automatic).
+    pub clip: Option<[f32; 2]>,
+    /// Ambient light added to every surface (linear RGB; black = off).
+    pub ambient: [f32; 3],
+    /// Point lights.
+    pub lights: [PointLight; 2],
+    /// Environment lighting on (off leaves the ambient and point lights).
+    pub env_light: bool,
+    pub shader: Shader,
+    pub common: Common,
+    pub use_map: MapUse,
+    /// Draw the triangle edges over the surface.
+    pub wireframe: bool,
+    /// Skip faces turned away from the camera.
+    pub backface_culling: bool,
 }
 
 impl Default for Settings {
@@ -268,6 +298,18 @@ impl Default for Settings {
             key_light: 0.0,
             transparency: true,
             alpha_view: false,
+            fov: 35.0,
+            ortho: false,
+            background: Background::Backdrop,
+            clip: None,
+            ambient: [0.0; 3],
+            lights: PointLight::DEFAULTS,
+            env_light: true,
+            shader: Shader::OpenPbr,
+            common: Common::default(),
+            use_map: MapUse::default(),
+            wireframe: false,
+            backface_culling: false,
         }
     }
 }
@@ -280,9 +322,9 @@ pub fn camera(scene: &Scene, s: &Settings) -> OrbitCamera {
         yaw: s.yaw.to_radians(),
         pitch: s.pitch.clamp(-89.0, 89.0).to_radians(),
         distance: s.distance.clamp(1.05, 50.0) * scene.radius,
-        fov: 35.0,
+        fov: if s.fov.is_finite() { s.fov.clamp(5.0, 120.0) } else { 35.0 },
         scene_radius: scene.radius,
-        ortho: false,
+        ortho: s.ortho,
     }
 }
 
@@ -293,16 +335,6 @@ pub fn pan(scene: &Scene, s: &Settings, dx: f32, dy: f32) -> [f32; 3] {
     cam.pan(dx, dy);
     let t = (cam.target - scene.center) / scene.radius.max(f32::EPSILON);
     t.to_array().map(|v| if v.is_finite() { v } else { 0.0 })
-}
-
-#[inline]
-fn tex(img: &Option<Image>, uv: Vec2) -> Option<[f32; 4]> {
-    img.as_ref().map(|i| i.sample(uv.x, uv.y, true))
-}
-
-#[inline]
-fn tex_gray(img: &Option<Image>, uv: Vec2, default: f32) -> f32 {
-    img.as_ref().map_or(default, |i| i.sample_gray(uv.x, uv.y, true))
 }
 
 /// Narkowicz's fit of the ACES filmic curve.
@@ -328,11 +360,11 @@ fn rotate_y(v: Vec3, deg: f32) -> Vec3 {
 
 /// The material's alpha at `uv`: the opacity output, else the base color's alpha channel, else
 /// opaque.
-fn alpha(maps: &Maps, uv: Vec2) -> f32 {
+fn alpha(maps: &Maps, s: &Settings, uv: Vec2) -> f32 {
     let a = match (&maps.opacity, &maps.base_color) {
-        (Some(o), _) => o.sample_gray(uv.x, uv.y, true),
-        (None, Some(b)) if !b.is_gray() => b.sample(uv.x, uv.y, true)[3],
-        _ => 1.0,
+        (Some(o), _) if s.use_map.opacity => o.sample_gray(uv.x, uv.y, true),
+        (_, Some(b)) if s.use_map.base_color && !b.is_gray() => b.sample(uv.x, uv.y, true)[3] * s.common.opacity,
+        _ => s.common.opacity,
     };
     if a.is_finite() { a.clamp(0.0, 1.0) } else { 1.0 }
 }
@@ -391,9 +423,101 @@ struct Shaded {
     t: f32,
 }
 
+/// Schlick Fresnel for a dielectric of `ior` at `cos`.
+#[inline]
+fn fresnel(ior: f32, cos: f32) -> f32 {
+    let f0 = ((ior - 1.0) / (ior + 1.0)).powi(2);
+    f0 + (1.0 - f0) * (1.0 - cos.clamp(0.0, 1.0)).powi(5)
+}
+
+/// Thin-film interference tint: the reflectance of a film `nm` thick with index `ior` for the
+/// three wavelengths 650/550/450 nm at `cos` (a cosine-series approximation).
+#[inline]
+fn thin_film(nm: f32, ior: f32, cos: f32) -> Vec3 {
+    let sin2 = (1.0 - cos * cos).clamp(0.0, 1.0) / (ior * ior);
+    let cos_t = (1.0 - sin2).max(0.0).sqrt();
+    let path = 2.0 * ior * nm * cos_t;
+    let r = |lambda: f32| 0.5 + 0.5 * (std::f32::consts::TAU * path / lambda).cos();
+    Vec3::new(r(650.0), r(550.0), r(450.0))
+}
+
+/// Blinn-Phong highlight exponent from roughness.
+#[inline]
+fn blinn_exponent(rough: f32) -> f32 {
+    2.0 / (rough * rough).max(1e-3) - 2.0
+}
+
+/// What the maps (or the common values) say about the surface at `uv`.
+struct Surface {
+    base: Vec3,
+    rough: f32,
+    metal: f32,
+    ao: f32,
+    /// Dielectric reflectance at normal incidence (the specular workflow's specular color).
+    spec_f0: Vec3,
+}
+
+fn surface(maps: &Maps, s: &Settings, uv: Vec2) -> Surface {
+    let c = &s.common;
+    let common_base = Vec3::from(c.base_color) * c.base_weight;
+    let base = match &maps.base_color {
+        Some(b) if s.use_map.base_color => {
+            let v = b.sample(uv.x, uv.y, true);
+            Vec3::new(v[0], v[1], v[2]) * c.base_weight
+        }
+        _ => common_base,
+    };
+    let (rough, spec_f0) = if s.shader == Shader::SpecularGlossiness {
+        let gloss = match &maps.glossiness {
+            Some(g) => g.sample_gray(uv.x, uv.y, true),
+            None => 1.0 - c.specular_roughness,
+        };
+        let spec = match &maps.specular {
+            Some(sp) if s.use_map.specular => {
+                let v = sp.sample(uv.x, uv.y, true);
+                Vec3::new(v[0], v[1], v[2])
+            }
+            _ => Vec3::from(c.specular_color) * 0.04,
+        };
+        ((1.0 - gloss).clamp(0.02, 1.0), spec)
+    } else {
+        let rough = match &maps.roughness {
+            Some(r) if s.use_map.roughness => r.sample_gray(uv.x, uv.y, true),
+            _ => c.specular_roughness,
+        };
+        let f0 = ((c.ior - 1.0) / (c.ior + 1.0)).powi(2);
+        let spec_w = match &maps.specular {
+            Some(sp) if s.use_map.specular && s.shader == Shader::OpenPbr => sp.sample_gray(uv.x, uv.y, true),
+            _ => 1.0,
+        };
+        (rough.clamp(0.02, 1.0), Vec3::from(c.specular_color) * (f0 * c.specular_weight * spec_w))
+    };
+    let metal = match &maps.metallic {
+        Some(m) if s.use_map.metallic && s.shader != Shader::SpecularGlossiness => m.sample_gray(uv.x, uv.y, true),
+        _ if s.shader == Shader::SpecularGlossiness => 0.0,
+        _ => c.metalness,
+    };
+    let ao = match &maps.ao {
+        Some(a) if s.use_map.ao => a.sample_gray(uv.x, uv.y, true),
+        _ => c.ambient_occlusion,
+    };
+    Surface { base, rough, metal: metal.clamp(0.0, 1.0), ao: ao.clamp(0.0, 1.0), spec_f0 }
+}
+
 /// Shade the first surface along one ray; `None` = missed the mesh.
-fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec3, dir: Vec3, px: &Px) -> Option<Shaded> {
-    let hit = scene.bvh.closest(origin, dir, f32::MAX)?;
+fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec3, dir: Vec3, px: &Px, tmax: f32) -> Option<Shaded> {
+    let hit = if s.backface_culling {
+        let m = &scene.mesh;
+        scene.bvh.closest_filtered(origin, dir, tmax, &|t| {
+            let Some([i0, i1, i2]) = m.tri(t as usize) else { return true };
+            match (m.positions.get(i0), m.positions.get(i1), m.positions.get(i2)) {
+                (Some(a), Some(b), Some(c)) => (*b - *a).cross(*c - *a).dot(dir) < 0.0,
+                _ => true,
+            }
+        })?
+    } else {
+        scene.bvh.closest(origin, dir, tmax)?
+    };
     let m = &scene.mesh;
     let [i0, i1, i2] = m.tri(hit.tri as usize)?;
     let (w1, w2) = (hit.u, hit.v);
@@ -410,16 +534,17 @@ fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
     let uv0 = *m.uvs.get(i0)? * w0 + *m.uvs.get(i1)? * w1 + *m.uvs.get(i2)? * w2;
     let uv = uv0 * s.tiling;
     let v = -dir;
-    let a = alpha(maps, uv);
+    let t_total = hit.t;
+    let a = alpha(maps, s, uv);
+    // Wireframe: the edges of the triangle hit, in the barycentric sense.
+    let on_edge = s.wireframe && [w0, w1, w2].iter().any(|w| *w < 0.03);
     if s.alpha_view {
-        return Some(Shaded { color: Vec3::splat(a), alpha: 1.0, t: hit.t });
+        return Some(Shaded { color: if on_edge { Vec3::new(1.0, 0.5, 0.0) } else { Vec3::splat(a) }, alpha: 1.0, t: t_total });
     }
-    let base = tex(&maps.base_color, uv).map_or(Vec3::splat(0.5), |c| Vec3::new(c[0], c[1], c[2]));
-    let rough = tex_gray(&maps.roughness, uv, 0.5).clamp(0.02, 1.0);
-    let metal = tex_gray(&maps.metallic, uv, 0.0).clamp(0.0, 1.0);
-    let ao = tex_gray(&maps.ao, uv, 1.0).clamp(0.0, 1.0);
-    let n = match tex(&maps.normal, uv) {
-        Some(c) => {
+    let sf = surface(maps, s, uv);
+    let n = match &maps.normal {
+        Some(nm) if s.use_map.normal => {
+            let c = nm.sample(uv.x, uv.y, true);
             let mut t = Vec3::new(c[0] * 2.0 - 1.0, c[1] * 2.0 - 1.0, c[2] * 2.0 - 1.0);
             if s.normal_y_flip {
                 t.y = -t.y;
@@ -428,35 +553,119 @@ fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
             // with top-left UVs.
             (tan * t.x - bit * t.y + nrm * t.z.max(0.05)).normalize_or_zero()
         }
-        None => nrm,
+        _ => nrm,
     };
     let n = if n.dot(v) < 0.0 { nrm } else { n };
     let ndv = n.dot(v).clamp(1e-4, 1.0);
-    let f0 = Vec3::splat(0.04).lerp(base, metal);
-    let diffuse_col = base * (1.0 - metal);
+    let c = &s.common;
+    let wire = |mut color: Vec3| {
+        if on_edge {
+            color = Vec3::new(1.0, 0.5, 0.0);
+        }
+        color
+    };
+    match s.shader {
+        Shader::Unlit => return Some(Shaded { color: wire(sf.base), alpha: if s.transparency { a } else { 1.0 }, t: t_total }),
+        Shader::MeshInfo => return Some(Shaded { color: wire(n * 0.5 + Vec3::splat(0.5)), alpha: 1.0, t: t_total }),
+        _ => {}
+    }
+    let (base, rough, metal, ao) = (sf.base, sf.rough, sf.metal, sf.ao);
+    let f0 = sf.spec_f0.lerp(base, metal);
+    // Diffuse roughness darkens the grazing diffuse a little (a cheap Oren-Nayar stand-in).
+    let diffuse_col = base * (1.0 - metal) * (1.0 - 0.5 * c.diffuse_roughness * (1.0 - ndv));
     let rot = |d: Vec3| rotate_y(d, -s.env_rotation);
     let r = (n * (2.0 * n.dot(v)) - v).normalize_or_zero();
     let (sa, sb) = env_brdf(rough, ndv);
-    let spec = light.specular(rot(r), rough) * (f0 * sa + Vec3::splat(sb));
-    let diff = light.diffuse(rot(n)) * diffuse_col;
-    let mut c = (diff + spec) * ao;
-    if s.ao_rays > 0 || s.key_light > 0.0 {
+    let env_diff = if s.env_light { light.diffuse(rot(n)) } else { Vec3::ZERO };
+    let env_spec = if s.env_light { light.specular(rot(r), rough) } else { Vec3::ZERO };
+    let ambient = Vec3::from(s.ambient);
+    let subsurface = matches!(s.shader, Shader::OpenPbr | Shader::Subsurface) && c.subsurface_weight > 0.0;
+    let mut diff = (env_diff + ambient) * diffuse_col;
+    if subsurface {
+        // Light that enters and leaves nearby: the surface glows with the subsurface color.
+        let sss = (env_diff + ambient) * Vec3::from(c.subsurface_color) * (1.0 - metal);
+        diff = diff.lerp(sss, c.subsurface_weight);
+    }
+    let mut color = match s.shader {
+        Shader::Lambert => diff,
+        Shader::Blinn => diff + ambient * f0,
+        _ => {
+            let mut spec_tint = f0 * sa + Vec3::splat(sb);
+            if s.shader == Shader::OpenPbr && c.thin_film_weight > 0.0 {
+                let film = thin_film(c.thin_film_thickness, c.thin_film_ior, ndv);
+                spec_tint = spec_tint.lerp(spec_tint * film * 2.0, c.thin_film_weight);
+            }
+            diff + env_spec * spec_tint
+        }
+    };
+    color *= ao;
+    // Direct lights (the key light and the point lights cast shadows).
+    let need_rays = s.ao_rays > 0 || s.key_light > 0.0 || s.lights.iter().any(|l| l.on);
+    if need_rays {
         // The true surface (a displaced scene's facets), offset to avoid self-hits.
         let (p0, p1, p2) = (*m.positions.get(i0)?, *m.positions.get(i1)?, *m.positions.get(i2)?);
         let face = (p1 - p0).cross(p2 - p0).normalize_or_zero();
         let face = if face.dot(nrm) < 0.0 { -face } else { face };
         let p = origin + dir * hit.t + face * scene.radius * 2e-4;
         if s.ao_rays > 0 {
-            c *= ambient_occlusion(scene, p, face, s.ao_rays, px.jitter);
+            color *= ambient_occlusion(scene, p, face, s.ao_rays, px.jitter);
         }
-        if s.key_light > 0.0 && face.dot(px.key) > 0.0 && !scene.bvh.occluded(p, px.key, f32::MAX) {
-            c += direct(n, v, px.key, base, f0, metal, rough) * s.key_light * ao;
+        let mut lit = |l: Vec3, radiance: Vec3, reach: f32| {
+            if face.dot(l) > 0.0 && !scene.bvh.occluded(p, l, reach) {
+                let term = match s.shader {
+                    Shader::Lambert => diffuse_col * n.dot(l).max(0.0) / std::f32::consts::PI,
+                    Shader::Blinn => {
+                        let h = (v + l).normalize_or_zero();
+                        let spec = n.dot(h).max(0.0).powf(blinn_exponent(rough)) * (blinn_exponent(rough) + 8.0) / (8.0 * std::f32::consts::PI);
+                        (diffuse_col / std::f32::consts::PI + f0 * spec) * n.dot(l).max(0.0)
+                    }
+                    _ => direct(n, v, l, base, f0, metal, rough),
+                };
+                color += term * radiance * ao;
+            }
+        };
+        if s.key_light > 0.0 {
+            lit(px.key, Vec3::splat(s.key_light), f32::MAX);
+        }
+        for pl in s.lights.iter().filter(|l| l.on) {
+            let lp = scene.center + Vec3::from(pl.position) * scene.radius;
+            let to = lp - p;
+            let dist = to.length().max(1e-4);
+            let l = to / dist;
+            // Inverse square falloff, normalised so a light at one radius has unit power.
+            let radiance = Vec3::from(pl.color) * pl.intensity * (scene.radius * scene.radius) / (dist * dist) * 4.0;
+            lit(l, radiance, dist);
         }
     }
-    if let Some(e) = tex(&maps.emissive, uv) {
-        c += Vec3::new(e[0], e[1], e[2]);
+    let coat = matches!(s.shader, Shader::OpenPbr | Shader::Coated) && c.coat_weight > 0.0;
+    if coat {
+        // A dielectric layer over everything: its reflection on top, the base dimmed and tinted below.
+        let cf = fresnel(c.coat_ior, ndv) * c.coat_weight;
+        let coat_rough = c.coat_roughness.clamp(0.02, 1.0);
+        let coat_spec = if s.env_light { light.specular(rot(r), coat_rough) } else { Vec3::ZERO } + ambient * 0.04;
+        let darkening = 1.0 - c.coat_darkening * c.coat_weight * 0.25;
+        color = color * (1.0 - cf) * Vec3::from(c.coat_color).lerp(Vec3::ONE, 1.0 - c.coat_weight) * darkening + coat_spec * cf;
     }
-    Some(Shaded { color: c, alpha: if s.transparency { a } else { 1.0 }, t: hit.t })
+    if s.shader == Shader::OpenPbr && c.fuzz_weight > 0.0 {
+        // Sheen: a soft rim of the fuzz color.
+        let rim = (1.0 - ndv).powi(3);
+        color += (env_diff + ambient) * Vec3::from(c.fuzz_color) * (c.fuzz_weight * (0.15 + 0.85 * rim));
+    }
+    let mut alpha_out = if s.transparency { a } else { 1.0 };
+    if s.shader == Shader::OpenPbr && c.transmission_weight > 0.0 {
+        // Transmission: what lies behind shows through, tinted.
+        color = color.lerp(color * Vec3::from(c.transmission_color), c.transmission_weight);
+        alpha_out *= 1.0 - c.transmission_weight * (1.0 - metal) * (1.0 - fresnel(c.ior, ndv));
+    }
+    if let Some(e) = &maps.emissive
+        && s.use_map.emissive
+    {
+        let e = e.sample(uv.x, uv.y, true);
+        color += Vec3::new(e[0], e[1], e[2]) * c.emission_luminance.max(1.0);
+    } else if c.emission_luminance > 0.0 {
+        color += Vec3::from(c.emission_color) * c.emission_luminance;
+    }
+    Some(Shaded { color: wire(color), alpha: alpha_out, t: t_total })
 }
 
 /// Follow one camera ray through up to [`MAX_LAYERS`] transparent surfaces, compositing front to
@@ -465,10 +674,12 @@ fn shade(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
 fn trace(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec3, dir: Vec3, px: &Px, k: f32, miss: Vec3) -> Vec3 {
     let mut acc = Vec3::ZERO;
     let mut through = 1.0;
-    let mut o = origin;
+    let (tmin, mut tmax) = clip_range(scene, s);
+    let mut o = origin + dir * tmin;
     let step = scene.radius * 1e-4;
     for _ in 0..MAX_LAYERS {
-        let Some(h) = shade(scene, maps, light, s, o, dir, px) else { return acc + miss * through };
+        let Some(h) = shade(scene, maps, light, s, o, dir, px, tmax) else { return acc + miss * through };
+        tmax = (tmax - h.t - step).max(0.0);
         acc += h.color * k * h.alpha * through;
         through *= 1.0 - h.alpha;
         if through < 1e-3 {
@@ -477,6 +688,14 @@ fn trace(scene: &Scene, maps: &Maps, light: &Lighting, s: &Settings, origin: Vec
         o += dir * (h.t + step);
     }
     acc + miss * through
+}
+
+/// The near and far clip distances along a camera ray (scene radii → world units).
+fn clip_range(scene: &Scene, s: &Settings) -> (f32, f32) {
+    match s.clip {
+        Some([n, f]) if n.is_finite() && f.is_finite() && f > n => (n.max(0.0) * scene.radius, (f - n.max(0.0)) * scene.radius),
+        _ => (0.0, f32::MAX),
+    }
 }
 
 /// The studio backdrop at screen position `p` (−1..1): a soft vignette (linear).
@@ -526,15 +745,16 @@ pub fn render_cancellable(scene: &Scene, maps: &Maps, light: &Lighting, s: &Sett
                     let px = (x as f32 + (sx as f32 + 0.5) / ss as f32) / w as f32 * 2.0 - 1.0;
                     let py = 1.0 - (y as f32 + (sy as f32 + 0.5) / ss as f32) / h as f32 * 2.0;
                     let ray = cam.ray(Vec2::new(px, py), aspect);
-                    let bg = backdrop(Vec2::new(px, py));
                     let p = Px { key, jitter: jitter(x as u32 * ss + sx, y as u32 * ss + sy) };
-                    let miss = match (s.show_env, bg_env) {
-                        (true, Some(e)) => e.sample(rotate_y(ray.dir, -s.env_rotation)) * k,
-                        _ => bg,
+                    let miss = match (s.show_env || s.background == Background::Environment, bg_env, s.background) {
+                        (true, Some(e), _) => e.sample(rotate_y(ray.dir, -s.env_rotation)) * k,
+                        (_, _, Background::Color(c)) => Vec3::from(c),
+                        _ => backdrop(Vec2::new(px, py)),
                     };
                     acc += if s.alpha_view {
                         // Display values: the alpha as is, the background tone mapped.
-                        match shade(scene, maps, light, s, ray.origin, ray.dir, &p) {
+                        let (tmin, tmax) = clip_range(scene, s);
+                        match shade(scene, maps, light, s, ray.origin + ray.dir * tmin, ray.dir, &p, tmax) {
                             Some(h) => h.color,
                             None => miss.map(|v| linear_to_srgb(aces(v))),
                         }
@@ -605,6 +825,98 @@ mod tests {
 
     fn flat(value: f32) -> Image {
         Image::filled(8, 8, Kind::Gray, [value; 4])
+    }
+
+    /// Mean brightness of the center pixel's neighbourhood.
+    fn center_lum(px: &[u8], w: usize, h: usize) -> f32 {
+        let (cx, cy) = (w / 2, h / 2);
+        let mut sum = 0.0;
+        for y in cy - 2..cy + 2 {
+            for x in cx - 2..cx + 2 {
+                let i = (y * w + x) * 4;
+                sum += (px[i] as f32 + px[i + 1] as f32 + px[i + 2] as f32) / 3.0;
+            }
+        }
+        sum / 16.0
+    }
+
+    #[test]
+    fn point_lights_ambient_and_the_environment_switch_change_the_brightness() {
+        let (scene, light) = (Scene::builtin("sphere"), Lighting::new("studio"));
+        let maps = Maps { base_color: Some(Image::filled(8, 8, Kind::Color, [0.5, 0.5, 0.5, 1.0])), ..Maps::default() };
+        let base = Settings::default();
+        let plain = center_lum(&render(&scene, &maps, &light, &base, 64, 48), 64, 48);
+        let dark = Settings { env_light: false, ..base };
+        let no_env = center_lum(&render(&scene, &maps, &light, &dark, 64, 48), 64, 48);
+        assert!(no_env < plain - 20.0, "no environment light leaves the sphere dark: {no_env} vs {plain}");
+        let mut lit = dark;
+        lit.lights[0].on = true;
+        lit.lights[0].intensity = 4.0;
+        let with_light = center_lum(&render(&scene, &maps, &light, &lit, 64, 48), 64, 48);
+        assert!(with_light > no_env + 20.0, "a point light brightens the dark sphere: {with_light} vs {no_env}");
+        let ambient = Settings { env_light: false, ambient: [0.5; 3], ..base };
+        let amb = center_lum(&render(&scene, &maps, &light, &ambient, 64, 48), 64, 48);
+        assert!(amb > no_env + 20.0, "ambient light lifts it again: {amb} vs {no_env}");
+    }
+
+    #[test]
+    fn every_shader_renders_and_the_common_values_drive_unmapped_channels() {
+        let (scene, light) = (Scene::builtin("rounded_cube"), Lighting::new("studio"));
+        let maps = Maps::default();
+        for (shader, _) in Shader::ALL {
+            let s = Settings { shader, ..Settings::default() };
+            let px = render(&scene, &maps, &light, &s, 48, 32);
+            assert_eq!(px.len(), 48 * 32 * 4, "{shader:?}");
+        }
+        let mut red = Settings::default();
+        red.common.base_color = [0.8, 0.05, 0.05];
+        let px = render(&scene, &maps, &light, &red, 64, 48);
+        let c = ((24 * 64 + 32) * 4) as usize;
+        assert!(px[c] > px[c + 1] + 30, "the common base color shows without a map: {:?}", &px[c..c + 3]);
+        // A map wins over the common value, unless its use is switched off.
+        let blue = Maps { base_color: Some(Image::filled(8, 8, Kind::Color, [0.05, 0.05, 0.8, 1.0])), ..Maps::default() };
+        let px = render(&scene, &blue, &light, &red, 64, 48);
+        assert!(px[c + 2] > px[c] + 30, "the map wins: {:?}", &px[c..c + 3]);
+        let mut off = red;
+        off.use_map.base_color = false;
+        let px = render(&scene, &blue, &light, &off, 64, 48);
+        assert!(px[c] > px[c + 2] + 30, "use_map off falls back to the common color: {:?}", &px[c..c + 3]);
+        // Emission from the common values lights the surface by itself.
+        let mut glow = Settings { env_light: false, ..Settings::default() };
+        glow.common.emission_luminance = 2.0;
+        glow.common.emission_color = [0.0, 1.0, 0.0];
+        let px = render(&scene, &maps, &light, &glow, 64, 48);
+        assert!(px[c + 1] > 150 && px[c] < 60, "emission glows green: {:?}", &px[c..c + 3]);
+    }
+
+    #[test]
+    fn background_clip_planes_wireframe_and_culling_show_in_the_frame() {
+        let (scene, light) = (Scene::builtin("sphere"), Lighting::new("studio"));
+        let maps = Maps::default();
+        let corner = 0usize;
+        let s = Settings { background: Background::Color([0.0, 1.0, 0.0]), ..Settings::default() };
+        let px = render(&scene, &maps, &light, &s, 64, 48);
+        assert!(px[corner + 1] > 200 && px[corner] < 40, "a flat green background: {:?}", &px[corner..corner + 3]);
+        // Clip planes past the sphere: only the background is left.
+        let s = Settings { background: Background::Color([0.0, 1.0, 0.0]), clip: Some([10.0, 12.0]), ..Settings::default() };
+        let px = render(&scene, &maps, &light, &s, 64, 48);
+        let c = ((24 * 64 + 32) * 4) as usize;
+        assert!(px[c + 1] > 200 && px[c] < 40, "clipped away: {:?}", &px[c..c + 3]);
+        // Wireframe paints orange along the edges of a cube's twelve triangles, not everywhere.
+        let cube = Scene::builtin("cube");
+        let s = Settings { wireframe: true, ..Settings::default() };
+        let px = render(&cube, &maps, &light, &s, 96, 72);
+        let orange = px.chunks_exact(4).filter(|p| p[0] > 200 && p[1] > 120 && p[1] < 235 && p[2] < 60).count();
+        assert!(orange > 20 && orange < 96 * 72 / 2, "wire edges drawn: {orange}");
+        // Backface culling on a plane seen from below leaves the background.
+        let plane = Scene::builtin("plane");
+        let below =
+            Settings { pitch: -60.0, background: Background::Color([0.0, 1.0, 0.0]), backface_culling: true, transparency: false, ..Settings::default() };
+        let px = render(&plane, &maps, &light, &below, 64, 48);
+        assert!(px[c + 1] > 200 && px[c] < 40, "the plane's back face is culled: {:?}", &px[c..c + 3]);
+        let shown = Settings { backface_culling: false, ..below };
+        let px = render(&plane, &maps, &light, &shown, 64, 48);
+        assert!(!(px[c + 1] > 200 && px[c] < 40), "without culling the back face shows: {:?}", &px[c..c + 3]);
     }
 
     fn displacement(depth: f32, level: f32) -> Displacement {

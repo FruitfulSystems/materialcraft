@@ -46,6 +46,24 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("file.saveAs", "Save as...", ["File"], Some("Ctrl+Shift+S"), "{path} saves the package under a new name", always, save),
         cmd!(
+            "file.saveCopy",
+            "Save a copy as...",
+            ["File"],
+            None,
+            "{path} writes the package to `path` while the session keeps its own file",
+            always,
+            save_copy
+        ),
+        cmd!(
+            "file.exportWithDependencies",
+            "Export with dependencies...",
+            ["File"],
+            None,
+            "{dir} writes the package and copies of its linked bitmaps into `dir`, the links made relative; returns the files written",
+            always,
+            export_with_dependencies
+        ),
+        cmd!(
             "file.export",
             "Export outputs...",
             ["File"],
@@ -62,6 +80,51 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "{path, name?} embeds an image file as a resource; returns its name",
             always,
             import_bitmap
+        ),
+        cmd!(
+            "file.linkBitmap",
+            "Link bitmap...",
+            ["File"],
+            None,
+            "{path, name?} adds an image file as a linked resource (read from disk, reloaded by file.reloadResources; saved as a link when the file lies in the package's folder); returns its name",
+            always,
+            link_bitmap
+        ),
+        cmd!(
+            "file.reloadResources",
+            "Reload resources",
+            ["File"],
+            None,
+            "{} reads every linked resource from its file again; returns the names reloaded and those whose file is missing",
+            always,
+            reload_resources
+        ),
+        cmd!(
+            "file.deleteResource",
+            "Remove resource",
+            [],
+            None,
+            "{name} removes a bitmap resource; the nodes that used it show an error until they get another",
+            always,
+            delete_resource
+        ),
+        cmd!(
+            "file.importGraph",
+            "Import graph...",
+            ["File"],
+            None,
+            "{path, graph?} copies a graph (default: the first) of another package file into this one, with the graphs it instances and the bitmaps it uses; returns the new graph's name",
+            always,
+            import_graph
+        ),
+        cmd!(
+            "file.packageGraphs",
+            "Graphs of a package file",
+            [],
+            None,
+            "{path} lists the graphs of a package file without opening it: [{name, kind, outputs}]",
+            always,
+            package_graphs
         ),
         cmd!("graph.templates", "Graph templates", [], None, "{} lists the templates for file.new", always, |_, _| Ok(json!(
             TEMPLATES.iter().map(|(id, l)| json!({"id": id, "label": l})).collect::<Vec<_>>()
@@ -87,7 +150,7 @@ fn new_graph(s: &mut Session, p: &J) -> Result<J> {
 
 fn new_package(s: &mut Session, p: &J) -> Result<J> {
     let mut pkg = Package::new(strp(p, "name").unwrap_or("Untitled package"));
-    pkg.graphs.push(template("pbr", "New_graph", 10));
+    pkg.graphs.push(template("pbr", "Material_Graph", 10));
     replace_package(s, pkg, None);
     Ok(json!({"name": s.pkg.name}))
 }
@@ -140,6 +203,131 @@ pub fn package_path(path: &str) -> String {
     } else {
         format!("{path}.{}", PackageFormat::Sbs.ext())
     }
+}
+
+fn delete_resource(s: &mut Session, p: &J) -> Result<J> {
+    let name = strp(p, "name").ok_or_else(|| bad("file.deleteResource", "`name` is required"))?.to_string();
+    if s.pkg.resource(&name).is_none() {
+        return Err(bad("file.deleteResource", format!("no resource `{name}`")));
+    }
+    s.edit("Remove resource", |s| {
+        s.pkg.resources.retain(|r| r.name != name);
+        Ok(J::Null)
+    })?;
+    s.clear_decoded();
+    Ok(json!({"name": name}))
+}
+
+/// Read package bytes without touching the session: SBS, `.mcraft`, or a `.mcmat` material's source.
+pub fn load_bytes(bytes: &[u8], name: &str, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Package> {
+    if materialcraft_formats::material::is_material(bytes) {
+        let (_, source) = materialcraft_formats::material::read_material(bytes)?;
+        return Ok(materialcraft_formats::load_package(&source)?);
+    }
+    let named_sbs = has_extension(name, PackageFormat::Sbs.ext()) && !bytes.starts_with(b"PK");
+    if !named_sbs && !materialcraft_formats::sbs::is_sbs(bytes) {
+        return Ok(materialcraft_formats::load_package(bytes)?);
+    }
+    Ok(materialcraft_formats::sbs::read_sbs(bytes, name, linked)?.pkg)
+}
+
+/// Copy `graph` of `from` into the session's package: the graph, every graph it instances
+/// (recursively) and the bitmap resources its nodes use. Graphs that already exist with the
+/// same name are reused when identical, else the copy gets a unique name and the instances
+/// that point at it follow. Returns the copied graph's name.
+pub fn import_graph_from(s: &mut Session, from: &Package, graph: &str) -> Result<String> {
+    let (_, root) = from.graph_by_name(graph).ok_or_else(|| bad("file.importGraph", format!("`{}` has no graph `{graph}`", from.name)))?;
+    // Walk the instance tree, deepest dependencies first so renames are known when they are used.
+    let mut order: Vec<String> = Vec::new();
+    let mut stack = vec![root.name.clone()];
+    while let Some(name) = stack.pop() {
+        if order.contains(&name) {
+            continue;
+        }
+        order.push(name.clone());
+        if let Some((_, g)) = from.graph_by_name(&name) {
+            for n in g.nodes.iter().filter(|n| n.def == "graph_instance") {
+                if let Some(materialcraft_core::Value::Text(t)) = n.params.get("graph")
+                    && !order.contains(t)
+                {
+                    stack.push(t.clone());
+                }
+            }
+        }
+    }
+    order.reverse();
+    let from = from.clone();
+    s.edit("Import graph", |s| {
+        let mut renamed: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        for name in &order {
+            let Some((_, g)) = from.graph_by_name(name) else { continue };
+            let mut g = g.clone();
+            for n in g.nodes.iter_mut() {
+                if n.def == "graph_instance"
+                    && let Some(materialcraft_core::Value::Text(t)) = n.params.get("graph").cloned()
+                    && let Some(new) = renamed.get(&t)
+                {
+                    n.params.insert("graph".into(), materialcraft_core::Value::Text(new.clone()));
+                }
+                if let Some(materialcraft_core::Value::Text(r)) = n.params.get("resource").cloned()
+                    && let Some(res) = from.resource(&r)
+                    && s.pkg.resource(&r).is_none()
+                {
+                    s.pkg.resources.push(res.clone());
+                }
+            }
+            if let Some((_, have)) = s.pkg.graph_by_name(name)
+                && *have == g
+            {
+                renamed.insert(name.clone(), name.clone());
+                continue;
+            }
+            let new = s.pkg.unique_graph_name(name);
+            g.name = new.clone();
+            renamed.insert(name.clone(), new);
+            s.pkg.graphs.push(g);
+        }
+        Ok(renamed.get(&root.name).cloned().unwrap_or_else(|| root.name.clone()))
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_file(cmd: &str, p: &J) -> Result<(String, Package)> {
+    let path = strp(p, "path").ok_or_else(|| bad(cmd, "`path` is required"))?;
+    let bytes = std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    Ok((path.to_string(), load_bytes(&bytes, path, &linked_files(path))?))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn import_graph(s: &mut Session, p: &J) -> Result<J> {
+    let (_, from) = load_file("file.importGraph", p)?;
+    let graph = match strp(p, "graph") {
+        Some(g) => g.to_string(),
+        None => from.graphs.first().map(|g| g.name.clone()).ok_or_else(|| bad("file.importGraph", "the package has no graphs"))?,
+    };
+    let name = import_graph_from(s, &from, &graph)?;
+    Ok(json!({"name": name}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn import_graph(_: &mut Session, _: &J) -> Result<J> {
+    Err(bad("file.importGraph", "the browser has no package files to import from"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn package_graphs(_: &mut Session, p: &J) -> Result<J> {
+    let (_, from) = load_file("file.packageGraphs", p)?;
+    Ok(json!(
+        from.graphs
+            .iter()
+            .map(|g| json!({"name": g.name, "kind": format!("{:?}", g.kind), "outputs": g.nodes.iter().filter(|n| n.def == "output").count()}))
+            .collect::<Vec<_>>()
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn package_graphs(_: &mut Session, _: &J) -> Result<J> {
+    Err(bad("file.packageGraphs", "the browser has no package files to read"))
 }
 
 /// Open package bytes on any platform: SBS, `.mcraft`, or a `.mcmat` material's source package.
@@ -259,6 +447,69 @@ fn save(_: &mut Session, _: &J) -> Result<J> {
     Err(bad("file.save", "the browser saves with a download"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn save_copy(s: &mut Session, p: &J) -> Result<J> {
+    let path = package_path(strp(p, "path").ok_or_else(|| bad("file.saveCopy", "`path` is required"))?);
+    let bytes = save_bytes_as(s, PackageFormat::of_path(&path))?;
+    materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
+    s.log(format!("Saved a copy to {path}"));
+    Ok(json!({"path": path, "bytes": bytes.len()}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_copy(_: &mut Session, _: &J) -> Result<J> {
+    Err(bad("file.saveCopy", "the browser saves with a download"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn export_with_dependencies(s: &mut Session, p: &J) -> Result<J> {
+    let dir = strp(p, "dir").ok_or_else(|| bad("file.exportWithDependencies", "`dir` is required"))?;
+    let dir = std::path::Path::new(dir);
+    std::fs::create_dir_all(dir).map_err(|e| bad("file.exportWithDependencies", format!("{}: {e}", dir.display())))?;
+    let mut written: Vec<String> = Vec::new();
+    // The copy links every linked bitmap by its file name, next to the package.
+    let mut pkg = s.pkg.clone();
+    let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for r in pkg.resources.iter_mut() {
+        let Some(link) = r.link.clone() else { continue };
+        let bytes = match read_link(s, &link) {
+            Ok(b) => b,
+            Err(why) => {
+                s.log(format!("`{}` exported embedded: {why}", r.name));
+                r.link = None;
+                continue;
+            }
+        };
+        let base = std::path::Path::new(&link).file_name().and_then(|f| f.to_str()).unwrap_or(&r.file).to_string();
+        let mut file = base.clone();
+        let mut n = 2;
+        while !used.insert(file.clone()) {
+            file = match base.rsplit_once('.') {
+                Some((stem, ext)) => format!("{stem}_{n}.{ext}"),
+                None => format!("{base}_{n}"),
+            };
+            n += 1;
+        }
+        let target = dir.join(&file);
+        materialcraft_formats::write_atomic(&target, &bytes)?;
+        written.push(target.display().to_string());
+        r.link = Some(file);
+        r.bytes = ResourceBytes::new(bytes);
+    }
+    let name = format!("{}.{}", materialcraft_formats::safe_file_name(&pkg.name), PackageFormat::Sbs.ext());
+    let target = dir.join(&name);
+    let bytes = materialcraft_formats::sbs::write_sbs(&pkg)?;
+    materialcraft_formats::write_atomic(&target, &bytes)?;
+    written.insert(0, target.display().to_string());
+    s.log(format!("Exported {} with {} dependenc{} to {}", pkg.name, written.len() - 1, if written.len() == 2 { "y" } else { "ies" }, dir.display()));
+    Ok(json!({"files": written}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn export_with_dependencies(_: &mut Session, _: &J) -> Result<J> {
+    Err(bad("file.exportWithDependencies", "the browser saves with a download"))
+}
+
 /// One exported file.
 pub struct Exported {
     pub file: String,
@@ -278,7 +529,9 @@ pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: O
     }
     let g = pkg.graph(gi)?;
     let dec = s.resource_decoder();
-    let cooked = materialcraft_eval::cook(&pkg, gi, &materialcraft_eval::Options::new(&dec), &s.cache);
+    let mut opts = materialcraft_eval::Options::new(&dec);
+    opts.max_size = s.cook_limit;
+    let cooked = materialcraft_eval::cook(&pkg, gi, &opts, &s.cache);
     let mut out = Vec::new();
     let mut names = std::collections::HashSet::new();
     for (id, usage, ident, img) in materialcraft_eval::outputs(g, &cooked) {
@@ -374,4 +627,92 @@ fn import_bitmap(s: &mut Session, p: &J) -> Result<J> {
 #[cfg(target_arch = "wasm32")]
 fn import_bitmap(_: &mut Session, _: &J) -> Result<J> {
     Err(bad("file.importBitmap", "the browser imports with the file picker"))
+}
+
+/// The path a linked file is stored under: relative to the package's folder when it lies
+/// inside it (then the link survives in the saved file), else as given.
+#[cfg(not(target_arch = "wasm32"))]
+fn link_path(s: &Session, path: &str) -> String {
+    let Some(folder) = s.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).and_then(|p| std::fs::canonicalize(p).ok()) else {
+        return path.to_string();
+    };
+    match std::fs::canonicalize(path).ok().and_then(|f| f.strip_prefix(&folder).ok().map(|r| r.to_path_buf())) {
+        Some(rel) => rel.to_string_lossy().replace('\\', "/"),
+        None => path.to_string(),
+    }
+}
+
+/// Read a linked resource's file: a relative link resolves next to the package.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_link(s: &Session, link: &str) -> std::result::Result<Vec<u8>, String> {
+    let plain = !link.contains(':') && !link.starts_with('/') && !link.starts_with('\\');
+    if plain && let Some(path) = &s.path {
+        return linked_files(path)(link).ok_or_else(|| format!("`{link}` was not found next to the package"));
+    }
+    std::fs::read(link).map_err(|e| format!("{link}: {e}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn link_bitmap(s: &mut Session, p: &J) -> Result<J> {
+    let path = strp(p, "path").ok_or_else(|| bad("file.linkBitmap", "`path` is required"))?;
+    let bytes = std::fs::read(path).map_err(|e| bad("file.linkBitmap", format!("{path}: {e}")))?;
+    materialcraft_formats::decode(&bytes, false)?;
+    let file = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("bitmap.png").to_string();
+    let link = link_path(s, path);
+    let wanted = strp(p, "name").map(str::to_string);
+    let name = s.edit("Link bitmap", |s| {
+        // Relinking an existing resource keeps its name (the nodes that use it stay valid).
+        if let Some(r) = wanted.as_deref().and_then(|w| s.pkg.resources.iter_mut().find(|r| r.name == w)) {
+            r.bytes = ResourceBytes::new(bytes);
+            r.link = Some(link.clone());
+            return Ok(r.name.clone());
+        }
+        let name = push_resource(&mut s.pkg, &file, bytes, wanted.as_deref());
+        if let Some(r) = s.pkg.resources.iter_mut().find(|r| r.name == name) {
+            r.link = Some(link.clone());
+        }
+        Ok(name)
+    })?;
+    Ok(json!({"name": name, "link": link, "use": {"command": "graph.node.add", "params": {"def": "bitmap", "params": {"resource": name}}}}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn link_bitmap(_: &mut Session, _: &J) -> Result<J> {
+    Err(bad("file.linkBitmap", "the browser has no files to link to; import the bitmap instead"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reload_resources(s: &mut Session, _: &J) -> Result<J> {
+    let links: Vec<(String, String)> = s.pkg.resources.iter().filter_map(|r| r.link.clone().map(|l| (r.name.clone(), l))).collect();
+    let mut fresh: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for (name, link) in links {
+        match read_link(s, &link) {
+            Ok(bytes) => fresh.push((name, bytes)),
+            Err(why) => {
+                s.log(format!("resource `{name}` not reloaded: {why}"));
+                missing.push(name);
+            }
+        }
+    }
+    let changed: Vec<String> =
+        fresh.iter().filter(|(n, b)| s.pkg.resources.iter().any(|r| &r.name == n && r.bytes.as_slice() != b.as_slice())).map(|(n, _)| n.clone()).collect();
+    if !changed.is_empty() {
+        s.edit("Reload resources", |s| {
+            for (name, bytes) in fresh {
+                if let Some(r) = s.pkg.resources.iter_mut().find(|r| r.name == name) {
+                    r.bytes = ResourceBytes::new(bytes);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    s.dirty = true;
+    Ok(json!({"reloaded": changed, "missing": missing}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reload_resources(s: &mut Session, _: &J) -> Result<J> {
+    s.dirty = true;
+    Ok(json!({"reloaded": [], "missing": []}))
 }

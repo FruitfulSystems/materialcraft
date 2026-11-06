@@ -214,6 +214,10 @@ fn port_pos(r: Rect, i: usize, n: usize, output: bool, dot: bool) -> Pos2 {
 
 /// Control points of the wire from output `a` to input `b` (screen space).
 fn bezier_points(a: Pos2, b: Pos2) -> [Pos2; 4] {
+    if STRAIGHT_WIRES.load(std::sync::atomic::Ordering::Relaxed) {
+        let d = (b - a) / 3.0;
+        return [a, a + d, a + d * 2.0, b];
+    }
     let dx = ((b.x - a.x).abs() * 0.5).max(30.0);
     [a, a + vec2(dx, 0.0), b - vec2(dx, 0.0), b]
 }
@@ -261,40 +265,78 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     canvas(app, ui);
 }
 
+/// Wires are drawn straight this frame (set from the preference before the canvas draws).
+static STRAIGHT_WIRES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The grid step nodes snap to.
+const SNAP: f32 = 16.0;
+
 fn toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
-    egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+    egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+        // Row 1: view and display tools.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let b = |ui: &mut Ui, ic: &str, tip: &str, on: bool| crate::widgets::icon_button(ui, ic, tip, on, 22.0).clicked();
+            if b(ui, icon::CORNERS_OUT, tr("Frame all (F)"), false) {
+                app.ui.frame_all = true;
+            }
+            if b(ui, icon::FRAME_CORNERS, tr("Actual size (1:1)"), (app.ui.graph_camera.zoom - 1.0).abs() < 1e-3) {
+                zoom_to(app, 1.0);
+            }
+            if b(ui, icon::CAMERA, tr("Save a screenshot of the graph..."), false) {
+                screenshot(app, ui.ctx());
+            }
+            let info = crate::widgets::icon_button(ui, icon::INFO, tr("Graph information"), false, 22.0);
+            egui::Popup::menu(&info).show(|ui| graph_info(app, ui));
+            if b(ui, icon::MAGNIFYING_GLASS, tr("Find a node (Tab)"), app.graph.search.is_some()) {
+                let c = view_center(app);
+                open_search(app, c, None);
+            }
+            ui.separator();
+            let thumbs = app.ui.prefs.thumbnails;
+            if b(ui, icon::IMAGE, tr("Show node thumbnails"), thumbs) {
+                app.ui.prefs.thumbnails = !thumbs;
+            }
+            let timings = app.ui.prefs.node_timings;
+            if b(ui, icon::TIMER, tr("Show cook times on nodes"), timings) {
+                app.ui.prefs.node_timings = !timings;
+            }
+            let straight = app.ui.prefs.straight_wires;
+            if b(
+                ui,
+                if straight { icon::LINE_SEGMENT } else { icon::WAVE_SINE },
+                if straight { tr("Wires: straight (click for curved)") } else { tr("Wires: curved (click for straight)") },
+                straight,
+            ) {
+                app.ui.prefs.straight_wires = !straight;
+            }
+            let grid_on = app.ui.prefs.show_grid;
+            if b(ui, icon::GRID_FOUR, tr("Show the grid"), grid_on) {
+                app.ui.prefs.show_grid = !grid_on;
+            }
+            let snap = app.ui.prefs.snap_grid;
+            if b(ui, icon::MAGNET, tr("Snap nodes to the grid"), snap) {
+                app.ui.prefs.snap_grid = !snap;
+            }
+            ui.separator();
+            if b(ui, icon::ARROWS_CLOCKWISE, tr("Compute outputs"), false) {
+                app.cooker.hold = false;
+                app.session.dirty = true;
+            }
+            if b(ui, icon::BROOM, tr("Clean up: remove unconnected dots and disabled nodes with nothing attached"), false) {
+                clean_up(app);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                align_tools(app, ui);
+                ui.separator();
+                parent_size(app, ui);
+            });
+        });
+        // Row 2: quick insert.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             let b = |ui: &mut Ui, ic: &str, tip: &str| crate::widgets::icon_button(ui, ic, tip, false, 22.0).clicked();
-            if b(ui, icon::CORNERS_OUT, tr("Frame all (F)")) {
-                app.ui.frame_all = true;
-            }
-            for (ic, mode, tip) in [
-                (icon::ALIGN_LEFT, "left", "Align left"),
-                (icon::ALIGN_TOP, "top", "Align top"),
-                (icon::ALIGN_CENTER_HORIZONTAL, "hcenter", "Align centers horizontally"),
-                (icon::ALIGN_CENTER_VERTICAL, "vcenter", "Align centers vertically"),
-                (icon::COLUMNS, "hdistribute", "Distribute horizontally"),
-                (icon::ROWS, "vdistribute", "Distribute vertically"),
-            ] {
-                if b(ui, ic, tr(tip)) {
-                    app.run("graph.align", json!({"mode": mode}));
-                }
-            }
-            ui.separator();
-            if b(ui, icon::SELECTION, tr("Add frame around the selection")) {
-                app.run("graph.frame.add", json!({}));
-            }
-            if b(ui, icon::NOTE, tr("Add comment")) {
-                app.run("graph.comment.add", json!({}));
-            }
-            if b(ui, icon::MAP_PIN, tr("Add navigation pin")) {
-                let c = view_center(app);
-                app.run("graph.pin.add", json!({"at": [c.x, c.y]}));
-            }
-            ui.separator();
-            // Quick insert of the atomic nodes.
             for (ic, def) in [
                 (icon::IMAGE, "bitmap"),
                 (icon::PALETTE, "uniform"),
@@ -315,6 +357,7 @@ fn toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 (icon::DIAMOND, "sharpen"),
                 (icon::ARROWS_CLOCKWISE, "transformation"),
                 (icon::WAVES, "warp"),
+                (icon::DICE_FIVE, "fx_map"),
                 (icon::SIGN_IN, "input_grayscale"),
                 (icon::SIGN_OUT, "output"),
             ] {
@@ -323,18 +366,162 @@ fn toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
                     add_node_near_selection(app, def);
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let thumbs = app.ui.prefs.thumbnails;
-                if crate::widgets::icon_button(ui, icon::IMAGE, tr("Show node thumbnails"), thumbs, 22.0).clicked() {
-                    app.ui.prefs.thumbnails = !thumbs;
-                }
-                parent_size(app, ui);
-            });
+            ui.separator();
+            if b(ui, icon::NOTE, tr("Add comment")) {
+                let c = view_center(app);
+                app.run("graph.comment.add", json!({"at": [c.x - 60.0, c.y - 20.0]}));
+            }
+            if b(ui, icon::DOT_OUTLINE, tr("Add dot (reroute)")) {
+                add_node_near_selection(app, "dot");
+            }
+            if b(ui, icon::SELECTION, tr("Add frame around the selection")) {
+                let c = view_center(app);
+                let p = if app.session.selection.is_empty() { json!({"rect": [c.x - 160.0, c.y - 100.0, 320.0, 200.0]}) } else { json!({}) };
+                app.run("graph.frame.add", p);
+            }
+            if b(ui, icon::MAP_PIN, tr("Add navigation pin")) {
+                let c = view_center(app);
+                app.run("graph.pin.add", json!({"at": [c.x, c.y]}));
+            }
         });
     });
 }
 
-/// "Parent size: [1024 ▾] × [1024 ▾]".
+/// Zoom the graph camera to `zoom` around the view's center.
+fn zoom_to(app: &mut MaterialCraftApp, zoom: f32) {
+    let c = view_center(app);
+    let v = app.graph.view;
+    let cam = &mut app.ui.graph_camera;
+    cam.zoom = zoom;
+    cam.pan = [c.x - v.width() * 0.5 / zoom, c.y - v.height() * 0.5 / zoom];
+    *cam = cam.sanitized();
+}
+
+/// Save the graph panel as a PNG: a screenshot of the window, cropped to the canvas.
+fn screenshot(app: &mut MaterialCraftApp, ctx: &egui::Context) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let name = format!("{}_graph.png", materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default()));
+        let Some(path) = rfd::FileDialog::new().set_file_name(name).add_filter("PNG", &["png"]).save_file() else { return };
+        let view = app.graph.view;
+        let ppp = ctx.pixels_per_point();
+        let repaint = ctx.clone();
+        let callback = egui::ScreenshotCallback::new(move |img| {
+            let x0 = ((view.left() * ppp).max(0.0) as usize).min(img.size[0]);
+            let y0 = ((view.top() * ppp).max(0.0) as usize).min(img.size[1]);
+            let x1 = ((view.right() * ppp).max(0.0) as usize).clamp(x0, img.size[0]);
+            let y1 = ((view.bottom() * ppp).max(0.0) as usize).clamp(y0, img.size[1]);
+            let (w, h) = (x1 - x0, y1 - y0);
+            if w == 0 || h == 0 {
+                return;
+            }
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    rgba.extend_from_slice(&img.pixels[y * img.size[0] + x].to_array());
+                }
+            }
+            if let Some((_, _, png)) = crate::control::encode_png(w as u32, h as u32, rgba)
+                && let Err(e) = std::fs::write(&path, png)
+            {
+                log::warn!("could not save the graph screenshot {}: {e}", path.display());
+            }
+            repaint.request_repaint();
+        });
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(callback));
+        app.toast(tr("Saving a screenshot of the graph"), false);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        app.toast(tr("Screenshots are saved from the desktop app"), true);
+    }
+}
+
+/// The ⓘ popup: what the graph is, how big and how long it takes.
+fn graph_info(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    let tk = Tokens::get(ui.ctx());
+    let Ok(g) = app.session.graph() else { return };
+    let [w, h] = g.size_px();
+    let outputs = g.nodes.iter().filter(|n| n.def == "output").count();
+    let errors = app.session.cooked.nodes.values().filter(|r| r.error.is_some()).count();
+    let ms: f32 = app.session.cooked.nodes.values().map(|r| r.ms).sum();
+    ui.set_min_width(220.0);
+    ui.label(egui::RichText::new(&g.name).strong());
+    ui.label(
+        egui::RichText::new(format!("{} ({})", app.session.pkg.name, app.session.path.as_deref().unwrap_or(tr("not saved yet")))).small().color(tk.text_dim),
+    );
+    ui.separator();
+    egui::Grid::new("graph-info").num_columns(2).spacing([12.0, 2.0]).show(ui, |ui| {
+        ui.label(tr("Size"));
+        ui.label(format!("{w} x {h}"));
+        ui.end_row();
+        ui.label(tr("Format"));
+        ui.label(format!("{} bits", g.format.bits()));
+        ui.end_row();
+        ui.label(tr("Nodes"));
+        ui.label(format!("{} ({} {})", g.nodes.len(), outputs, tr("outputs")));
+        ui.end_row();
+        ui.label(tr("Wires"));
+        ui.label(g.connections.len().to_string());
+        ui.end_row();
+        ui.label(tr("Last cook"));
+        ui.label(if errors > 0 { format!("{ms:.0} ms, {errors} {}", tr("error(s)")) } else { format!("{ms:.0} ms") });
+        ui.end_row();
+        ui.label(tr("Exposed"));
+        ui.label(g.exposed.len().to_string());
+        ui.end_row();
+    });
+    ui.separator();
+    if ui.button(tr("Graph attributes...")).clicked() {
+        app.run("edit.selectNone", json!({}));
+        app.ui.dock.focus(crate::docking::Panel::Properties);
+        ui.close();
+    }
+}
+
+/// Remove reroute dots nothing uses and disabled nodes with no wires.
+fn clean_up(app: &mut MaterialCraftApp) {
+    let Ok(g) = app.session.graph() else { return };
+    let wired = |id: NodeId| g.connections.iter().any(|c| c.from == id || c.to == id);
+    let ids: Vec<u64> =
+        g.nodes.iter().filter(|n| (n.def == "dot" && !g.connections.iter().any(|c| c.from == n.id)) || (n.disabled && !wired(n.id))).map(|n| n.id.0).collect();
+    if ids.is_empty() {
+        app.toast(tr("Nothing to clean up"), false);
+        return;
+    }
+    let n = ids.len();
+    if app.run("graph.select", json!({"ids": ids})).is_some() && app.run("edit.delete", json!({})).is_some() {
+        app.toast(format!("{} {n}", tr("Removed nodes:")), false);
+    }
+}
+
+/// Stack checkbox and the align buttons (right-to-left layout: declared in reverse).
+fn align_tools(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    let stack = app.ui.stack_align;
+    let two = app.session.selection.len() >= 2;
+    let run = |app: &mut MaterialCraftApp, modes: &[&str]| {
+        for m in modes {
+            app.run("graph.align", json!({"mode": m}));
+        }
+    };
+    if crate::widgets::icon_button(ui, icon::ROWS, tr("Align vertically (stack under one another)"), false, 22.0).clicked() && two {
+        run(app, if stack { &["hcenter", "vdistribute"] } else { &["hcenter"] });
+    }
+    if crate::widgets::icon_button(ui, icon::COLUMNS, tr("Align horizontally (stack side by side)"), false, 22.0).clicked() && two {
+        run(app, if stack { &["vcenter", "hdistribute"] } else { &["vcenter"] });
+    }
+    for (ic, mode, tip) in [(icon::ALIGN_TOP, "top", "Align top edges"), (icon::ALIGN_LEFT, "left", "Align left edges")] {
+        if crate::widgets::icon_button(ui, ic, tr(tip), false, 22.0).clicked() && two {
+            run(app, &[mode]);
+        }
+    }
+    let r = ui.checkbox(&mut app.ui.stack_align, tr("Stack"));
+    crate::widgets::name(&r, egui::Role::CheckBox, "Stack");
+    r.on_hover_text(tr("Aligning also closes the gaps between the nodes"));
+}
+
+/// "Parent size: [1024 ▾] 🔗 [1024 ▾] ⟲" (right-to-left layout: declared in reverse).
 fn parent_size(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let Ok(g) = app.session.graph() else { return };
     let [w, h] = g.size;
@@ -348,16 +535,30 @@ fn parent_size(app: &mut MaterialCraftApp, ui: &mut Ui) {
         });
         crate::widgets::name(&r.response, egui::Role::ComboBox, if id == "parent-w" { "Parent width" } else { "Parent height" });
     };
+    if crate::widgets::icon_button(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset the parent size to 1024 x 1024"), false, 20.0).clicked() {
+        nw = 10;
+        nh = 10;
+    }
     combo(ui, "parent-h", &mut nh);
-    ui.label("x");
+    let link = app.ui.parent_link;
+    if crate::widgets::icon_button(ui, if link { icon::LINK } else { icon::LINK_BREAK }, tr("Link width and height"), link, 20.0).clicked() {
+        app.ui.parent_link = !link;
+    }
     combo(ui, "parent-w", &mut nw);
     ui.label(egui::RichText::new(tr("Parent size:")).color(Tokens::get(ui.ctx()).text_dim));
+    if app.ui.parent_link {
+        if nw != w {
+            nh = nw;
+        } else if nh != h {
+            nw = nh;
+        }
+    }
     if (nw, nh) != (w, h) {
         app.run("graph.size", json!({"log2": [nw, nh]}));
     }
 }
 
-fn view_center(app: &MaterialCraftApp) -> Pos2 {
+pub fn view_center(app: &MaterialCraftApp) -> Pos2 {
     let c = &app.ui.graph_camera.sanitized();
     let v = app.graph.view;
     pos2(c.pan[0] + v.width() * 0.5 / c.zoom, c.pan[1] + v.height() * 0.5 / c.zoom)
@@ -397,8 +598,17 @@ pub fn import_bitmap_file(app: &mut MaterialCraftApp, path: &str) {
 
 fn run_gesture(app: &mut MaterialCraftApp, label: &str, commands: &[(&str, serde_json::Value)]) {
     let result = app.session.group(label, |session| {
+        // `"from": "last"` names the node the previous command added.
+        let mut last: Option<u64> = None;
         for (id, params) in commands {
-            crate::cook::execute_guarded(session, id, params).map_err(materialcraft_engine::EngineError::Other)?;
+            let mut params = params.clone();
+            if params.get("from").and_then(serde_json::Value::as_str) == Some("last") {
+                params["from"] = json!(last.ok_or_else(|| materialcraft_engine::EngineError::Other("no node was added before".into()))?);
+            }
+            let r = crate::cook::execute_guarded(session, id, &params).map_err(materialcraft_engine::EngineError::Other)?;
+            if let Some(n) = r.get("id").and_then(serde_json::Value::as_u64) {
+                last = Some(n);
+            }
         }
         Ok(())
     });
@@ -416,8 +626,46 @@ fn rewire(app: &mut MaterialCraftApp, from: &(NodeId, String), detached: Option<
     {
         commands.push(("graph.disconnect", json!({"to": n.0, "toPort": p})));
     }
+    if let Some(converter) = conversion_node(app, from, to, to_port) {
+        // Preferences ▸ Graph: a conversion node between a color output and a grayscale input (or the reverse).
+        let (x, y) = midpoint(app, from.0, to);
+        commands.push(("graph.node.add", json!({"def": converter, "at": [x, y], "connectFrom": {"node": from.0.0, "port": from.1}})));
+        commands.push(("graph.connect", json!({"from": "last", "to": to.0, "toPort": to_port})));
+        run_gesture(app, "Connect", &commands);
+        return;
+    }
     commands.push(("graph.connect", json!({"from": from.0.0, "fromPort": from.1, "to": to.0, "toPort": to_port})));
     run_gesture(app, "Connect", &commands);
+}
+
+/// Connect `from` to `to`'s input, inserting a conversion node when the preference asks for one.
+pub fn connect(app: &mut MaterialCraftApp, from: &(NodeId, String), to: NodeId, to_port: &str) {
+    rewire(app, from, None, to, to_port);
+}
+
+/// The node that converts the kinds between an output and an input (`None` = the kinds agree
+/// or the preference is off): Grayscale Conversion for color → gray, Gradient Map for gray → color.
+fn conversion_node(app: &MaterialCraftApp, from: &(NodeId, String), to: NodeId, to_port: &str) -> Option<&'static str> {
+    use materialcraft_engine::nodes::PortKind;
+    if !app.ui.prefs.auto_convert {
+        return None;
+    }
+    let g = app.session.graph().ok()?;
+    let out_kind = materialcraft_engine::eval::ports(&app.session.pkg, g.node(from.0).ok()?).1.into_iter().find(|p| p.id == from.1)?.kind;
+    let in_kind = materialcraft_engine::eval::ports(&app.session.pkg, g.node(to).ok()?).0.into_iter().find(|p| p.id == to_port)?.kind;
+    match (out_kind, in_kind) {
+        (PortKind::Color, PortKind::Gray) => Some("grayscale_conversion"),
+        (PortKind::Gray, PortKind::Color) => Some("gradient_map"),
+        _ => None,
+    }
+}
+
+/// Halfway between two nodes (graph space), for a node inserted between them.
+fn midpoint(app: &MaterialCraftApp, a: NodeId, b: NodeId) -> (f32, f32) {
+    let g = app.session.graph().ok();
+    let pos = |id: NodeId| g.and_then(|g| g.node(id).ok()).map_or([0.0, 0.0], |n| n.pos);
+    let (pa, pb) = (pos(a), pos(b));
+    ((pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5)
 }
 
 /// Finish dragging a frame: set its rectangle and move the nodes it carries, as one undo entry.
@@ -473,14 +721,20 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
     painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2b, 0x2d, 0x31));
     app.ui.graph_camera = app.ui.graph_camera.sanitized();
     let cam = Cam { origin: rect.min, pan: Vec2::from(app.ui.graph_camera.pan), zoom: app.ui.graph_camera.zoom };
-    grid(&painter, &cam, rect);
+    STRAIGHT_WIRES.store(app.ui.prefs.straight_wires, std::sync::atomic::Ordering::Relaxed);
+    if app.ui.prefs.show_grid {
+        grid(&painter, &cam, rect);
+    }
 
     let pointer = ctx.input(|i| i.pointer.hover_pos());
     let hovered_canvas = pointer.is_some_and(|p| rect.contains(p)) && resp.hovered();
 
     // Zoom around the pointer.
     if hovered_canvas || ui.rect_contains_pointer(rect) {
-        let scroll = ctx.input(|i| i.smooth_scroll_delta.y + i.zoom_delta().ln() * 200.0);
+        let mut scroll = ctx.input(|i| i.smooth_scroll_delta.y + i.zoom_delta().ln() * 200.0);
+        if app.ui.prefs.invert_zoom {
+            scroll = -scroll;
+        }
         if scroll.abs() > 0.0
             && let Some(p) = pointer
             && rect.contains(p)
@@ -697,6 +951,12 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
             if n.def == "output" {
                 painter.text(header.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER, icon::SIGN_OUT, small.clone(), Color32::WHITE);
+            }
+            if app.ui.prefs.node_timings
+                && let Some(r0) = result
+            {
+                let txt = if r0.cached { format!("{:.1} ms ({})", r0.ms, tr("cached")) } else { format!("{:.1} ms", r0.ms) };
+                painter.text(header.right_top() + vec2(-2.0, HEADER_H * cam.zoom + 2.0), Align2::RIGHT_TOP, txt, small.clone(), tk.warning);
             }
             let outline = if error.is_some() {
                 Stroke::new(2.0, Color32::from_rgb(0xff, 0x30, 0xd0))
@@ -971,6 +1231,15 @@ fn handle_input(
                 }
             }
             Drag::Nodes { delta } => {
+                let mut delta = delta;
+                // Snap: the last selected node lands on the grid, the others keep their offsets.
+                if app.ui.prefs.snap_grid
+                    && let Some(id) = app.session.selection.last()
+                    && let Some(n) = app.session.graph().ok().and_then(|g| g.node(*id).ok())
+                {
+                    let target = pos2(((n.pos[0] + delta.x) / SNAP).round() * SNAP, ((n.pos[1] + delta.y) / SNAP).round() * SNAP);
+                    delta = target - pos2(n.pos[0], n.pos[1]);
+                }
                 if delta.length() > 0.5 {
                     app.run("graph.node.move", json!({"by": [delta.x, delta.y]}));
                 }
@@ -1003,6 +1272,7 @@ fn handle_input(
                             app.run("graph.disconnect", json!({"to": n.0, "toPort": p}));
                         } else if let Some(p) = pointer
                             && rect.contains(p)
+                            && app.ui.prefs.drag_create
                         {
                             open_search(app, cam.to_graph(p), Some(from));
                         }
@@ -1012,7 +1282,7 @@ fn handle_input(
             Drag::WireFromInput { to } => {
                 let source = pointer.and_then(|p| nearest_port(&app.graph.ports, p, 12.0)).filter(|h| h.output).cloned();
                 if let Some(s) = source {
-                    app.run("graph.connect", json!({"from": s.node.0, "fromPort": s.port, "to": to.0.0, "toPort": to.1}));
+                    connect(app, &(s.node, s.port.clone()), to.0, &to.1);
                 }
             }
             Drag::Frame { id, delta, resize, nodes } => {
@@ -1113,17 +1383,14 @@ fn handle_input(
     {
         let gp = cam.to_graph(p);
         let at = [gp.x - NODE_W * 0.5, gp.y - 20.0];
-        match payload.0.strip_prefix('@') {
-            Some(graph) => app.run("graph.node.add", json!({"def": "graph_instance", "at": at, "params": {"graph": graph}})),
-            None => app.run("graph.node.add", json!({"def": payload.0, "at": at})),
-        };
+        crate::library::add_key(app, &payload.0, at);
     }
 
     // Keys over the canvas.
     let hovered = pointer.is_some_and(|p| rect.contains(p));
     if hovered && app.graph.search.is_none() {
         let space = !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space));
-        let tab = !app.graph.keyboard_was_focused && !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Tab));
+        let tab = app.ui.prefs.tab_key_menu && !app.graph.keyboard_was_focused && !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Tab));
         if (space || tab)
             && let Some(p) = pointer
         {

@@ -43,11 +43,57 @@ pub struct Cooker {
     pub started: Option<f64>,
     /// `Session::cook_epoch` when the running cook started.
     epoch: u64,
+    /// Tools ▸ Suspend engine: no cook starts until resumed.
+    pub suspended: bool,
+    /// Tools ▸ Cancel rendering: the running cook stops and nothing restarts until the next edit.
+    pub hold: bool,
+    /// Tools ▸ Switch engine: worker threads for the cook (0 = all the cores).
+    pub threads: usize,
+    #[cfg(not(target_arch = "wasm32"))]
+    pool: Option<(usize, std::sync::Arc<rayon::ThreadPool>)>,
+}
+
+/// Stop the running cook (Tools ▸ Cancel rendering, Escape). The graph stays as it was until the
+/// next edit computes it again.
+pub fn cancel(app: &mut MaterialCraftApp) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(flag) = &app.cooker.cancel {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    app.cooker.hold = true;
+    app.session.dirty = false;
 }
 
 impl Cooker {
     pub fn busy(&self) -> bool {
         self.rx.is_some()
+    }
+
+    /// The cook's thread pool for the chosen thread count (built once per count); `None` runs
+    /// on the global pool (all the cores).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pool(&mut self) -> Option<std::sync::Arc<rayon::ThreadPool>> {
+        let n = self.threads;
+        if n == 0 {
+            self.pool = None;
+            return None;
+        }
+        if let Some((have, p)) = &self.pool
+            && *have == n
+        {
+            return Some(p.clone());
+        }
+        match rayon::ThreadPoolBuilder::new().num_threads(n).thread_name(|i| format!("materialcraft-cook-{i}")).build() {
+            Ok(p) => {
+                let p = std::sync::Arc::new(p);
+                self.pool = Some((n, p.clone()));
+                Some(p)
+            }
+            Err(e) => {
+                log::warn!("could not build a {n}-thread pool ({e}); using every core");
+                None
+            }
+        }
     }
 }
 
@@ -63,8 +109,9 @@ pub fn drive(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                     app.cooker.cancel = None;
                 }
                 match result {
-                    // A stopped cook is partial: keep the previous results and cook again.
-                    Ok(c) if c.cancelled => app.session.dirty = true,
+                    // A stopped cook is partial: keep the previous results and cook again
+                    // (unless the user cancelled it: then wait for the next edit).
+                    Ok(c) if c.cancelled => app.session.dirty = !app.cooker.hold,
                     Ok(c) => {
                         if !app.session.dirty && app.cooker.epoch == app.session.cook_epoch {
                             app.session.cooked = c;
@@ -102,7 +149,8 @@ pub fn drive(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             }
         }
     }
-    if app.session.dirty {
+    if app.session.dirty && !app.cooker.suspended {
+        app.cooker.hold = false;
         start(app, ctx.input(|i| i.time));
         ctx.request_repaint();
     }
@@ -120,12 +168,20 @@ fn start(app: &mut MaterialCraftApp, now: f64) {
     let (tx, rx) = std::sync::mpsc::channel();
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_flag = flag.clone();
+    let pool = app.cooker.pool();
     use materialcraft_engine::eval::Options;
     let spawned = std::thread::Builder::new().name("materialcraft-cook".into()).spawn(move || {
-        let mut opts = Options::new(&dec);
-        opts.max_size = max;
-        opts.cancel = Some(&thread_flag);
-        let cooked = guard("cook", || Ok(materialcraft_engine::eval::cook(&pkg, gi, &opts, &cache)));
+        let run = || {
+            let mut opts = Options::new(&dec);
+            opts.max_size = max;
+            opts.cancel = Some(&thread_flag);
+            guard("cook", || Ok(materialcraft_engine::eval::cook(&pkg, gi, &opts, &cache)))
+        };
+        // A pool of the chosen size keeps the cook's parallel work to that many threads.
+        let cooked = match pool {
+            Some(p) => p.install(run),
+            None => run(),
+        };
         let _ = tx.send(cooked);
     });
     match spawned {

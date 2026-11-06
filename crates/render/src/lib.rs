@@ -9,4 +9,7 @@
 pub mod ibl;
 pub mod preview;
 
-pub use preview::{Displacement, Lighting, Maps, Relief, Scene, Settings, VIEW_TRIANGLES, builtin_mesh, pan, render, render_cancellable};
+pub use preview::{
+    Background, Common, Displacement, Lighting, MapUse, Maps, PointLight, Relief, Scene, Settings, Shader, VIEW_TRIANGLES, builtin_mesh, camera, pan, render,
+    render_cancellable,
+};

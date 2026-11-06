@@ -20,11 +20,12 @@ pub mod view_cmds;
 pub mod wire_cmds;
 
 pub use commands::{CommandSpec, command_specs, execute, find};
-pub use session::{CameraPrefs, Clip, Session, View2d, View3d, WARNING_PREFIX};
+pub use session::{Camera3d, CameraPrefs, Clip, Display3d, Lights3d, Material3d, Renderer3d, Session, View2d, View3d, WARNING_PREFIX};
 
 pub use materialcraft_core as core;
 pub use materialcraft_eval as eval;
 pub use materialcraft_formats as formats;
+pub use materialcraft_geom as geom;
 pub use materialcraft_image as image;
 pub use materialcraft_nodes as nodes;
 
@@ -52,7 +53,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// A fresh, unsaved package with one empty graph, used at desktop and browser startup.
 pub fn new_session() -> Session {
     let mut pkg = core::Package::new("Untitled package");
-    pkg.graphs.push(samples::template("empty", "New_graph", 10));
+    pkg.graphs.push(samples::template("empty", "Material_Graph", 10));
     Session::new(pkg)
 }
 

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
-use crate::theme::{Accent, Brightness, Tokens};
+use crate::theme::Tokens;
 
 /// Template previews for the New graph dialog (rendered in the background on first open).
 #[derive(Default)]
@@ -85,7 +85,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         export(app, ctx);
     }
     if app.ui.windows.preferences {
-        preferences(app, ctx);
+        crate::preferences::show(app, ctx);
     }
     if app.ui.windows.about {
         about(app, ctx);
@@ -96,10 +96,27 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if app.ui.windows.home {
         home(app, ctx);
     }
+    if app.ui.windows.switch_engine {
+        crate::tool_windows::switch_engine(app, ctx);
+    }
+    if app.ui.windows.dependencies {
+        crate::tool_windows::dependencies(app, ctx);
+    }
+    if app.ui.windows.plugin_manager {
+        crate::plugins::window(app, ctx);
+    }
+    if app.import_pick.is_some() {
+        crate::tool_windows::import_pick(app, ctx);
+    }
     crate::unsaved::show(app, ctx);
 }
 
-fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
+/// Help ▸ Export log.
+pub fn export_log(app: &mut MaterialCraftApp) {
+    crate::tool_windows::export_log(app);
+}
+
+pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
     egui::Window::new(title)
         .id(egui::Id::unique(id))
         .open(open)
@@ -111,49 +128,106 @@ fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui
         .show(ctx, body);
 }
 
+/// Template groups for the new graph dialog: (group, template ids).
+fn template_groups() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    let mut starter = Vec::new();
+    let mut materials = Vec::new();
+    for t in materialcraft_engine::samples::TEMPLATES {
+        if matches!(t.0, "empty" | "pbr") { starter.push(*t) } else { materials.push(*t) }
+    }
+    vec![("Starter", starter), ("Materials", materials)]
+}
+
+/// What a template holds (the ⓘ in the new graph dialog).
+fn template_info(id: &str) -> &'static str {
+    match id {
+        "empty" => "A graph with no nodes: start from the library.",
+        "pbr" => "The PBR outputs (Base Color, Normal, Roughness, Metallic, Height, Ambient Occlusion) with nothing wired yet.",
+        "bricks" => "A tiling brick wall: Tile Generator, mortar, edge wear and colour variation.",
+        "stone_tiles" => "Irregular stone tiles with grout, bevelled edges and dirt in the gaps.",
+        "wood" => "Wooden planks with grain, knots and gaps between boards.",
+        "metal_plates" => "Painted metal plates with rivets, scratches and chipped edges.",
+        "rusty_metal" => "Sheet metal with rust spreading from the edges and a worn finish.",
+        "lava" => "Dark cooled rock with glowing cracks (an emissive output).",
+        "marble" => "Polished marble with veins and a glossy roughness.",
+        "wicker" => "A woven wicker weave with height and ambient occlusion.",
+        "fabric" => "Woven fabric fibres with a tiling thread pattern.",
+        "ground" => "Mossy ground: soil, pebbles and moss in the hollows.",
+        _ => "A graph template.",
+    }
+}
+
 fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let mut create = false;
-    modal(ctx, "new-graph", tr("New graph"), &mut open, vec2(640.0, 490.0), |ui| {
+    modal(ctx, "new-graph", tr("New graph"), &mut open, vec2(680.0, 520.0), |ui| {
         let tk = Tokens::get(ui.ctx());
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
-                ui.set_width(400.0);
-                ui.label(RichText::new(tr("Templates")).strong());
-                // Three rows of templates without scrolling.
-                egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                    for row in materialcraft_engine::samples::TEMPLATES.chunks(4) {
-                        ui.horizontal(|ui| {
-                            for (id, label) in row {
-                                let on = app.ui.new_graph_template == *id;
-                                let (r, resp) = ui.allocate_exact_size(vec2(94.0, 124.0), egui::Sense::click());
-                                crate::widgets::name(&resp, egui::Role::ListItem, label);
-                                if on {
-                                    ui.painter().rect_filled(r, 6.0, tk.row_selected);
-                                    ui.painter().rect_stroke(r, 6.0, egui::Stroke::new(1.5, tk.accent), egui::StrokeKind::Inside);
-                                } else if resp.hovered() {
-                                    ui.painter().rect_filled(r, 6.0, tk.row_hover);
-                                }
-                                let img = egui::Rect::from_min_size(r.min + vec2(7.0, 6.0), vec2(80.0, 80.0));
-                                match TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) {
-                                    Some(t) => {
-                                        ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
+                ui.set_width(420.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tr("Category")).strong());
+                    let shown = if app.ui.new_graph_category.is_empty() { tr("All").to_string() } else { tr(&app.ui.new_graph_category).to_string() };
+                    let r = egui::ComboBox::from_id_salt("new-category").selected_text(shown).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut app.ui.new_graph_category, String::new(), tr("All"));
+                        for (group, _) in template_groups() {
+                            ui.selectable_value(&mut app.ui.new_graph_category, group.to_string(), tr(group));
+                        }
+                    });
+                    crate::widgets::name(&r.response, egui::Role::ComboBox, "Category");
+                });
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical().max_height(410.0).show(ui, |ui| {
+                    for (group, templates) in template_groups() {
+                        if !app.ui.new_graph_category.is_empty() && app.ui.new_graph_category != group {
+                            continue;
+                        }
+                        ui.label(RichText::new(tr(group)).small().strong().color(tk.text_dim));
+                        for row in templates.chunks(4) {
+                            ui.horizontal(|ui| {
+                                for (id, label) in row {
+                                    let on = app.ui.new_graph_template == *id;
+                                    let (r, resp) = ui.allocate_exact_size(vec2(98.0, 124.0), egui::Sense::click());
+                                    crate::widgets::name(&resp, egui::Role::ListItem, label);
+                                    if on {
+                                        ui.painter().rect_filled(r, 6.0, tk.row_selected);
+                                        ui.painter().rect_stroke(r, 6.0, egui::Stroke::new(1.5, tk.accent), egui::StrokeKind::Inside);
+                                    } else if resp.hovered() {
+                                        ui.painter().rect_filled(r, 6.0, tk.row_hover);
                                     }
-                                    None => {
-                                        ui.painter().circle_filled(img.center(), 36.0, tk.row);
+                                    let img = egui::Rect::from_min_size(r.min + vec2(9.0, 6.0), vec2(80.0, 80.0));
+                                    match TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) {
+                                        Some(t) => {
+                                            ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
+                                        }
+                                        None => {
+                                            ui.painter().circle_filled(img.center(), 36.0, tk.row);
+                                        }
+                                    }
+                                    // ⓘ in the corner: what the template holds.
+                                    let info = egui::Rect::from_center_size(img.right_top() + vec2(-8.0, 8.0), vec2(16.0, 16.0));
+                                    let info_resp = ui.interact(info, resp.id.with("info"), egui::Sense::hover());
+                                    ui.painter().text(
+                                        info.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        icon::INFO,
+                                        egui::FontId::proportional(13.0),
+                                        if info_resp.hovered() { tk.text_strong } else { tk.text_dim },
+                                    );
+                                    info_resp.on_hover_text(tr(template_info(id)));
+                                    let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 94.0);
+                                    ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
+                                    if resp.clicked() {
+                                        app.ui.new_graph_template = id.to_string();
+                                        app.ui.new_graph_name = label.replace(' ', "_");
+                                    }
+                                    if resp.double_clicked() {
+                                        create = true;
                                     }
                                 }
-                                let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 90.0);
-                                ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
-                                if resp.clicked() {
-                                    app.ui.new_graph_template = id.to_string();
-                                    app.ui.new_graph_name = label.replace(' ', "_");
-                                }
-                                if resp.double_clicked() {
-                                    create = true;
-                                }
-                            }
-                        });
+                            });
+                        }
+                        ui.add_space(6.0);
                     }
                 });
             });
@@ -163,15 +237,46 @@ fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 ui.text_edit_singleline(&mut app.ui.new_graph_name);
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Size")).strong());
-                let r = egui::ComboBox::from_id_salt("new-size").selected_text(format!("{} px", app.ui.new_graph_size)).show_ui(ui, |ui| {
-                    for s in [256u32, 512, 1024, 2048, 4096] {
-                        ui.selectable_value(&mut app.ui.new_graph_size, s, format!("{s} px"));
+                let sizes = [16u32, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+                ui.horizontal(|ui| {
+                    let r = egui::ComboBox::from_id_salt("new-size").width(90.0).selected_text(format!("{} px", app.ui.new_graph_size)).show_ui(ui, |ui| {
+                        for s in sizes {
+                            ui.selectable_value(&mut app.ui.new_graph_size, s, format!("{s} px"));
+                        }
+                    });
+                    crate::widgets::name(&r.response, egui::Role::ComboBox, "Size");
+                    if crate::widgets::icon_button(
+                        ui,
+                        if app.ui.new_graph_link { icon::LINK } else { icon::LINK_BREAK },
+                        tr("Link width and height"),
+                        app.ui.new_graph_link,
+                        20.0,
+                    )
+                    .clicked()
+                    {
+                        app.ui.new_graph_link = !app.ui.new_graph_link;
+                        if !app.ui.new_graph_link && app.ui.new_graph_height == 0 {
+                            app.ui.new_graph_height = app.ui.new_graph_size;
+                        }
                     }
+                    let height = if app.ui.new_graph_link || app.ui.new_graph_height == 0 { app.ui.new_graph_size } else { app.ui.new_graph_height };
+                    ui.add_enabled_ui(!app.ui.new_graph_link, |ui| {
+                        let r = egui::ComboBox::from_id_salt("new-height").width(90.0).selected_text(format!("{height} px")).show_ui(ui, |ui| {
+                            for s in sizes {
+                                ui.selectable_value(&mut app.ui.new_graph_height, s, format!("{s} px"));
+                            }
+                        });
+                        crate::widgets::name(&r.response, egui::Role::ComboBox, "Height");
+                    });
                 });
-                crate::widgets::name(&r.response, egui::Role::ComboBox, "Size");
+                ui.label(RichText::new(tr("width × height")).small().color(tk.text_dim));
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Create graph in")).strong());
-                ui.label(&app.session.pkg.name);
+                let r = egui::ComboBox::from_id_salt("new-package").selected_text(&app.session.pkg.name).show_ui(ui, |ui| {
+                    let _ = ui.selectable_label(true, &app.session.pkg.name);
+                });
+                crate::widgets::name(&r.response, egui::Role::ComboBox, "Create graph in");
+                ui.label(RichText::new(tr("The open package (File ▸ New ▸ Empty package starts another)")).small().color(tk.text_dim));
                 ui.add_space(20.0);
                 ui.horizontal(|ui| {
                     if ui.add(crate::widgets::primary_button(ui, tr("Create"))).clicked() {
@@ -187,6 +292,9 @@ fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if create {
         let p = json!({"template": app.ui.new_graph_template, "name": app.ui.new_graph_name, "size": app.ui.new_graph_size});
         if app.run("file.new", p).is_some() {
+            if !app.ui.new_graph_link && app.ui.new_graph_height != 0 && app.ui.new_graph_height != app.ui.new_graph_size {
+                app.run("graph.size", json!({"width": app.ui.new_graph_size, "height": app.ui.new_graph_height}));
+            }
             app.ui.frame_all = true;
             open = false;
         }
@@ -282,54 +390,6 @@ fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     if !open {
         app.ui.windows.export = false;
-    }
-}
-
-fn preferences(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    let mut open = true;
-    modal(ctx, "prefs", tr("Preferences"), &mut open, vec2(380.0, 340.0), |ui| {
-        let p = &mut app.ui.prefs;
-        let current_lang = crate::i18n::current();
-        crate::widgets::combo(ui, tr("Language"), current_lang.name, |ui| {
-            for l in &crate::i18n::LANGUAGES {
-                if ui.selectable_label(p.language == l.code, l.name).clicked() {
-                    p.language = l.code.to_owned();
-                    crate::i18n::set_language(&p.language);
-                }
-            }
-        });
-        crate::widgets::combo(ui, tr("Brightness"), tr(p.brightness.label()), |ui| {
-            for b in Brightness::ALL {
-                ui.selectable_value(&mut p.brightness, b, tr(b.label()));
-            }
-        });
-        crate::widgets::combo(ui, tr("Accent color"), tr(p.accent.label()), |ui| {
-            for a in Accent::ALL {
-                ui.selectable_value(&mut p.accent, a, tr(a.label()));
-            }
-        });
-        crate::widgets::slider(ui, tr("Interface scale"), &mut p.ui_scale, 0.75..=2.0, 2);
-        let mut auto = p.autosave_minutes as f32;
-        if crate::widgets::slider(ui, tr("Autosave every (minutes, 0 = off)"), &mut auto, 0.0..=60.0, 0).changed() {
-            p.autosave_minutes = auto.round() as u32;
-        }
-        crate::widgets::combo(
-            ui,
-            tr("Preview size while editing"),
-            if p.preview_size == 0 { tr("Full size").to_string() } else { format!("{} px", p.preview_size) },
-            |ui| {
-                for s in [256u32, 512, 1024, 2048, 4096, 0] {
-                    let label = if s == 0 { tr("Full size").to_string() } else { format!("{s} px") };
-                    ui.selectable_value(&mut p.preview_size, s, label);
-                }
-            },
-        );
-        ui.checkbox(&mut p.thumbnails, tr("Show node thumbnails"));
-        crate::widgets::slider(ui, tr("3D pan limit (mesh radii)"), &mut p.camera.pan_limit, 0.0..=20.0, 1);
-        crate::widgets::slider(ui, tr("3D pan speed"), &mut p.camera.pan_speed, 0.1..=4.0, 2);
-    });
-    if !open {
-        app.ui.windows.preferences = false;
     }
 }
 
@@ -563,7 +623,8 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     {
         match id {
             "file.open" => {
-                if let Some(p) = rfd::FileDialog::new().add_filter("SBS or MaterialCraft package, or material", OPEN_EXTS).pick_file() {
+                if let Some(p) = dialog(app).add_filter("SBS or MaterialCraft package, or material", OPEN_EXTS).pick_file() {
+                    remember_dir(app, &p);
                     open_path(app, &p.display().to_string());
                 }
                 true
@@ -578,12 +639,13 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             }
             "file.save" | "file.saveAs" => {
                 let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = rfd::FileDialog::new()
+                if let Some(p) = dialog(app)
                     .set_file_name(name)
                     .add_filter("SBS package", &["sbs"])
                     .add_filter("MaterialCraft package (older format)", &["mcraft"])
                     .save_file()
                 {
+                    remember_dir(app, &p);
                     let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
                     if app.run("file.save", json!({"path": path})).is_some() {
                         app.ui.add_recent(&path);
@@ -611,8 +673,62 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.importBitmap" => {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
+                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
+                    remember_dir(app, &p);
                     crate::graph_view::import_bitmap_file(app, &p.display().to_string());
+                }
+                true
+            }
+            "file.linkBitmap" => {
+                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file()
+                    && let Some(r) = app.run("file.linkBitmap", json!({"path": p.display().to_string()}))
+                {
+                    let name = r["name"].as_str().unwrap_or_default().to_string();
+                    app.toast(format!("{} {name}", tr("Linked bitmap")), false);
+                }
+                true
+            }
+            "file.saveCopy" => {
+                let name = format!("{}_copy.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
+                if let Some(p) = dialog(app)
+                    .set_file_name(name)
+                    .add_filter("SBS package", &["sbs"])
+                    .add_filter("MaterialCraft package (older format)", &["mcraft"])
+                    .save_file()
+                    && let Some(r) = app.run("file.saveCopy", json!({"path": p.display().to_string()}))
+                {
+                    app.toast(format!("{} {}", tr("Saved a copy to"), r["path"].as_str().unwrap_or_default()), false);
+                }
+                true
+            }
+            "file.exportWithDependencies" => {
+                if let Some(dir) = dialog(app).set_title(tr("Folder for the package and its dependencies")).pick_folder()
+                    && let Some(r) = app.run("file.exportWithDependencies", json!({"dir": dir.display().to_string()}))
+                {
+                    let n = r["files"].as_array().map_or(0, Vec::len);
+                    app.toast(format!("{} {n} {} {}", tr("Exported"), tr("file(s) to"), dir.display()), false);
+                }
+                true
+            }
+            "file.importGraph" => {
+                if let Some(p) = dialog(app).add_filter("Packages", &["sbs", "mcraft"]).pick_file() {
+                    remember_dir(app, &p);
+                    let path = p.display().to_string();
+                    // Several graphs: the picker window asks which; one graph imports at once.
+                    match app.run("file.packageGraphs", json!({"path": path})) {
+                        Some(list) if list.as_array().is_some_and(|a| a.len() > 1) => {
+                            app.import_pick = Some((
+                                path,
+                                list.as_array().cloned().unwrap_or_default().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect(),
+                            ));
+                        }
+                        Some(_) => {
+                            if let Some(r) = app.run("file.importGraph", json!({"path": path})) {
+                                app.toast(format!("{} {}", tr("Imported graph"), r["name"].as_str().unwrap_or_default()), false);
+                            }
+                        }
+                        None => {}
+                    }
                 }
                 true
             }
@@ -629,6 +745,35 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             _ => return false,
         }
         true
+    }
+}
+
+/// Where a file dialog opens (Preferences ▸ Save/Export Path): the last folder used, the
+/// package's folder, or a fixed one.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn dialog_dir(app: &MaterialCraftApp) -> Option<std::path::PathBuf> {
+    let p = &app.ui.prefs;
+    let dir = match p.save_path_mode.as_str() {
+        "package" => app.session.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).map(|p| p.to_path_buf()),
+        "custom" if !p.save_path.trim().is_empty() => Some(std::path::PathBuf::from(p.save_path.trim())),
+        _ => (!app.ui.last_dir.is_empty()).then(|| std::path::PathBuf::from(&app.ui.last_dir)),
+    };
+    dir.filter(|d| d.is_dir())
+}
+
+/// A file dialog opening in the preferred folder.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn dialog(app: &MaterialCraftApp) -> rfd::FileDialog {
+    match dialog_dir(app) {
+        Some(d) => rfd::FileDialog::new().set_directory(d),
+        None => rfd::FileDialog::new(),
+    }
+}
+
+/// Remember the folder of a path a dialog gave (Save/Export Path: Last path).
+pub fn remember_dir(app: &mut MaterialCraftApp, path: &std::path::Path) {
+    if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        app.ui.last_dir = d.display().to_string();
     }
 }
 

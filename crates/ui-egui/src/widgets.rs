@@ -242,3 +242,186 @@ pub fn panel_header(ui: &mut Ui, title: &str, trailing: impl FnOnce(&mut Ui)) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), trailing);
     });
 }
+
+/// How the colour strip's channel sliders read: sRGB 0..255, linear floats or HSV.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ColorMode {
+    #[default]
+    Srgb,
+    Float,
+    Hsv,
+}
+
+/// A colour row as the 3D view's property pages show it: a swatch (click opens the picker), a
+/// hue strip (click or drag sets the hue), then sRGB / Float / HSV sliders for the channels.
+/// `linear` is linear RGB; `alpha` adds a fourth slider. Returns true when the colour changed.
+pub fn color_strip(ui: &mut Ui, id: &str, linear: &mut [f32; 3], alpha: Option<&mut f32>) -> bool {
+    let tk = Tokens::get(ui.ctx());
+    let mode_id = ui.make_persistent_id((id, "color-mode"));
+    let mut mode: ColorMode = ui.data(|d| d.get_temp(mode_id)).unwrap_or_default();
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= color_swatch(ui, id, linear, 22.0);
+        // Hue strip.
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(60.0), 18.0), Sense::click_and_drag());
+        name(&resp, egui::Role::Slider, "Hue");
+        let steps = 24;
+        for i in 0..steps {
+            let (a, b) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
+            let r = egui::Rect::from_min_max(
+                egui::pos2(rect.left() + rect.width() * a, rect.top()),
+                egui::pos2(rect.left() + rect.width() * b + 0.5, rect.bottom()),
+            );
+            let c = egui::ecolor::Hsva::new(a + 0.5 / steps as f32, 1.0, 1.0, 1.0);
+            ui.painter().rect_filled(r, 0.0, Color32::from(c));
+        }
+        ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, tk.field_border), egui::StrokeKind::Inside);
+        let srgb = linear.map(materialcraft_engine::image::linear_to_srgb);
+        let mut hsv = egui::ecolor::Hsva::from_rgb(srgb);
+        let hx = rect.left() + rect.width() * hsv.h;
+        ui.painter().line_segment([egui::pos2(hx, rect.top()), egui::pos2(hx, rect.bottom())], Stroke::new(2.0, Color32::WHITE));
+        if (resp.clicked() || resp.dragged())
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            hsv.h = ((p.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+            if hsv.s <= 0.0 {
+                hsv.s = 1.0;
+            }
+            if hsv.v <= 0.0 {
+                hsv.v = 1.0;
+            }
+            let rgb = hsv.to_rgb();
+            *linear = rgb.map(materialcraft_engine::image::srgb_to_linear);
+            changed = true;
+        }
+    });
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            for (m, label) in [(ColorMode::Srgb, "sRGB"), (ColorMode::Float, "Float"), (ColorMode::Hsv, "HSV")] {
+                if ui.add(egui::Button::new(label).selected(mode == m).min_size(vec2(46.0, 18.0))).clicked() {
+                    mode = m;
+                }
+            }
+        });
+        ui.vertical(|ui| {
+            let srgb = linear.map(materialcraft_engine::image::linear_to_srgb);
+            match mode {
+                ColorMode::Srgb => {
+                    let mut v = srgb.map(|c| (c * 255.0).round());
+                    let mut dirty = false;
+                    for (i, ch) in ["R", "G", "B"].iter().enumerate() {
+                        dirty |= slider(ui, ch, &mut v[i], 0.0..=255.0, 0).changed();
+                    }
+                    if dirty {
+                        *linear = v.map(|c| materialcraft_engine::image::srgb_to_linear(c / 255.0));
+                        changed = true;
+                    }
+                }
+                ColorMode::Float => {
+                    let mut dirty = false;
+                    for (i, ch) in ["R", "G", "B"].iter().enumerate() {
+                        dirty |= slider(ui, ch, &mut linear[i], 0.0..=1.0, 3).changed();
+                    }
+                    changed |= dirty;
+                }
+                ColorMode::Hsv => {
+                    let hsv = egui::ecolor::Hsva::from_rgb(srgb);
+                    let mut v = [hsv.h * 360.0, hsv.s * 100.0, hsv.v * 100.0];
+                    let mut dirty = false;
+                    dirty |= slider(ui, "H", &mut v[0], 0.0..=360.0, 0).changed();
+                    dirty |= slider(ui, "S", &mut v[1], 0.0..=100.0, 0).changed();
+                    dirty |= slider(ui, "V", &mut v[2], 0.0..=100.0, 0).changed();
+                    if dirty {
+                        let rgb = egui::ecolor::Hsva::new(v[0] / 360.0, v[1] / 100.0, v[2] / 100.0, 1.0).to_rgb();
+                        *linear = rgb.map(materialcraft_engine::image::srgb_to_linear);
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(a) = alpha {
+                let mut v = if mode == ColorMode::Float { *a } else { (*a * 255.0).round() };
+                let (hi, dec) = if mode == ColorMode::Float { (1.0, 3) } else { (255.0, 0) };
+                if slider(ui, "A", &mut v, 0.0..=hi, dec).changed() {
+                    *a = if mode == ColorMode::Float { v } else { v / 255.0 };
+                    changed = true;
+                }
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(mode_id, mode));
+    changed
+}
+
+/// A grey value row like [`color_strip`]: swatch, black-to-white strip and an "L" slider
+/// (sRGB 0..255 or float). `value` is linear 0..1. Returns true when it changed.
+pub fn gray_strip(ui: &mut Ui, id: &str, value: &mut f32) -> bool {
+    let tk = Tokens::get(ui.ctx());
+    let mode_id = ui.make_persistent_id((id, "gray-mode"));
+    let mut float_mode: bool = ui.data(|d| d.get_temp(mode_id)).unwrap_or(false);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let mut rgb = [*value; 3];
+        if color_swatch(ui, id, &mut rgb, 22.0) {
+            *value = (rgb[0] + rgb[1] + rgb[2]) / 3.0;
+            changed = true;
+        }
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().max(60.0), 18.0), Sense::click_and_drag());
+        name(&resp, egui::Role::Slider, "Value");
+        let steps = 16;
+        for i in 0..steps {
+            let (a, b) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
+            let r = egui::Rect::from_min_max(
+                egui::pos2(rect.left() + rect.width() * a, rect.top()),
+                egui::pos2(rect.left() + rect.width() * b + 0.5, rect.bottom()),
+            );
+            let g = (materialcraft_engine::image::linear_to_srgb(a + 0.5 / steps as f32) * 255.0) as u8;
+            ui.painter().rect_filled(r, 0.0, Color32::from_gray(g));
+        }
+        ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, tk.field_border), egui::StrokeKind::Inside);
+        let x = rect.left() + rect.width() * value.clamp(0.0, 1.0);
+        ui.painter().line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], Stroke::new(2.0, tk.accent));
+        if (resp.clicked() || resp.dragged())
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            *value = ((p.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+            changed = true;
+        }
+    });
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            if ui.add(egui::Button::new("sRGB").selected(!float_mode).min_size(vec2(46.0, 18.0))).clicked() {
+                float_mode = false;
+            }
+            if ui.add(egui::Button::new("Float").selected(float_mode).min_size(vec2(46.0, 18.0))).clicked() {
+                float_mode = true;
+            }
+        });
+        ui.vertical(|ui| {
+            if float_mode {
+                changed |= slider(ui, "L", value, 0.0..=1.0, 3).changed();
+            } else {
+                let mut v = (materialcraft_engine::image::linear_to_srgb(*value) * 255.0).round();
+                if slider(ui, "L", &mut v, 0.0..=255.0, 0).changed() {
+                    *value = materialcraft_engine::image::srgb_to_linear(v / 255.0);
+                    changed = true;
+                }
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(mode_id, float_mode));
+    changed
+}
+
+/// A two-state "True / False" button like the 3D view property pages. Returns true when toggled.
+pub fn bool_button(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
+    let tk = Tokens::get(ui.ctx());
+    ui.label(RichText::new(label).color(tk.text));
+    let text = if *value { "True" } else { "False" };
+    let r = ui.add(egui::Button::new(text).min_size(vec2(ui.available_width().max(60.0), 20.0)));
+    name(&r, egui::Role::CheckBox, label);
+    if r.clicked() {
+        *value = !*value;
+        return true;
+    }
+    false
+}

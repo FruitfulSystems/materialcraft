@@ -14,6 +14,9 @@ use crate::theme::Tokens;
 
 /// The panel title: "<node> - Properties" or "<graph> - Properties".
 pub fn title(app: &MaterialCraftApp) -> String {
+    if let Some((page, _)) = &app.props3d {
+        return crate::view3d_props::title(*page);
+    }
     let sel = app.session.selection.last().and_then(|id| app.session.graph().ok()?.node(*id).ok().map(crate::graph_view::node_label));
     let name = sel.or_else(|| app.session.graph().ok().map(|g| g.name.clone())).unwrap_or_default();
     format!("{name} - {}", tr("Properties"))
@@ -40,6 +43,18 @@ fn section(ui: &mut Ui, id: &str, title: &str, body: impl FnOnce(&mut Ui)) {
 }
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    // A 3D view page stays until the user selects something else in the graph.
+    if let Some((page, sel)) = app.props3d.clone() {
+        if sel != app.session.selection {
+            app.props3d = None;
+        } else {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.push_id(("props3d", page.title()), |ui| crate::view3d_props::show(app, ui, page));
+            });
+            return;
+        }
+    }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let node = app.session.selection.last().and_then(|id| app.session.graph().ok()?.node(*id).ok().cloned());

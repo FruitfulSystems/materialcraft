@@ -18,6 +18,15 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         cmd!("graph.rename", "Rename graph", [], None, "{name, graph?}", has_graph, rename),
         cmd!("graph.delete", "Delete graph", [], None, "{graph?}", has_graph, delete),
         cmd!("graph.duplicate", "Duplicate graph", [], None, "{graph?}", has_graph, duplicate),
+        cmd!(
+            "graph.add",
+            "Add graph",
+            [],
+            None,
+            "{graph: a graph as JSON (edit.copy of a graph, graph.get)} adds the graph to the package under a unique name and opens it",
+            always,
+            add
+        ),
         cmd!("graph.size", "Graph size", [], None, "{width, height} in pixels (powers of two, 16..8192) or {log2: [w, h]}", has_graph, size),
         cmd!("graph.seed", "Random seed", [], None, "{seed}", has_graph, |s, p| {
             let seed = i64p(p, "seed").ok_or_else(|| bad("graph.seed", "`seed` is required"))?.clamp(0, i32::MAX as i64) as i32;
@@ -148,6 +157,28 @@ fn duplicate(s: &mut Session, p: &J) -> Result<J> {
         s.graph = s.pkg.graphs.len() - 1;
         s.selection.clear();
         Ok(json!({"graph": s.graph}))
+    })
+}
+
+/// Paste a whole graph (the explorer's Copy/Paste): its JSON, renamed when the name is taken.
+fn add(s: &mut Session, p: &J) -> Result<J> {
+    const MAX_NODES: usize = 100_000;
+    let v = p.get("graph").ok_or_else(|| bad("graph.add", "`graph` is required"))?;
+    let mut g: materialcraft_core::Graph = serde_json::from_value(v.clone()).map_err(|e| bad("graph.add", format!("not a graph: {e}")))?;
+    if g.nodes.len() > MAX_NODES {
+        return Err(bad("graph.add", format!("a graph holds at most {MAX_NODES} nodes")));
+    }
+    if g.name.trim().is_empty() {
+        g.name = "Material_Graph".into();
+    }
+    s.edit("Add graph", |s| {
+        g.name = s.pkg.unique_graph_name(&g.name);
+        let name = g.name.clone();
+        s.pkg.graphs.push(g);
+        s.graph = s.pkg.graphs.len() - 1;
+        s.selection.clear();
+        s.view2d.node = None;
+        Ok(json!({"graph": s.graph, "name": name}))
     })
 }
 

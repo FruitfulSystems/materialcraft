@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(s.pkg.name, "Untitled package");
         assert_eq!(s.pkg.graphs.len(), 1);
         let g = s.graph().unwrap();
-        assert_eq!(g.name, "New_graph");
+        assert_eq!(g.name, "Material_Graph");
         assert!(g.nodes.is_empty());
         assert!(g.connections.is_empty());
         assert!(s.path.is_none());

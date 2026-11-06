@@ -162,11 +162,16 @@ pub struct Dock {
     workspace: Workspace,
     /// A panel to bring in front of the other floating windows on the next frame.
     raise: Option<Panel>,
+    /// A panel shown alone over the whole dock (Shift+Space on a panel; Windows ▸ Unmaximize
+    /// window). Not saved with the layout.
+    pub maximized: Option<Panel>,
+    /// The panel under the pointer on the last frame (the one Shift+Space maximizes).
+    pub hovered: Option<Panel>,
 }
 
 impl Default for Dock {
     fn default() -> Self {
-        Dock { workspace: default_workspace(), raise: None }
+        Dock { workspace: default_workspace(), raise: None, maximized: None, hovered: None }
     }
 }
 
@@ -199,7 +204,7 @@ impl Dock {
         if validate(&workspace).is_err() {
             return Dock::default();
         }
-        Dock { workspace, raise: None }
+        Dock { workspace, raise: None, maximized: None, hovered: None }
     }
 
     pub fn workspace(&self) -> &Workspace {
@@ -288,6 +293,30 @@ fn style(ui: &Ui, t: &Tokens) -> DockStyle {
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let tk = Tokens::get(&ctx);
+    // Shift+Space maximizes the panel under the pointer, or brings the layout back.
+    if !ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Space)) {
+        app.ui.dock.maximized = match app.ui.dock.maximized {
+            Some(_) => None,
+            None => app.ui.dock.hovered,
+        };
+    }
+    if let Some(panel) = app.ui.dock.maximized {
+        let title = Panels { app: &mut *app }.logical_label(&panel);
+        egui::Frame::NONE.fill(tk.panel).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(title).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button(tr("Unmaximize (Shift+Space)")).clicked() {
+                        app.ui.dock.maximized = None;
+                    }
+                });
+            });
+            let rect = ui.available_rect_before_wrap();
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+            Panels { app }.body(&mut child, &panel);
+        });
+        return;
+    }
     let style = style(ui, &tk);
     let layout = app.ui.dock.workspace.layout.clone();
     let mut area = DockArea::new(area_id()).input_blocked(ctx.memory(|m| m.top_modal_layer()).is_some());
@@ -317,6 +346,9 @@ struct Panels<'a> {
 impl DockContent<Panel> for Panels<'_> {
     fn body(&mut self, ui: &mut Ui, panel: &Panel) {
         let app = &mut *self.app;
+        if ui.rect_contains_pointer(ui.max_rect()) {
+            app.ui.dock.hovered = Some(*panel);
+        }
         match panel {
             Panel::Graph => crate::graph_view::show(app, ui),
             Panel::View3d => crate::view3d::show(app, ui),
