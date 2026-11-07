@@ -9,6 +9,7 @@ pub struct PatternEditor {
     pub node: NodeId,
     pub graph: usize,
     pub(crate) selection: Vec<u32>,
+    pub(crate) selected_wires: Vec<crate::graph::WireRef>,
     pub(crate) inspected_node: Option<u32>,
     pub(super) pan: Vec2,
     pub(super) zoom: f32,
@@ -19,7 +20,18 @@ pub struct PatternEditor {
 
 impl PatternEditor {
     pub fn new(graph: usize, node: NodeId) -> Self {
-        Self { node, graph, selection: Vec::new(), inspected_node: None, pan: Vec2::ZERO, zoom: 1.0, framed: false, drag: None, menu_at: Pos2::ZERO }
+        Self {
+            node,
+            graph,
+            selection: Vec::new(),
+            selected_wires: Vec::new(),
+            inspected_node: None,
+            pan: Vec2::ZERO,
+            zoom: 1.0,
+            framed: false,
+            drag: None,
+            menu_at: Pos2::ZERO,
+        }
     }
 
     pub(crate) fn current<'a>(&self, app: &'a MaterialCraftApp) -> Option<&'a PatternGraph> {
@@ -57,6 +69,7 @@ impl PatternEditor {
             && let Some(id) = result.get("id").and_then(serde_json::Value::as_u64).and_then(|id| u32::try_from(id).ok())
         {
             self.selection = vec![id];
+            self.selected_wires.clear();
         }
     }
 }

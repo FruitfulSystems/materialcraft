@@ -36,6 +36,138 @@ fn function_session(kind: &str) -> (Session, FunctionGraphTarget) {
 }
 
 #[test]
+fn pattern_links_swap_between_parents_and_reject_invalid_pairs_atomically() {
+    let mut session = new_session();
+    let owner = execute(&mut session, "graph.node.add", &json!({"def": "fx_map"})).unwrap()["id"].as_u64().unwrap();
+    let mut graph = PatternGraph::with_root(PatternNodeKind::Switch);
+    let a = graph.add(PatternNodeKind::Quadrant).unwrap();
+    let b = graph.add(PatternNodeKind::Quadrant).unwrap();
+    let other = graph.add(PatternNodeKind::Iterate).unwrap();
+    graph.nodes[0].children = vec![Some(a), Some(b)];
+    graph.nodes[3].children = vec![Some(b), None];
+    execute(&mut session, "graph.pattern.set", &json!({"id": owner, "pattern": graph})).unwrap();
+    let before = session.pkg.clone();
+    session.reset_history();
+    let wires = json!([{"to": 1, "toPort": "output0"}, {"to": other, "toPort": "output0"}]);
+    let parameters = json!({"pattern": owner, "wires": wires});
+    execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+    let Value::PatternGraph(swapped) = &session.graph().unwrap().node(NodeId(owner)).unwrap().params["pattern"] else { panic!() };
+    assert_eq!(swapped.nodes[0].children, vec![Some(b), Some(b)]);
+    assert_eq!(swapped.nodes[3].children, vec![Some(a), None]);
+    assert_eq!(swapped.root, graph.root);
+    assert_eq!(session.history().len(), 1);
+    session.undo().unwrap();
+    assert_eq!(session.pkg, before);
+    session.redo().unwrap();
+    execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+    assert_eq!(session.pkg, before);
+
+    for wires in [
+        json!([]),
+        json!([{"to": 1, "toPort": "output0"}]),
+        json!([{"to": 1, "toPort": "output0"}, {"to": 1, "toPort": "output0"}]),
+        json!([{"to": 1, "toPort": "output0"}, {"to": 1, "toPort": "output1"}, {"to": other, "toPort": "output0"}]),
+        json!([{"to": 1, "toPort": "output0"}, {"to": a, "toPort": "output0"}]),
+        json!([{"to": 1, "toPort": "output0"}, {"to": u32::MAX, "toPort": "output0"}]),
+        json!([{"to": 1, "toPort": "output0"}, {"to": other, "toPort": "invalid"}]),
+    ] {
+        let history = session.history();
+        assert!(execute(&mut session, "graph.wire.swap", &json!({"pattern": owner, "wires": wires})).is_err());
+        assert_eq!(session.pkg, before);
+        assert_eq!(session.history(), history);
+    }
+    execute(&mut session, "graph.wire.delete", &json!({"pattern": owner, "wires": wires})).unwrap();
+    session.undo().unwrap();
+    assert_eq!(session.pkg, before);
+
+    execute(&mut session, "graph.pattern.edit", &json!({"id": owner, "edit": {"action": "connect", "parent": a, "slot": 0, "child": b}})).unwrap();
+    let before = session.pkg.clone();
+    let history = session.history();
+    let cycle = json!({"pattern": owner, "wires": [{"to": 1, "toPort": "output0"}, {"to": a, "toPort": "output0"}]});
+    assert!(execute(&mut session, "graph.wire.swap", &cycle).is_err());
+    assert_eq!(session.pkg, before);
+    assert_eq!(session.history(), history);
+}
+
+#[test]
+fn selected_function_links_swap_sources_and_delete_in_one_undo_step() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let mut graph = FunctionGraph::default();
+        let a = graph.add_constant(Value::Float3([1.0, 2.0, 3.0]));
+        let b = graph.add_constant(Value::Float3([4.0, 5.0, 6.0]));
+        let subtract = graph.add("sub", &[a, b], None);
+        let other = graph.add("passthrough", &[b], None);
+        graph.output = Some(subtract);
+        execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).unwrap();
+        session.reset_history();
+        let before = session.pkg.clone();
+        let parameters = json!({"function": target, "wires": [{"to": subtract, "toPort": "0"}, {"to": subtract, "toPort": "1"}]});
+
+        execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+        let swapped = target.current(&session).unwrap();
+        assert_eq!(swapped.node(subtract).unwrap().inputs, vec![Some(b), Some(a)]);
+        assert_eq!(swapped.node(other).unwrap().inputs, vec![Some(b)]);
+        assert_eq!(swapped.output, Some(subtract));
+        assert_eq!(session.history().len(), 1);
+        session.undo().unwrap();
+        assert_eq!(session.pkg, before);
+        session.redo().unwrap();
+        execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+        assert_eq!(session.pkg, before);
+
+        execute(&mut session, "graph.wire.delete", &parameters).unwrap();
+        assert_eq!(target.current(&session).unwrap().node(subtract).unwrap().inputs, vec![None, None]);
+        session.undo().unwrap();
+        assert_eq!(session.pkg, before);
+
+        let selection = session.selection.clone();
+        let parameters = json!({"function": target, "wires": [{"to": subtract, "toPort": "0"}, {"to": other, "toPort": "0"}]});
+        execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+        let swapped = target.current(&session).unwrap();
+        assert_eq!(swapped.node(subtract).unwrap().inputs, vec![Some(b), Some(b)]);
+        assert_eq!(swapped.node(other).unwrap().inputs, vec![Some(a)]);
+        assert_eq!(session.selection, selection);
+        session.undo().unwrap();
+        assert_eq!(session.pkg, before);
+    }
+}
+
+#[test]
+fn function_link_swap_rejects_cycles_and_invalid_selections_atomically() {
+    let (mut session, target) = function_session("graph");
+    let mut graph = FunctionGraph::default();
+    let scalar = graph.add_constant(Value::Float(1.0));
+    let vector = graph.add_constant(Value::Float2([1.0, 2.0]));
+    let first = graph.add("add", &[scalar, scalar], None);
+    let second = graph.add("add", &[first, scalar], None);
+    let vector_sum = graph.add("add", &[vector, vector], None);
+    execute(&mut session, "graph.function.set", &json!({"function": graph})).unwrap();
+    let package = session.pkg.clone();
+    let history = session.history();
+    for wires in [
+        json!([]),
+        json!([{"to": first, "toPort": "0"}]),
+        json!([{"to": first, "toPort": "0"}, {"to": first, "toPort": "0"}]),
+        json!([{"to": first, "toPort": "0"}, {"to": first, "toPort": "1"}, {"to": second, "toPort": "1"}]),
+        json!([{"to": first, "toPort": "0"}, {"to": second, "toPort": "0"}]),
+        json!([{"to": first, "toPort": "0"}, {"to": u32::MAX, "toPort": "0"}]),
+        json!([{"to": first, "toPort": "0"}, {"to": second, "toPort": u64::MAX}]),
+    ] {
+        assert!(execute(&mut session, "graph.wire.swap", &json!({"function": target, "wires": wires})).is_err(), "{wires}");
+        assert_eq!(session.pkg, package);
+        assert_eq!(session.history(), history);
+    }
+    let parameters = json!({"wires": [{"to": second, "toPort": "1"}, {"to": vector_sum, "toPort": "1"}]});
+    execute(&mut session, "graph.wire.delete", &parameters).unwrap();
+    let package = session.pkg.clone();
+    let history = session.history();
+    assert!(execute(&mut session, "graph.wire.swap", &parameters).is_err());
+    assert_eq!(session.pkg, package);
+    assert_eq!(session.history(), history);
+}
+
+#[test]
 fn creation_and_connections_use_the_same_rules_for_every_function_target() {
     for kind in ["graph", "parameter", "dynamic", "pattern"] {
         let (mut session, target) = function_session(kind);
@@ -52,7 +184,7 @@ fn creation_and_connections_use_the_same_rules_for_every_function_target() {
         let graph = target.current(&session).unwrap();
         assert_eq!(graph.node(ids[1]).unwrap().inputs, vec![None, None]);
         assert_eq!(graph.node(ids[1]).unwrap().pos, [32.0, -32.0]);
-        assert_eq!(graph.output, Some(ids[0]));
+        assert_eq!(graph.output, None);
         execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "connect", "from": ids[0], "to": ids[1], "input": 0}}))
             .unwrap();
         assert_eq!(target.current(&session).unwrap().node(ids[1]).unwrap().inputs[0], Some(ids[0]));
@@ -65,6 +197,95 @@ fn creation_and_connections_use_the_same_rules_for_every_function_target() {
             assert!(execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": edit})).is_err());
             assert_eq!(session.pkg, before);
         }
+    }
+}
+
+#[test]
+fn output_designation_is_explicit_and_undoable_for_every_function_target() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let mut ids = Vec::new();
+        for operation in ["const_float1", "passthrough"] {
+            let result =
+                execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": operation, "at": [0, 0]}}))
+                    .unwrap();
+            ids.push(result["id"].as_u64().unwrap() as u32);
+        }
+        assert_eq!(target.current(&session).unwrap().output, None, "{kind}");
+
+        for id in &ids {
+            execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": id}})).unwrap();
+            assert_eq!(target.current(&session).unwrap().output, Some(*id));
+        }
+        session.undo().unwrap();
+        assert_eq!(target.current(&session).unwrap().output, Some(ids[0]));
+        session.redo().unwrap();
+        assert_eq!(target.current(&session).unwrap().output, Some(ids[1]));
+
+        let package = session.pkg.clone();
+        let history = session.history();
+        assert!(execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": u32::MAX}})).is_err());
+        assert_eq!(session.pkg, package);
+        assert_eq!(session.history(), history);
+
+        execute(&mut session, "edit.delete", &json!({"function": target, "ids": [ids[1]]})).unwrap();
+        assert_eq!(target.current(&session).unwrap().output, None);
+        execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": "const_float1", "at": [0, 0]}})).unwrap();
+        assert_eq!(target.current(&session).unwrap().output, None, "adding a node must not replace a deleted output");
+
+        session.undo().unwrap();
+        session.undo().unwrap();
+        assert_eq!(session.pkg, package);
+    }
+}
+
+#[test]
+fn function_node_info_uses_the_explicit_target_without_editing_the_document() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let added =
+            execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": "const_float1", "at": [0, 0]}}))
+                .unwrap();
+        let id = added["id"].as_u64().unwrap();
+        execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": id}})).unwrap();
+        let package = session.pkg.clone();
+        let history = session.history();
+        let result = execute(&mut session, "graph.function.node.info", &json!({"target": target, "id": id})).unwrap();
+        let info: serde_json::Value = serde_json::from_str(result["text"].as_str().unwrap()).unwrap();
+        assert_eq!(info["node"]["id"], id);
+        assert_eq!(info["node"]["op"], "const_float1");
+        assert_eq!(info["label"], "Float");
+        assert_eq!(info["output"], true);
+        assert_eq!(info["target"], json!(target));
+        for id in [u64::MAX, 999] {
+            assert!(execute(&mut session, "graph.function.node.info", &json!({"target": target, "id": id})).is_err());
+        }
+        assert_eq!(session.pkg, package);
+        assert_eq!(session.history(), history);
+    }
+}
+
+#[test]
+fn incomplete_function_warnings_follow_edits_for_every_target() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let mut graph = FunctionGraph::default();
+        let source = graph.add_constant(Value::Float(0.5));
+        let multiply = graph.add("mul", &[source], None);
+        execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).unwrap();
+        let warning = format!("Multiply (node {multiply}): input b is not connected");
+        let expected = json!([{"target": target, "messages": ["No output node defined", warning]}]);
+        assert_eq!(materialcraft_engine::inspect::session(&session, None)["graph"]["functionWarnings"], expected, "{kind}");
+
+        execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": multiply}})).unwrap();
+        assert_eq!(materialcraft_engine::inspect::session(&session, None)["graph"]["functionWarnings"], json!([{"target": target, "messages": [warning]}]));
+        execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "connect", "from": source, "to": multiply, "input": 1}}))
+            .unwrap();
+        assert_eq!(materialcraft_engine::inspect::session(&session, None)["graph"]["functionWarnings"], json!([]));
+
+        session.undo().unwrap();
+        session.undo().unwrap();
+        assert_eq!(materialcraft_engine::inspect::session(&session, None)["graph"]["functionWarnings"], expected);
     }
 }
 

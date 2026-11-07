@@ -1,6 +1,6 @@
 use egui::Modifiers;
 
-pub(crate) fn select<T: Copy + Eq>(selection: &mut Vec<T>, node: Option<T>, modifiers: Modifiers) {
+pub(crate) fn select<T: Clone + Eq>(selection: &mut Vec<T>, node: Option<T>, modifiers: Modifiers) {
     let toggle = modifiers.ctrl || modifiers.command;
     let additive = toggle || modifiers.shift;
     let Some(node) = node else {

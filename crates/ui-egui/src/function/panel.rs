@@ -8,6 +8,9 @@ pub(crate) fn show_graph(app: &mut MaterialCraftApp, ui: &mut Ui) {
     if editor.target == FunctionTarget::Graph {
         editor.selection = app.session.selection.iter().filter_map(|id| u32::try_from(id.0).ok()).collect();
     }
+    if let Some(graph) = editor.current(app) {
+        super::warning_banner::show(ui, graph);
+    }
     canvas(app, &mut editor, ui);
     app.function_editor = Some(editor);
 }

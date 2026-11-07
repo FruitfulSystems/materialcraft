@@ -1,8 +1,12 @@
 use super::function_port::FunctionPort;
 use super::{FunctionDrag, FunctionEditor};
-use crate::{MaterialCraftApp, graph::GraphCamera, theme::Tokens};
-use egui::{Pos2, Rect, Stroke, Ui};
-use materialcraft_engine::{FunctionEdit, core::NodeId};
+use crate::{
+    MaterialCraftApp,
+    graph::{GraphCamera, canvas_geometry::CanvasGeometry},
+    theme::Tokens,
+};
+use egui::{Pos2, Stroke, Ui};
+use materialcraft_engine::FunctionEdit;
 
 pub(super) fn handle(
     app: &mut MaterialCraftApp,
@@ -10,7 +14,7 @@ pub(super) fn handle(
     ui: &mut Ui,
     response: &egui::Response,
     ports: &[FunctionPort],
-    rectangles: &[(NodeId, Rect)],
+    geometry: &CanvasGeometry,
     on_annotation: bool,
 ) {
     let canvas_bounds = response.rect;
@@ -22,6 +26,18 @@ pub(super) fn handle(
         editor.drag = None;
         return;
     }
+    let on_wire = editor.drag.is_none()
+        && !on_annotation
+        && !ui.input(|input| input.modifiers.alt)
+        && crate::graph::wire_selection::handle(&mut editor.selected_wires, &mut editor.selection, ui, response, &geometry.wires);
+    if on_wire
+        && matches!(editor.target, super::FunctionTarget::Graph)
+        && app.session.annotation_selection.is_some()
+        && (ui.input(|input| input.pointer.primary_pressed()) || response.secondary_clicked())
+    {
+        app.run("graph.annotation.select", serde_json::json!({}));
+    }
+
     // Gestures: wires from output dots, panning
     let near = |pointer: Pos2| crate::graph::port_hit::nearest_by(ports, pointer, |port| (port.position, port.radius)).map(|port| (port.node, port.slot));
     if editor.drag.is_none() && GraphCamera::pan_started(ui, canvas_bounds) {
@@ -42,11 +58,13 @@ pub(super) fn handle(
         && ui.input(|input| input.pointer.primary_pressed())
         && let Some(start) = pointer
         && !on_annotation
+        && !on_wire
     {
         if matches!(editor.target, super::FunctionTarget::Graph) && app.session.annotation_selection.is_some() {
             app.run("graph.annotation.select", serde_json::json!({}));
         }
         editor.drag = Some(FunctionDrag::Box { start });
+        crate::graph::node_selection::select(&mut editor.selected_wires, None, ui.input(|input| input.modifiers));
     }
 
     let delta = ui.input(|input| input.pointer.delta());
@@ -83,7 +101,7 @@ pub(super) fn handle(
             }
             Some(FunctionDrag::Box { start }) => {
                 if let Some(pointer) = pointer {
-                    let nodes = rectangles.iter().map(|(id, bounds)| (id.0 as u32, *bounds));
+                    let nodes = geometry.rects.iter().map(|(id, bounds)| (id.0 as u32, *bounds));
                     crate::graph::node_selection::select_box(&mut editor.selection, nodes, start, pointer, ui.input(|input| input.modifiers));
                 }
             }
@@ -99,8 +117,9 @@ pub(super) fn handle(
         }
     }
 
-    if response.clicked() && !ui.input(|input| input.modifiers.alt) {
+    if response.clicked() && !on_wire && !ui.input(|input| input.modifiers.alt) {
         crate::graph::node_selection::select(&mut editor.selection, None, ui.input(|input| input.modifiers));
+        crate::graph::node_selection::select(&mut editor.selected_wires, None, ui.input(|input| input.modifiers));
     }
 
     let camera = GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
@@ -120,6 +139,6 @@ pub(super) fn handle(
         egui::Popup::open_id(ui.ctx(), response.id.with("menu"));
     }
     response.context_menu(|ui| {
-        super::context_menu::show(app, editor, ui);
+        super::context_menu::show(app, editor, ui, None);
     });
 }

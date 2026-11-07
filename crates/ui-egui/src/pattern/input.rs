@@ -21,12 +21,19 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
     let node = app.graph.rects.iter().rev().find(|(_, bounds)| bounds.contains(pointer)).map(|(id, _)| id.0 as u32);
     let modifiers = ui.input(|input| input.modifiers);
 
+    let on_wire = editor.drag.is_none()
+        && port.is_none()
+        && node.is_none()
+        && !modifiers.alt
+        && crate::graph::wire_selection::handle(&mut editor.selected_wires, &mut editor.selection, ui, response, &app.graph.wires);
+
     if editor.drag.is_none()
         && GraphCamera::pan_started(ui, response.rect)
         && !(port.is_some() && modifiers.alt && ui.input(|input| input.pointer.primary_pressed()))
     {
         editor.drag = Some(PatternDrag::Pan(crate::graph::gesture::pan_button(ui)));
-    } else if editor.drag.is_none() && response.hovered() && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary)) {
+    } else if editor.drag.is_none() && !on_wire && response.hovered() && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary)) {
+        crate::graph::node_selection::select(&mut editor.selected_wires, None, modifiers);
         if let Some((id, slot)) = port {
             if modifiers.alt {
                 editor.edit(app, PatternEdit::Disconnect { node: id, slot }, false);
@@ -86,6 +93,7 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
             && !editor.selection.contains(&id)
         {
             crate::graph::node_selection::select(&mut editor.selection, Some(id), egui::Modifiers::NONE);
+            editor.selected_wires.clear();
         }
     }
     if response.hovered() && !ui.ctx().egui_wants_keyboard_input() && ui.input(|input| input.key_pressed(egui::Key::Space)) {

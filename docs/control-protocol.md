@@ -23,6 +23,9 @@ Agents drive MaterialCraft three ways, all dispatching the same engine commands:
    engine-command authority, including host file access.
    Set `MATERIALCRAFT_NO_PREFS=1` for scripted runs so the user's layout is left alone.
 
+Every SBS save writes MaterialCraft's workspace release version to `updaterVersion`, including
+when resaving a file from an older release. `formatVersion` identifies the SBS schema separately.
+
 ## Methods
 
 | Method | Where | What |
@@ -75,7 +78,7 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |
 | `graph.connect` / `graph.disconnect` | `{from, fromPort?, to, toPort?}` / `{to, toPort}` |
 | `graph.wire.insertDot` | `{to, toPort, at?}`: split the wire feeding `to.toPort` with a reroute Dot node at `at` (graph point, default midway), selected |
-| `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: swap (two) or reverse (more, in input order) where the wires come from / delete them, one undo step each |
+| `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: exchange the sources of exactly two wires / delete any listed wires, one undo step each |
 | `graph.node.param` | `{id?, param, value}`: numbers, `[x, y]`, `"#rrggbb"`, enum index, curve `[[x, y], …]`, gradient `[[pos, color], …]`, or a typed value `{"t": "function", "v": {...}}` |
 | `graph.node.base` | `{id?, sizeMode?, size?, format?, seed?, tiling?}` |
 | `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` (with `bind`, `id` may be omitted: the input is named after the parameter, `opacity`, `opacity_1`…) / `{id, value}` |
@@ -123,6 +126,24 @@ Both `graph.function.set` and `graph.function.edit` accept an optional `target`:
 `graph.function.edit` accepts `edit: {action: add|move|connect|value|output, ...}`.
 For example, `{"edit":{"action":"add","operation":"mul","at":[256,0],"snap":true}}`
 creates and returns a node ID using the same defaults as library and context-menu insertion.
+Adding an operation leaves the function's output unchanged. Use
+`{"edit":{"action":"output","id":12}}` to designate its single output node; deleting that
+node clears the designation. These edits support undo for every Function target.
+`session.inspect` reports incomplete functions in `graph.functionWarnings`, with a `target` and
+`messages` for each affected function. Missing outputs and unconnected inputs are warnings that
+do not prevent editing or saving, including inside Pixel Processor and Value Processor nodes.
+`graph.function.node.info {id, target?}` returns a `text` field with the node's operation, values,
+connections and output designation. The node context menu copies this text to the system clipboard;
+the document, undo history and node clipboard remain unchanged.
+`graph.wire.swap {function?, pattern?, wires: [{to, toPort}, {to, toPort}]}` exchanges the
+sources feeding any two selected links across all graph canvases. For functions, pass a
+`FunctionGraphTarget` in `function` and a zero-based input index string in `toPort`. For FX-Map,
+pass the owner node ID in `pattern`; `to` is the internal parent and `toPort` its child port
+(`output0`, `output1`, or `output` for a Dot). The command preserves other connections, rejects
+cycles atomically and supports undo. `graph.wire.delete` uses the same target and wire addresses.
+Click a link and Shift-click another, then use **Swap links** or **X**. The menu action appears
+only when exactly two links are selected, independently of node selection. `ui.inspect` exposes
+embedded selections as `subgraph.selectedWires`.
 `graph.pattern.edit` accepts the FX-Map owner `id` and
 `edit: {action: add|move|connect|disconnect|root|value, ...}`.
 Use `command.list` for command descriptions and the serialized `FunctionEdit`/`PatternEdit` types

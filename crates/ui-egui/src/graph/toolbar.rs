@@ -91,11 +91,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
             } else {
                 thumbnails(app, ui);
-                if function {
-                    if app.function_editor.as_ref().and_then(|editor| editor.current(app)).is_some_and(|graph| graph.output.is_none()) {
-                        ui.label(tr("Set a node as the output"));
-                    }
-                } else {
+                if !function {
                     parent_size(app, ui);
                 }
             }

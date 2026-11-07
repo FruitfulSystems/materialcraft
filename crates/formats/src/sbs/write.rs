@@ -1,5 +1,5 @@
 use super::{
-    constant::{FIRST_UID, FORMAT_VERSION, SELF_DEPENDENCY},
+    constant::{FIRST_UID, FORMAT_VERSION, SELF_DEPENDENCY, UPDATER_VERSION},
     embedded::encode_embedded,
     sbs_writer::SbsWriter,
     xml::xml_escape,
@@ -43,7 +43,7 @@ pub fn write_sbs(pkg: &Package) -> Result<Vec<u8>> {
     let mut out = String::with_capacity(content.len() + 4096);
     let _ = write!(
         out,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package><identifier v=\"{}\"/><formatVersion v=\"{FORMAT_VERSION}\"/><updaterVersion v=\"{FORMAT_VERSION}\"/><fileUID v=\"0\"/><versionUID v=\"0\"/><dependencies>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package><identifier v=\"{}\"/><formatVersion v=\"{FORMAT_VERSION}\"/><updaterVersion v=\"{UPDATER_VERSION}\"/><fileUID v=\"0\"/><versionUID v=\"0\"/><dependencies>",
         xml_escape(&pkg.name)
     );
     let write_dependency = |out: &mut String, file: &str, uid: u64| {

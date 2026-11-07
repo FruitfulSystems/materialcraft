@@ -61,6 +61,20 @@ fn sniffs_sbs() {
 }
 
 #[test]
+fn saving_refreshes_the_writer_version_without_changing_the_schema_version() {
+    let old = br#"<package><identifier v="Older file"/><formatVersion v="1.1.0.202401"/><updaterVersion v="0.0.1"/><content/></package>"#;
+    let reopened = read_sbs(old, "older.sbs", &no_linked_files).unwrap();
+    for package in [Package::new("New file"), reopened.pkg] {
+        let text = String::from_utf8(write_sbs(&package).unwrap()).unwrap();
+        let document = roxmltree::Document::parse(&text).unwrap();
+        let root = document.root_element();
+        assert_eq!(super::xml::child_value(root, "updaterVersion"), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(super::xml::child_value(root, "formatVersion"), Some(super::constant::FORMAT_VERSION));
+        assert!(!text.contains("0.0.1"));
+    }
+}
+
+#[test]
 fn structural_round_trip() {
     let pkg = sample_package();
     let plain = String::from_utf8(write_sbs(&pkg).unwrap()).unwrap();

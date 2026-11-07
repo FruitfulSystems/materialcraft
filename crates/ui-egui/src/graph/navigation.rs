@@ -36,8 +36,7 @@ pub(super) fn frame(app: &mut MaterialCraftApp, view: Rect, only_selection: bool
         }
 
         let (inputs, outputs) = materialcraft_engine::eval::ports(&app.session.pkg, g, n);
-        let visible = super::input_visibility::count(inputs.iter().map(|port| g.input_of(n.id, &port.id).is_some()), if n.def == "fx_map" { 2 } else { 1 });
-        r = r.union(node_rect(n, visible, outputs.len(), thumbs));
+        r = r.union(node_rect(n, inputs.len(), outputs.len(), thumbs));
     }
     for f in &g.frames {
         if !only_selection {

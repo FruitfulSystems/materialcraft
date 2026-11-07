@@ -14,6 +14,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
             "name": g.name,
             "kind": g.kind(),
             "function": g.function,
+            "functionWarnings": crate::function_inspection::warnings(g),
             "size": g.size_px(),
             "format": g.format,
             "seed": g.seed,

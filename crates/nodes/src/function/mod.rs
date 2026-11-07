@@ -15,6 +15,7 @@ mod processor;
 mod program;
 pub mod value_type;
 mod vector;
+mod warnings;
 
 pub use catalog::{FUNCTIONS, default_value, definition};
 pub use compile::compile;
@@ -25,6 +26,7 @@ pub use node_types::node_types;
 pub use processor::default_pixel_function;
 pub(crate) use processor::pixel_processor;
 pub use program::Program;
+pub use warnings::warnings;
 
 #[cfg(test)]
 mod tests;

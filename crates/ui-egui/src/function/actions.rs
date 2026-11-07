@@ -2,6 +2,9 @@ use super::{FunctionEditor, FunctionTarget};
 use crate::MaterialCraftApp;
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, command: &str) -> Option<bool> {
+    if let Some(enabled) = crate::graph::wire_actions::enabled(command, editor.selected_wires.len()) {
+        return Some(enabled && editor.current(app).is_some());
+    }
     let standalone = matches!(editor.target, FunctionTarget::Graph);
     if standalone && app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
         return None;
@@ -35,8 +38,18 @@ pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut FunctionEdi
         return true;
     }
 
+    if command.starts_with("graph.wire.") || (command == "edit.delete" && !editor.selected_wires.is_empty()) {
+        let command = if command == "edit.delete" { "graph.wire.delete" } else { command };
+        let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+        crate::graph::wire_actions::edit(app, &mut editor.selected_wires, target, command);
+        return true;
+    }
+
     let parameters = editor.selection_parameters(command);
     crate::graph::selection_commands::invoke(app, &mut editor.selection, command, parameters);
+    if matches!(command, "edit.selectAll" | "edit.selectNone" | "edit.paste" | "edit.pasteWithoutLinks" | "edit.duplicate" | "edit.duplicateWithoutLinks") {
+        editor.selected_wires.clear();
+    }
     true
 }
 

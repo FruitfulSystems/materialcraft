@@ -8,6 +8,25 @@ use materialcraft_engine::{
 use serde_json::json;
 
 #[test]
+fn incomplete_function_round_trip_preserves_nodes_without_choosing_an_output() {
+    let mut session = new_session();
+    execute(&mut session, "file.new", &json!({"kind": "function", "name": "Unfinished"})).unwrap();
+    for operation in ["const_float1", "mul"] {
+        execute(&mut session, "graph.function.edit", &json!({"edit": {"action": "add", "operation": operation, "at": [0, 0]}})).unwrap();
+    }
+    assert_eq!(session.graph().unwrap().function.as_ref().unwrap().output, None);
+
+    let bytes = write_sbs(&session.pkg).unwrap();
+    let read = read_sbs(&bytes, "unfinished.sbs", &|_| None).unwrap();
+    assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+    let (_, graph) = read.pkg.graph_by_name("Unfinished").unwrap();
+    let function = graph.function.as_ref().unwrap();
+    assert_eq!(function.output, None);
+    assert_eq!(function.nodes.iter().map(|node| node.op.as_str()).collect::<Vec<_>>(), vec!["const_float1", "mul"]);
+    assert_eq!(function.nodes[1].inputs, vec![None, None]);
+}
+
+#[test]
 fn standalone_function_creation_wiring_frame_movement_and_native_round_trip() {
     let mut session = new_session();
     execute(&mut session, "file.new", &json!({"kind": "function", "name": "Multiply"})).unwrap();

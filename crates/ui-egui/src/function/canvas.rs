@@ -1,5 +1,5 @@
 use super::{FunctionEditor, FunctionTarget};
-use crate::{MaterialCraftApp, graph::GraphCamera, i18n::tr};
+use crate::{MaterialCraftApp, graph::GraphCamera};
 use egui::Ui;
 use materialcraft_engine::FunctionEdit;
 use serde_json::json;
@@ -27,18 +27,13 @@ pub(super) fn canvas(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui
             editor.menu_at = frame.camera.to_graph(pointer);
         }
         response.context_menu(|ui| {
-            super::context_menu::show(app, editor, ui);
-            ui.separator();
-            if ui.button(format!("{}  {}", egui_phosphor::regular::STAR, tr("Set as output node"))).clicked() {
-                editor.edit(app, FunctionEdit::Output { id: *id }, false);
-                ui.close();
-            }
+            super::context_menu::show(app, editor, ui, Some(*id));
         });
     }
     let on_annotation = ui
         .input(|input| input.pointer.hover_pos())
         .is_some_and(|pointer| frame.frames.iter().any(|frame| frame.contains(pointer)) || frame.comments.iter().any(|(_, rect)| rect.contains(pointer)));
-    super::input::handle(app, editor, ui, &frame.response, &frame.ports, &frame.geometry.rects, on_annotation);
+    super::input::handle(app, editor, ui, &frame.response, &frame.ports, &frame.geometry, on_annotation);
     frame.geometry.publish(&mut app.graph, frame.response.rect);
     if standalone {
         if editor.drag.is_none() {
@@ -46,6 +41,7 @@ pub(super) fn canvas(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui
             crate::graph::annotation_input::handle(app, ui, &camera, &frame.frames, &frame.comments);
             if app.session.annotation_selection.is_some() {
                 editor.selection.clear();
+                editor.selected_wires.clear();
             }
         }
         app.ui.graph_camera = crate::state::GraphCamera { pan: editor.pan.into(), zoom: editor.zoom };

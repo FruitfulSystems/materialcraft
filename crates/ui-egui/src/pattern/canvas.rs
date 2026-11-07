@@ -73,6 +73,7 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
     editor.pan = camera.pan;
     editor.zoom = camera.zoom;
     crate::graph::grid::paint(&painter, &camera, bounds);
+    let tokens = Tokens::get(ui.ctx());
     let rectangles: BTreeMap<_, _> = graph
         .nodes
         .iter()
@@ -81,19 +82,27 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
             (node.id, Rect::from_min_max(camera.to_screen(bounds.min), camera.to_screen(bounds.max)))
         })
         .collect();
+    editor.selected_wires.retain(|(id, port)| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| u64::from(node.id) == id.0)
+            .is_some_and(|node| node.children.iter().enumerate().any(|(slot, child)| child.is_some() && node.kind.child_port(slot) == Some(port.as_str())))
+    });
     for node in &graph.nodes {
         let Some(bounds) = rectangles.get(&node.id) else { continue };
 
         for (slot, child) in node.children.iter().enumerate() {
             if let Some(child_bounds) = child.and_then(|id| rectangles.get(&id)) {
                 let points = geometry::wire(geometry::port(*bounds, Some(slot), node.children.len()), child_bounds.center_top());
-                painter.add(egui::epaint::CubicBezierShape::from_points_stroke(points, false, Color32::TRANSPARENT, Stroke::new(2.0, PORT_COLOR)));
-                geometry.wires.push(((NodeId(u64::from(node.id)), node.kind.child_port(slot).unwrap_or_default().to_string()), points));
+                let wire = (NodeId(u64::from(node.id)), node.kind.child_port(slot).unwrap_or_default().to_string());
+                let stroke = crate::graph::wire_selection::stroke(editor.selected_wires.contains(&wire), 2.0, PORT_COLOR, tokens.accent);
+                painter.add(egui::epaint::CubicBezierShape::from_points_stroke(points, false, Color32::TRANSPARENT, stroke));
+                geometry.wires.push((wire, points));
             }
         }
     }
 
-    let tokens = Tokens::get(ui.ctx());
     for node in &graph.nodes {
         let Some(bounds) = rectangles.get(&node.id).copied() else { continue };
 

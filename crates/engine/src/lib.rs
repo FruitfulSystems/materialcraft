@@ -77,8 +77,11 @@ pub use annotation_selection::AnnotationSelection;
 pub use frame_contents::FrameContents;
 
 mod embedded_edit_commands;
+mod embedded_wire_commands;
 mod function_edit;
 mod function_graph_target;
+mod function_info_commands;
+mod function_inspection;
 mod pattern_edit;
 pub use function_edit::FunctionEdit;
 pub use function_graph_target::FunctionGraphTarget;

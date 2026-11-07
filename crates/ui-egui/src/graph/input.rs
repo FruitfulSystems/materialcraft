@@ -43,9 +43,8 @@ pub(super) fn handle(
 
             let on_card = nodes.iter().any(|(_, r)| r.rect.contains(p)) || comments.iter().any(|(_, r)| r.contains(p));
             let wire = wire_hover.as_ref().filter(|_| port_hover.is_none() && !on_card);
-            // Any press other than on a wire drops the wire selection
             if wire.is_none() {
-                app.graph.selected_wires.clear();
+                super::node_selection::select(&mut app.graph.selected_wires, None, mods);
             }
             if let Some(w) = wire {
                 app.graph.drag = Some(GraphDrag::WirePress { wire: w.clone(), start: p });
@@ -101,18 +100,7 @@ pub(super) fn handle(
         match drag {
             GraphDrag::Pan(_) => {}
             GraphDrag::WirePress { wire, .. } => {
-                app.session.selection.clear();
-                let sel = &mut app.graph.selected_wires;
-                if mods.ctrl && sel.contains(&wire) {
-                    // Ctrl+click toggles a wire out of the selection
-                    sel.retain(|w| *w != wire);
-                } else if mods.ctrl || mods.shift {
-                    if !sel.contains(&wire) {
-                        sel.push(wire);
-                    }
-                } else {
-                    *sel = vec![wire];
-                }
+                super::wire_selection::select(&mut app.graph.selected_wires, &mut app.session.selection, wire, mods, false);
             }
             GraphDrag::Nodes { delta } => {
                 if delta.length() > 0.5 {
@@ -205,12 +193,8 @@ pub(super) fn handle(
             app.run("graph.annotation.select", json!({"kind": "frame", "id": hit.id}));
         }
         app.graph.menu_wire = wire_hover.clone().filter(|_| !on_node);
-        // Right-clicking a selected wire keeps the selection (to swap or delete them all)
-        if let Some(w) = &app.graph.menu_wire
-            && !app.graph.selected_wires.contains(w)
-        {
-            app.session.selection.clear();
-            app.graph.selected_wires = vec![w.clone()];
+        if let Some(wire) = app.graph.menu_wire.clone() {
+            super::wire_selection::select(&mut app.graph.selected_wires, &mut app.session.selection, wire, egui::Modifiers::NONE, true);
         }
     }
     let at = app.graph.menu_at;
