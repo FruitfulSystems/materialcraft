@@ -66,7 +66,7 @@ pub(crate) fn connection_input(session: &Session, from: NodeId, from_port: &str,
         .ok_or_else(|| bad("graph.connect", "the target has no compatible input"))
 }
 
-fn validate_connection(session: &Session, from: NodeId, from_port: &str, to: NodeId, to_port: &str) -> Result<()> {
+pub(crate) fn validate_connection(session: &Session, from: NodeId, from_port: &str, to: NodeId, to_port: &str) -> Result<()> {
     let outputs = session.output_ports(from);
     let inputs = session.input_ports(to);
     if !outputs.iter().any(|port| port == from_port) {

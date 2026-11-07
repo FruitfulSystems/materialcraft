@@ -8,6 +8,22 @@ fn no_linked_files(_: &str) -> Option<Vec<u8>> {
     None
 }
 
+#[test]
+fn saved_dot_outputs_load_as_incomplete_functions() {
+    let xml = r#"<package><identifier v="Dots"/><content><function><identifier v="Incomplete"/>
+      <paramValue><dynamicValue><rootnode v="2"/><paramNodes>
+        <paramNode><uid v="1"/><function v="const_float1"/></paramNode>
+        <paramNode><uid v="2"/><function v="passthrough"/><connections>
+          <connection><identifier v="input"/><connRef v="1"/></connection>
+        </connections></paramNode>
+      </paramNodes></dynamicValue></paramValue></function></content></package>"#;
+    let loaded = read_sbs(xml.as_bytes(), "dots.sbs", &no_linked_files).unwrap();
+    let function = loaded.pkg.graphs.iter().find_map(|graph| graph.function.as_ref()).unwrap();
+    assert_eq!(function.output, None);
+    assert_eq!(function.nodes.len(), 2);
+    assert_eq!(function.nodes[1].inputs, [Some(function.nodes[0].id)]);
+}
+
 fn sample_package() -> Package {
     let mut pkg = Package::new("Primitives");
     let mut graph = Graph::new("Wall");

@@ -26,9 +26,6 @@ pub(super) fn paint(
 
     if dot {
         node_card::paint_dot(painter, bounds, outline);
-        if output {
-            painter.circle_filled(bounds.center(), (bounds.width() * 0.5 - 1.5).max(0.0), OUTPUT_COLOR);
-        }
         return;
     }
 

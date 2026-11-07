@@ -124,14 +124,20 @@ Both `graph.function.set` and `graph.function.edit` accept an optional `target`:
 `{"kind":"pattern","owner":12,"node":3,"parameter":"patternrotation"}`.
 
 `graph.function.edit` accepts `edit: {action: add|move|connect|value|output, ...}`.
+Explicit output selection rejects a type incompatible with the target parameter. Existing
+functions with mismatched output types remain editable and report the mismatch in
+`graph.functionWarnings`; this includes a Pixel Processor whose color mode has changed.
 For example, `{"edit":{"action":"add","operation":"mul","at":[256,0],"snap":true}}`
 creates and returns a node ID using the same defaults as library and context-menu insertion.
 Adding an operation leaves the function's output unchanged. Use
 `{"edit":{"action":"output","id":12}}` to designate its single output node; deleting that
 node clears the designation. These edits support undo for every Function target.
+Dot nodes cannot be designated as outputs, including through commands.
 `session.inspect` reports incomplete functions in `graph.functionWarnings`, with a `target` and
-`messages` for each affected function. Missing outputs and unconnected inputs are warnings that
-do not prevent editing or saving, including inside Pixel Processor and Value Processor nodes.
+`messages` for each affected function. It warns when no output is defined or no input path from
+the output reaches a value source such as a constant or variable input. One such path is enough;
+unused nodes and other unconnected pins do not warn. A constant output needs no input connection.
+Warnings do not prevent editing or saving, including inside Pixel Processor and Value Processor nodes.
 `graph.function.node.info {id, target?}` returns a `text` field with the node's operation, values,
 connections and output designation. The node context menu copies this text to the system clipboard;
 the document, undo history and node clipboard remain unchanged.
@@ -142,7 +148,10 @@ pass the owner node ID in `pattern`; `to` is the internal parent and `toPort` it
 (`output0`, `output1`, or `output` for a Dot). The command preserves other connections, rejects
 cycles atomically and supports undo. `graph.wire.delete` uses the same target and wire addresses.
 Click a link and Shift-click another, then use **Swap links** or **X**. The menu action appears
-only when exactly two links are selected, independently of node selection. `ui.inspect` exposes
+only when exactly two links from different output pins are selected, independently of node selection.
+Two links from the same output pin are rejected without changing the document or undo history.
+Main-graph swaps also apply the normal input type checks to both replacement connections.
+Equal values from different output pins remain eligible. `ui.inspect` exposes
 embedded selections as `subgraph.selectedWires`.
 `graph.pattern.edit` accepts the FX-Map owner `id` and
 `edit: {action: add|move|connect|disconnect|root|value, ...}`.

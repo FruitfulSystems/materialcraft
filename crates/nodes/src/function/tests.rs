@@ -82,7 +82,8 @@ fn every_native_function_executes_with_its_declared_ports() {
             setting = Some(Value::Text("variable".into()));
         }
         let inputs: Vec<_> = arguments.into_iter().map(|value| graph.add_constant(value)).collect();
-        graph.output = Some(graph.add(name, &inputs, setting));
+        let node = graph.add(name, &inputs, setting);
+        graph.output = Some(if name == "passthrough" { graph.add("neg", &[node], None) } else { node });
         evaluate(&graph, &variables).unwrap_or_else(|error| panic!("{name}: {error}"));
     }
     assert_eq!(covered.len(), 85);
@@ -148,7 +149,7 @@ fn deep_graphs_shared_inputs_and_cycles_do_not_recurse() {
     for _ in 0..3000 {
         previous = graph.add("passthrough", &[previous], None);
     }
-    graph.output = Some(previous);
+    graph.output = Some(graph.add("abs", &[previous], None));
     assert_eq!(evaluate(&graph, &BTreeMap::new()).unwrap(), Value::Float(1.0));
     graph.nodes[0].op = "passthrough".into();
     graph.nodes[0].inputs = vec![Some(previous)];

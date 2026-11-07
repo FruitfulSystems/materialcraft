@@ -32,8 +32,27 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     });
     ui.add_space(2.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let graph_warnings: Vec<String> = app
+            .session
+            .pkg
+            .graphs
+            .iter()
+            .map(|graph| {
+                materialcraft_engine::function_inspection::warnings(graph).into_iter().flat_map(|(_, messages)| messages).collect::<Vec<_>>().join("\n")
+            })
+            .collect();
+        let package_warnings = app
+            .session
+            .pkg
+            .graphs
+            .iter()
+            .zip(&graph_warnings)
+            .filter(|(_, warning)| !warning.is_empty())
+            .map(|(graph, warning)| format!("{}: {warning}", graph.name))
+            .collect::<Vec<_>>()
+            .join("\n");
         let name = format!("{}{}", app.session.pkg.name, if app.session.modified { "*" } else { "" });
-        ui.label(RichText::new(format!("{}  {name}", icon::PACKAGE)).strong().color(tk.text_strong));
+        tree_row::show(ui, &name, icon::PACKAGE, false, (!package_warnings.is_empty()).then_some(package_warnings.as_str()));
         let mut open: Option<usize> = None;
         let mut action: Option<(&str, usize)> = None;
         let mut selected_node = None;
@@ -43,7 +62,8 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             let function = graph.function.is_some();
             let mut header = |ui: &mut Ui| {
                 let symbol = if function { icon::FUNCTION } else { icon::TREE_STRUCTURE };
-                let response = tree_row::show(ui, &graph.name, symbol, active);
+                let warning = graph_warnings.get(index).map(String::as_str).unwrap_or("");
+                let response = tree_row::show(ui, &graph.name, symbol, active, (!warning.is_empty()).then_some(warning));
                 if !function {
                     response.interact(egui::Sense::drag()).dnd_set_drag_payload(crate::graph_drag_payload::GraphDragPayload { name: graph.name.clone() });
                 }
@@ -68,7 +88,9 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 });
             };
 
-            if function {
+            let mut ports =
+                graph.nodes.iter().filter(|node| matches!(node.def.as_str(), "output" | "input_color" | "input_grayscale" | "input_value")).peekable();
+            if function || ports.peek().is_none() {
                 ui.horizontal(|ui| {
                     ui.add_space(ui.spacing().indent);
                     header(ui);
@@ -79,12 +101,12 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             let id = ui.make_persistent_id(("graph", index, &graph.name));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
                 ui.indent("graph-ports", |ui| {
-                    for node in graph.nodes.iter().filter(|node| matches!(node.def.as_str(), "output" | "input_color" | "input_grayscale" | "input_value")) {
+                    for node in ports {
                         ui.push_id(node.id, |ui| {
                             let name = crate::graph::node_label(node);
                             let selected = active && app.session.selection.contains(&node.id);
                             let symbol = if node.def == "input_value" { icon::FUNCTION } else { icon::IMAGE };
-                            let response = tree_row::show(ui, &name, symbol, selected);
+                            let response = tree_row::show(ui, &name, symbol, selected, None);
 
                             response.context_menu(|ui| {
                                 if let Some(parameters) = crate::material_preview_menu::show(ui, &app.session, index, node.id) {

@@ -24,7 +24,8 @@ fn info(session: &mut Session, parameters: &Json) -> Result<Json> {
     let graph = target.current(session)?;
     let node = graph.node(id).ok_or_else(|| bad(command, "missing function node"))?;
     let label = materialcraft_nodes::function::definition(&node.op).map_or(node.op.as_str(), |definition| definition.label);
-    let text = serde_json::to_string_pretty(&json!({"target": target, "label": label, "node": node, "output": graph.output == Some(id)}))
+    let output = materialcraft_nodes::function::output_node(graph).is_some_and(|node| node.id == id);
+    let text = serde_json::to_string_pretty(&json!({"target": target, "label": label, "node": node, "output": output}))
         .map_err(|error| bad(command, error.to_string()))?;
     Ok(json!({"text": text}))
 }

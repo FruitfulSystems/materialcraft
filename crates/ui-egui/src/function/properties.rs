@@ -25,7 +25,7 @@ pub(crate) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) -> bool {
 
     let label = definition(&node.op).map_or(node.op.as_str(), |definition| definition.label);
     ui.heading(tr(label));
-    if graph.output == Some(id) {
+    if materialcraft_engine::nodes::function::output_node(graph).is_some_and(|node| node.id == id) {
         ui.label(tr("Output node"));
     }
 

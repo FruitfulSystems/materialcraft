@@ -47,7 +47,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2, node: Opti
         let parameters = if matches!(command, "edit.paste" | "edit.pasteWithoutLinks") { json!({"at": [at.x, at.y]}) } else { Value::Null };
         app.run(command, parameters);
     }
-    if super::wire_actions::swap_button(ui, app.graph.selected_wires.len()) {
+    if super::wire_actions::swap_button(app, ui, &app.graph.selected_wires, None) {
         super::wire_actions::swap_selected_wires(app);
         ui.close();
     }

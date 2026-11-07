@@ -2,7 +2,8 @@ use super::{FunctionEditor, FunctionTarget};
 use crate::MaterialCraftApp;
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, command: &str) -> Option<bool> {
-    if let Some(enabled) = crate::graph::wire_actions::enabled(command, editor.selected_wires.len()) {
+    let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+    if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, target.as_ref()) {
         return Some(enabled && editor.current(app).is_some());
     }
     let standalone = matches!(editor.target, FunctionTarget::Graph);

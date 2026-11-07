@@ -18,7 +18,18 @@ a function node and choose **Set as output node** to designate the result. Its b
 independently of selection. Choosing another output replaces the previous designation; deleting
 the output leaves the function without a result until one is explicitly chosen. Adding nodes does
 not automatically designate an output. Incomplete functions can be saved and reopened. The canvas
-warns when an output is missing or an input is unconnected, including in both processor editors.
+warns when an output is missing or none of its input paths reaches a value source, including in
+both processor editors. One input path to a constant or variable input is enough; unused nodes
+and other unconnected pins do not produce warnings. A constant can be the output itself; a Dot
+cannot. Older files that designate a Dot reopen with no output selected, keeping their nodes and
+connections editable. Explorer shows a warning icon beside affected graphs and their package,
+including graphs containing incomplete processor functions. Hover the icon to read the warnings.
+
+Parameter functions show their expected output type. **Set as output node** is disabled for
+incompatible types, and commands reject the same choice without changing the graph. A Pixel
+Processor expects Float in grayscale mode and Float4 in color mode; standalone functions and
+Value Processors have no fixed output type. If an existing output becomes incompatible during
+editing, the graph remains editable and reports the type mismatch.
 Select an FX-Map and press **Ctrl+E**, or right-click it and choose **Edit graph**.
 This enters its subgraph in the main canvas. Add Quadrant, Switch, Iterate or vertical Dot nodes, drag from
 bottom ports to top ports, and choose **Set as root** from a node’s context menu. Alt-click a port

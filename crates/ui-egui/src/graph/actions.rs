@@ -1,6 +1,10 @@
 use crate::{MaterialCraftApp, docking::Panel};
 
 pub(crate) fn enabled(app: &MaterialCraftApp, command: &str) -> Option<bool> {
+    if let Some(enabled) = super::wire_actions::enabled(app, command, &app.graph.selected_wires, None) {
+        return Some(enabled);
+    }
+
     match command {
         "ui.graph.viewOutputs" | "ui.graph.resetViewOutputs" => Some(app.session.graph().is_ok_and(|graph| graph.function.is_none())),
         "ui.graph.previousPin" | "ui.graph.nextPin" => Some(app.session.graph().is_ok_and(|graph| !graph.pins.is_empty())),
@@ -11,6 +15,12 @@ pub(crate) fn enabled(app: &MaterialCraftApp, command: &str) -> Option<bool> {
 
 pub(crate) fn invoke(app: &mut MaterialCraftApp, command: &str) -> bool {
     match command {
+        "graph.wire.swap" => {
+            super::wire_actions::swap_selected_wires(app);
+        }
+        "graph.wire.delete" => {
+            super::wire_actions::delete_selected_wires(app);
+        }
         "graph.node.edit" => {
             if !crate::menus::enabled(app, command) {
                 return true;

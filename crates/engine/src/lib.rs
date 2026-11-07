@@ -30,6 +30,7 @@ pub mod session;
 mod value_input_commands;
 pub mod view_cmds;
 pub mod wire_cmds;
+pub mod wire_swap;
 
 pub use commands::{CommandSpec, command_specs, execute, find};
 pub use session::{CameraPrefs, Session, View2d, View3d, WARNING_PREFIX};
@@ -81,7 +82,8 @@ mod embedded_wire_commands;
 mod function_edit;
 mod function_graph_target;
 mod function_info_commands;
-mod function_inspection;
+pub mod function_inspection;
+pub mod function_output;
 mod pattern_edit;
 pub use function_edit::FunctionEdit;
 pub use function_graph_target::FunctionGraphTarget;

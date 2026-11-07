@@ -5,20 +5,28 @@ use egui_phosphor::regular as icon;
 use serde_json::json;
 
 pub(crate) fn edit(app: &mut MaterialCraftApp, wires: &mut Vec<WireRef>, target: Option<materialcraft_engine::SelectionTarget>, command: &str) -> bool {
-    if wires.is_empty() || (command == "graph.wire.swap" && wires.len() != 2) {
+    if wires.is_empty() || (command == "graph.wire.swap" && !can_swap(app, wires, target.as_ref())) {
         return false;
     }
 
+    if app.run(command, parameters(app, wires, target.as_ref())).is_some() && command == "graph.wire.delete" {
+        wires.clear();
+    }
+    true
+}
+
+fn parameters(app: &MaterialCraftApp, wires: &[WireRef], target: Option<&materialcraft_engine::SelectionTarget>) -> serde_json::Value {
     let mut parameters = json!({"graph": app.session.graph, "wires": wires.iter().map(|(to, port)| json!({"to": to.0, "toPort": port})).collect::<Vec<_>>()});
     match target {
         Some(materialcraft_engine::SelectionTarget::Function(target)) => parameters["function"] = json!(target),
         Some(materialcraft_engine::SelectionTarget::Pattern(owner)) => parameters["pattern"] = json!(owner.0),
         None => {}
     }
-    if app.run(command, parameters).is_some() && command == "graph.wire.delete" {
-        wires.clear();
-    }
-    true
+    parameters
+}
+
+fn can_swap(app: &MaterialCraftApp, wires: &[WireRef], target: Option<&materialcraft_engine::SelectionTarget>) -> bool {
+    wires.len() == 2 && materialcraft_engine::wire_swap::available(&app.session, &parameters(app, wires, target))
 }
 
 fn invoke_selected(app: &mut MaterialCraftApp, command: &str) -> bool {
@@ -54,15 +62,15 @@ pub fn swap_selected_wires(app: &mut MaterialCraftApp) -> bool {
     invoke_selected(app, "graph.wire.swap")
 }
 
-pub(crate) fn swap_button(ui: &mut Ui, selected_count: usize) -> bool {
-    selected_count == 2 && ui.add(egui::Button::new(tr("Swap links")).shortcut_text("X")).clicked()
+pub(crate) fn swap_button(app: &MaterialCraftApp, ui: &mut Ui, wires: &[WireRef], target: Option<&materialcraft_engine::SelectionTarget>) -> bool {
+    can_swap(app, wires, target) && ui.add(egui::Button::new(tr("Swap links")).shortcut_text("X")).clicked()
 }
 
-pub(crate) fn enabled(command: &str, selected_count: usize) -> Option<bool> {
+pub(crate) fn enabled(app: &MaterialCraftApp, command: &str, wires: &[WireRef], target: Option<&materialcraft_engine::SelectionTarget>) -> Option<bool> {
     match command {
-        "graph.wire.swap" => Some(selected_count == 2),
-        "graph.wire.delete" => Some(selected_count > 0),
-        "edit.delete" if selected_count > 0 => Some(true),
+        "graph.wire.swap" => Some(can_swap(app, wires, target)),
+        "graph.wire.delete" => Some(!wires.is_empty()),
+        "edit.delete" if !wires.is_empty() => Some(true),
         _ => None,
     }
 }
@@ -91,7 +99,7 @@ pub(super) fn wire_menu(app: &mut MaterialCraftApp, ui: &mut Ui, (to, port): Wir
         app.graph.selected_wires.clear();
         ui.close();
     }
-    if swap_button(ui, n) {
+    if swap_button(app, ui, &app.graph.selected_wires, None) {
         swap_selected_wires(app);
         ui.close();
     }

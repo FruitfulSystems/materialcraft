@@ -742,5 +742,16 @@ fn function_links_swap_and_delete_without_editing_the_parent_graph() {
         assert_eq!(target.current(&frames.app.session).unwrap().node(subtract).unwrap().inputs, vec![None, None]);
         frames.app.run("edit.undo", json!({})).unwrap();
         assert_eq!(frames.app.session.pkg, original);
+
+        frames.app.run("graph.function.edit", json!({"target": target, "edit": {"action": "connect", "from": a, "to": subtract, "input": 1}})).unwrap();
+        frames.app.function_editor.as_mut().unwrap().selected_wires =
+            vec![(NodeId(u64::from(subtract)), "0".into()), (NodeId(u64::from(subtract)), "1".into())];
+        let package = frames.app.session.pkg.clone();
+        let history = frames.app.session.history();
+        assert!(!menus::enabled(&frames.app, "graph.wire.swap"));
+        frames.run(vec![key(egui::Key::X)], egui::Modifiers::NONE);
+        menus::invoke(&mut frames.app, &frames.ctx, "graph.wire.swap");
+        assert_eq!(frames.app.session.pkg, package);
+        assert_eq!(frames.app.session.history(), history);
     }
 }

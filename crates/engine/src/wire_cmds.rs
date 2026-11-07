@@ -84,6 +84,7 @@ fn delete(s: &mut Session, p: &J) -> Result<J> {
 
 fn swap(session: &mut Session, parameters: &J) -> Result<J> {
     const ID: &str = "graph.wire.swap";
+    crate::wire_swap::validate(session, parameters)?;
     if let Some(result) = crate::embedded_wire_commands::execute(session, ID, parameters, true) {
         return result;
     }

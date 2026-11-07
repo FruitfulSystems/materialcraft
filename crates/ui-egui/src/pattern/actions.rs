@@ -61,7 +61,8 @@ pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut PatternEdit
 }
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &PatternEditor, command: &str) -> Option<bool> {
-    if let Some(enabled) = crate::graph::wire_actions::enabled(command, editor.selected_wires.len()) {
+    let target = materialcraft_engine::SelectionTarget::Pattern(editor.node);
+    if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, Some(&target)) {
         return Some(enabled && editor.current(app).is_some());
     }
     materialcraft_engine::selection_commands::enabled_for(

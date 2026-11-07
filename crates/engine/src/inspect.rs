@@ -14,7 +14,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
             "name": g.name,
             "kind": g.kind(),
             "function": g.function,
-            "functionWarnings": crate::function_inspection::warnings(g),
+            "functionWarnings": crate::function_inspection::warnings(g).into_iter().map(|(target, messages)| json!({"target": target, "messages": messages})).collect::<Vec<_>>(),
             "size": g.size_px(),
             "format": g.format,
             "seed": g.seed,

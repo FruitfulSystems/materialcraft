@@ -41,7 +41,9 @@ the *Foreground* and *Background* wires and press **X**: what fed the foreground
 background and the other way around, so the two layers trade places without rewiring by hand.
 
 - **Two wires** trade sources.
-- The action is hidden unless exactly two wires are selected.
+- The action is hidden unless exactly two wires from different output pins are selected.
+- Output pin identity determines eligibility; equal values from different pins can still swap.
+- In a main graph, both replacement connections must pass the normal image/value input checks.
 - The order you click the wires in does not matter, so the result is predictable.
 - Wires into different nodes can be swapped too. A swap that would feed a node into itself (a
   cycle) is refused with a message, and nothing changes.
@@ -60,7 +62,7 @@ restores the straight wire.
 | Command | Params | Result |
 |---|---|---|
 | `graph.wire.insertDot` | `{to, toPort, at?: [x, y]}` | Splits the wire feeding `to.toPort` with a Dot centered at `at` (graph space; default: midway between the two nodes). Returns `{"id": <dot id>}` and selects the dot. Errors when no wire feeds that input. |
-| `graph.wire.swap` | `{wires: [{to, toPort}, ...]}` | Exchanges the sources of exactly two listed wires. Returns `{"swapped": 2}`. Errors unless exactly two wires are supplied, a wire listed twice, a missing wire or a cycle; nothing changes then. |
+| `graph.wire.swap` | `{wires: [{to, toPort}, ...]}` | Exchanges the sources of exactly two listed wires. Returns `{"swapped": 2}`. Rejects a count other than two, repeated or missing wires, wires from the same output pin, incompatible input types, and cycles; nothing changes then. |
 | `graph.wire.delete` | `{wires: [{to, toPort}, ...]}` | Deletes the listed wires in one undo step (what the Delete key and the menu run). Returns `{"deleted": n}`. |
 | `graph.disconnect` | `{to, toPort}` | Deletes the single wire feeding `to.toPort`. |
 

@@ -21,7 +21,11 @@ fn function_session(kind: &str) -> (Session, FunctionGraphTarget) {
             FunctionGraphTarget::Pattern { owner, node, parameter: "patternrotation".into() }
         }
         _ => {
-            let node = NodeId(execute(&mut session, "graph.node.add", &json!({"def": "pixel_processor"})).unwrap()["id"].as_u64().unwrap());
+            let node = NodeId(
+                execute(&mut session, "graph.node.add", &json!({"def": "pixel_processor", "params": {"color_mode": kind == "dynamic"}})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap(),
+            );
             if kind == "dynamic" {
                 session.graph_mut().unwrap().node_mut(node).unwrap().functions.insert("test".into(), FunctionGraph::default());
                 FunctionGraphTarget::Dynamic { node, parameter: "test".into() }
@@ -33,6 +37,79 @@ fn function_session(kind: &str) -> (Session, FunctionGraphTarget) {
     execute(&mut session, "graph.function.set", &json!({"target": target, "function": FunctionGraph::default()})).unwrap();
     session.reset_history();
     (session, target)
+}
+
+#[test]
+fn dots_cannot_be_designated_as_outputs_for_any_function_target() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let mut graph = FunctionGraph::constant(Value::Float(0.5));
+        let source = graph.output.unwrap();
+        let dot = graph.add("passthrough", &[source], None);
+        execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).unwrap();
+        let before = session.pkg.clone();
+        let history = session.history();
+        assert!(execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": dot}})).is_err(), "{kind}");
+        graph.output = Some(dot);
+        assert!(execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).is_err(), "{kind}");
+        assert_eq!(session.pkg, before);
+        assert_eq!(session.history(), history);
+    }
+}
+
+#[test]
+fn function_swaps_compare_output_pin_identity_not_values() {
+    for kind in ["graph", "parameter", "dynamic", "pattern"] {
+        let (mut session, target) = function_session(kind);
+        let mut graph = FunctionGraph::default();
+        let first = graph.add_constant(Value::Float(0.5));
+        let second = graph.add_constant(Value::Float(0.5));
+        let subtract = graph.add("sub", &[first, first], None);
+        let interpolation = graph.add("lerp", &[first], None);
+        execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).unwrap();
+        let parameters = json!({"function": target, "wires": [{"to": subtract, "toPort": "0"}, {"to": interpolation, "toPort": "0"}]});
+        let before = session.pkg.clone();
+        let history = session.history();
+        assert!(!materialcraft_engine::wire_swap::available(&session, &parameters));
+        assert!(execute(&mut session, "graph.wire.swap", &parameters).is_err(), "{kind}");
+        assert_eq!(session.pkg, before);
+        assert_eq!(session.history(), history);
+
+        execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "connect", "from": second, "to": subtract, "input": 0}}))
+            .unwrap();
+        assert!(materialcraft_engine::wire_swap::available(&session, &parameters));
+        execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+        let graph = target.current(&session).unwrap();
+        assert_eq!(graph.node(subtract).unwrap().inputs, [Some(first), Some(first)]);
+        assert_eq!(graph.node(interpolation).unwrap().inputs, [Some(second)]);
+    }
+}
+
+#[test]
+fn material_swaps_compare_output_pin_identity_not_node_identity() {
+    let mut session = new_session();
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    let graph = session.graph_mut().unwrap();
+    let source = graph.add_node(materialcraft_engine::core::MISSING_NODE, [0.0, 0.0]);
+    graph.node_mut(source).unwrap().params.insert("outputs".into(), Value::Text("first:gray,second:gray".into()));
+    let first = graph.add_node("levels", [300.0, 0.0]);
+    let second = graph.add_node("levels", [300.0, 200.0]);
+    graph.connect(source, "first", first, "input").unwrap();
+    graph.connect(source, "first", second, "input").unwrap();
+    let parameters = json!({"wires": [{"to": first.0, "toPort": "input"}, {"to": second.0, "toPort": "input"}]});
+    let before = session.pkg.clone();
+    let history = session.history();
+    assert!(!materialcraft_engine::wire_swap::available(&session, &parameters));
+    assert!(execute(&mut session, "graph.wire.swap", &parameters).is_err());
+    assert_eq!(session.pkg, before);
+    assert_eq!(session.history(), history);
+
+    session.graph_mut().unwrap().connect(source, "second", second, "input").unwrap();
+    assert!(materialcraft_engine::wire_swap::available(&session, &parameters));
+    execute(&mut session, "graph.wire.swap", &parameters).unwrap();
+    let graph = session.graph().unwrap();
+    assert_eq!(graph.input_of(first, "input").unwrap().from_port, "second");
+    assert_eq!(graph.input_of(second, "input").unwrap().from_port, "first");
 }
 
 #[test]
@@ -205,7 +282,7 @@ fn output_designation_is_explicit_and_undoable_for_every_function_target() {
     for kind in ["graph", "parameter", "dynamic", "pattern"] {
         let (mut session, target) = function_session(kind);
         let mut ids = Vec::new();
-        for operation in ["const_float1", "passthrough"] {
+        for operation in ["const_float1", "neg"] {
             let result =
                 execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": operation, "at": [0, 0]}}))
                     .unwrap();
@@ -271,10 +348,11 @@ fn incomplete_function_warnings_follow_edits_for_every_target() {
         let (mut session, target) = function_session(kind);
         let mut graph = FunctionGraph::default();
         let source = graph.add_constant(Value::Float(0.5));
-        let multiply = graph.add("mul", &[source], None);
+        let multiply = graph.add("mul", &[], None);
+        graph.add("add", &[], None);
         execute(&mut session, "graph.function.set", &json!({"target": target, "function": graph})).unwrap();
-        let warning = format!("Multiply (node {multiply}): input b is not connected");
-        let expected = json!([{"target": target, "messages": ["No output node defined", warning]}]);
+        let warning = "Output node has no connected value source";
+        let expected = json!([{"target": target, "messages": ["No output node defined"]}]);
         assert_eq!(materialcraft_engine::inspect::session(&session, None)["graph"]["functionWarnings"], expected, "{kind}");
 
         execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": multiply}})).unwrap();

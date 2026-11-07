@@ -54,6 +54,10 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
     if graph.nodes.iter().flat_map(|node| node.inputs.iter().flatten()).any(|id| !ids.contains(id)) {
         return Err("function connection references a missing node".into());
     }
+    // Earlier files may designate a Dot; keep the graph editable without promoting another node
+    if graph.output.and_then(|id| graph.node(id)).is_some_and(|node| !function::can_be_output(&node.op)) {
+        graph.output = None;
+    }
     Ok(graph)
 }
 
@@ -75,7 +79,7 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
     let types = function::node_types(graph)?;
     let identifiers: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, writer.next_uid())).collect();
     let mut output = String::from("<dynamicValue>");
-    if let Some(root) = graph.output.and_then(|root| identifiers.get(&root)) {
+    if let Some(root) = function::output_node(graph).and_then(|root| identifiers.get(&root.id)) {
         let _ = write!(output, "<rootnode v=\"{root}\"/>");
     }
     output.push_str("<paramNodes>");

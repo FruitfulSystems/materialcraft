@@ -1,13 +1,22 @@
 use crate::FunctionGraphTarget;
 use materialcraft_core::{FunctionGraph, Graph, Value};
-use serde_json::{Value as Json, json};
 
-pub(crate) fn warnings(graph: &Graph) -> Vec<Json> {
+pub fn warnings_for(document: &Graph, target: &FunctionGraphTarget, function: &FunctionGraph) -> Vec<String> {
+    let mut messages = materialcraft_nodes::function::warnings(function);
+    if let Some(output) = materialcraft_nodes::function::output_node(function)
+        && let Err(message) = crate::function_output::validate(document, target, function, output.id)
+    {
+        messages.push(message);
+    }
+    messages
+}
+
+pub fn warnings(graph: &Graph) -> Vec<(FunctionGraphTarget, Vec<String>)> {
     let mut entries = Vec::new();
     let mut inspect = |target: FunctionGraphTarget, function: &FunctionGraph| {
-        let messages = materialcraft_nodes::function::warnings(function);
+        let messages = warnings_for(graph, &target, function);
         if !messages.is_empty() {
-            entries.push(json!({"target": target, "messages": messages}));
+            entries.push((target, messages));
         }
     };
     if let Some(function) = &graph.function {

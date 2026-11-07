@@ -25,12 +25,20 @@ fn node_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         ui.close();
     }
     ui.separator();
-    let output = editor.current(app).is_some_and(|graph| graph.output == Some(node));
-    if ui.add_enabled(editor.selection.len() == 1 && !output, egui::Button::new(tr("Set as output node"))).clicked() {
-        editor.edit(app, FunctionEdit::Output { id: node }, false);
-        ui.close();
+    if let Some(graph) = editor.current(app)
+        && graph.node(node).is_some_and(|node| materialcraft_engine::nodes::function::can_be_output(&node.op))
+    {
+        let output = graph.output == Some(node);
+        let compatible = editor
+            .command_target()
+            .zip(app.session.graph().ok())
+            .is_some_and(|(target, document)| materialcraft_engine::function_output::validate(document, &target, graph, node).is_ok());
+        if ui.add_enabled(editor.selection.len() == 1 && !output && compatible, egui::Button::new(tr("Set as output node"))).clicked() {
+            editor.edit(app, FunctionEdit::Output { id: node }, false);
+            ui.close();
+        }
+        ui.separator();
     }
-    ui.separator();
     let label = format!("{} ({})", tr("Create graph from selection"), editor.selection.len());
     let command = "graph.createFromSelection";
     if edit_menu::button(ui, &label, command, super::actions::editor_enabled(app, editor, command).unwrap_or(false)) {
@@ -103,8 +111,8 @@ fn selection_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui
     ] {
         selection_action(app, editor, ui, label, command);
     }
-    if crate::graph::wire_actions::swap_button(ui, editor.selected_wires.len()) {
-        let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+    let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+    if crate::graph::wire_actions::swap_button(app, ui, &editor.selected_wires, target.as_ref()) {
         crate::graph::wire_actions::edit(app, &mut editor.selected_wires, target, "graph.wire.swap");
         ui.close();
     }

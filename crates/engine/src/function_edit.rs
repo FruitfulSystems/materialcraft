@@ -89,8 +89,9 @@ impl FunctionEdit {
                 node.value = Some(value.clone());
             }
             Self::Output { id } => {
-                if graph.node(*id).is_none() {
-                    return Err("missing output node".into());
+                let node = graph.node(*id).ok_or("missing output node")?;
+                if !materialcraft_nodes::function::can_be_output(&node.op) {
+                    return Err("Dot nodes cannot be function outputs".into());
                 }
 
                 graph.output = Some(*id);

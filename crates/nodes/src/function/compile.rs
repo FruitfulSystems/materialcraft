@@ -7,7 +7,7 @@ pub fn compile(graph: &FunctionGraph, seed: u32) -> Result<Program, String> {
         return Err("function exceeds the 4096-node execution limit".into());
     }
 
-    let output = graph.output.ok_or("function has no result node")?;
+    let output = super::output_node(graph).ok_or("function has no result node")?.id;
     let mut nodes = BTreeMap::new();
     for node in &graph.nodes {
         if nodes.insert(node.id, node).is_some() {

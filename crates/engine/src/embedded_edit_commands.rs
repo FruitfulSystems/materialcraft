@@ -52,6 +52,10 @@ fn function(session: &mut Session, parameters: &Json) -> Result<Json> {
         return Err(bad("graph.function.edit", "this operation is not available in the target function graph"));
     }
     let mut graph = current.clone();
+    // Type changes can leave an existing output incomplete; constrain explicit output choices
+    if let FunctionEdit::Output { id } = &edit {
+        crate::function_output::validate(session.graph()?, &target, &graph, *id).map_err(|error| bad("graph.function.edit", error))?;
+    }
     let result = edit.apply(&mut graph).map_err(|error| bad("graph.function.edit", error))?;
     crate::graph_validation::function(&graph).map_err(|error| bad("graph.function.edit", error))?;
     let key = (parameters.get("merge").and_then(Json::as_bool) == Some(true))
