@@ -398,6 +398,11 @@ fn update_relief(app: &mut MaterialCraftApp, ctx: &egui::Context) -> Option<u64>
         let relief = Relief { depth: v.height_scale, level: v.height_level };
         let budget = ((RELIEF_TRIANGLES as f32) * v.material.tessellation.clamp(0.1, 4.0)) as usize;
         let tiling = v.tiling * v.material.uv_scale[0].max(0.01);
+        // With the normal map switched off (Material > Use maps), the relief shades from its own geometry
+        let mut maps = maps;
+        if !v.material.use_map.normal {
+            maps.normal = None;
+        }
         start_relief(app, ctx, wanted, base, maps, relief, tiling, budget);
     }
     None

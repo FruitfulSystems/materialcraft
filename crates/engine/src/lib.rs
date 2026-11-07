@@ -76,6 +76,7 @@ mod frame_contents;
 mod function_commands;
 mod node_graph_commands;
 mod pattern_graph_commands;
+mod pin_commands;
 mod snapshot;
 pub use annotation_selection::AnnotationSelection;
 pub use frame_contents::FrameContents;

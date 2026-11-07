@@ -109,7 +109,10 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             node_card::outline(&painter, screen_rect, editor.zoom, Stroke::new(if selected { 2.0 } else { 1.0 }, outline));
             let body = node_card::body(screen_rect, editor.zoom);
             if node.value.is_none() {
-                painter.text(body.center(), Align2::CENTER_CENTER, icon::CODE, FontId::proportional(30.0 * editor.zoom), tokens.text_dim);
+                // The operation's text icon ("+", "≥", "sin", "F2( )"): what the node is at a glance
+                let badge = super::op_badge::text(&node.op);
+                let size = if badge.chars().count() > 3 { 16.0 } else { 24.0 } * editor.zoom;
+                painter.text(body.center(), Align2::CENTER_CENTER, badge, FontId::monospace(size.min(30.0)), tokens.text_strong);
             }
             if is_output {
                 let header = node_card::header(screen_rect, editor.zoom);

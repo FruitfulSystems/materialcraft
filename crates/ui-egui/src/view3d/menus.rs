@@ -282,9 +282,13 @@ fn display(app: &mut MaterialCraftApp, ui: &mut Ui) {
         app.run("view.3d", json!({"alphaView": a}));
     }
     ui.separator();
-    ui.horizontal(|ui| {
-        ui.label(tr("Preview size"));
-        crate::preview_resolution::show(app, ui);
+    // A submenu rather than a combo box: a popup inside a menu closes it
+    let mut size = app.session.preview_size.unwrap_or(0);
+    ui.menu_button(format!("{}: {}", tr("Preview size"), crate::preview_resolution::label(size)), |ui| {
+        if crate::preview_resolution::choices(ui, &mut size) {
+            app.run("view.previewSize", json!({"size": size}));
+            ui.close();
+        }
     });
     for (key, on) in toggles {
         match key {

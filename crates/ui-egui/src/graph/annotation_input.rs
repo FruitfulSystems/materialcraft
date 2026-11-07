@@ -22,7 +22,7 @@ pub(crate) fn handle(app: &mut MaterialCraftApp, ui: &Ui, camera: &GraphCamera, 
         } else {
             app.run("graph.annotation.select", json!({}));
         }
-    } else if let Some(GraphDrag::Frame { delta, .. } | GraphDrag::Comment { delta, .. }) = &mut app.graph.drag {
+    } else if let Some(GraphDrag::Frame { delta, .. } | GraphDrag::Comment { delta, .. } | GraphDrag::Pin { delta, .. }) = &mut app.graph.drag {
         *delta += motion;
     }
 
@@ -36,6 +36,11 @@ pub(crate) fn handle(app: &mut MaterialCraftApp, ui: &Ui, camera: &GraphCamera, 
 pub(super) fn begin_comment(app: &mut MaterialCraftApp, id: u64) {
     app.run("graph.annotation.select", json!({"kind": "comment", "id": id}));
     app.graph.drag = Some(GraphDrag::Comment { id, delta: Vec2::ZERO });
+}
+
+pub(super) fn begin_pin(app: &mut MaterialCraftApp, id: u64) {
+    app.run("graph.annotation.select", json!({}));
+    app.graph.drag = Some(GraphDrag::Pin { id, delta: Vec2::ZERO });
 }
 
 pub(super) fn begin_frame(app: &mut MaterialCraftApp, id: u64, resize: bool) {
@@ -65,6 +70,13 @@ pub(super) fn finish(app: &mut MaterialCraftApp, drag: GraphDrag) {
             if let Some(comment) = app.session.graph().ok().and_then(|graph| graph.comments.iter().find(|comment| comment.id == id)) {
                 let position = [comment.pos[0] + delta.x, comment.pos[1] + delta.y];
                 app.run("graph.comment.edit", json!({"id": id, "at": position}));
+            }
+        }
+        GraphDrag::Pin { id, delta } if delta.length() > 0.5 => {
+            if let Some(pin) = app.session.graph().ok().and_then(|graph| graph.pins.iter().find(|pin| pin.id == id)) {
+                let moved = materialcraft_engine::graph_grid::snap_position([delta.x, delta.y], app.ui.prefs.snap_to_grid);
+                let position = [pin.pos[0] + moved[0], pin.pos[1] + moved[1]];
+                app.run("graph.pin.edit", json!({"id": id, "at": position}));
             }
         }
         _ => {}

@@ -82,6 +82,23 @@ fn pin_navigation_wraps_and_thumbnail_commands_keep_the_document() {
 }
 
 #[test]
+fn a_dragged_pin_moves_and_its_menu_renames_it() {
+    let mut app = MaterialCraftApp::headless(new_session(), UiState::default());
+    app.ui.prefs.snap_to_grid = false;
+    let id = app.run("graph.pin.add", json!({"at": [100, 200], "name": "Start"})).unwrap()["id"].as_u64().unwrap();
+    app.graph.drag = Some(crate::graph::GraphDrag::Pin { id, delta: vec2(30.0, -10.0) });
+    let drag = app.graph.drag.take().unwrap();
+    crate::graph::annotation_input::finish(&mut app, drag);
+    let pin = app.session.graph().unwrap().pins.iter().find(|p| p.id == id).cloned().unwrap();
+    assert_eq!(pin.pos, [130.0, 190.0]);
+    app.run("graph.pin.edit", json!({"id": id, "name": "  Middle "}));
+    assert_eq!(app.session.graph().unwrap().pins[0].name, "Middle");
+    assert!(app.run("graph.pin.edit", json!({"id": id})).is_none(), "nothing to change is an error");
+    app.session.undo();
+    assert_eq!(app.session.graph().unwrap().pins[0].name, "Start");
+}
+
+#[test]
 fn frame_drag_selects_the_border_and_moves_comments_and_nodes_together() {
     let mut frames = Frames::new(new_session());
     let node = NodeId(frames.app.run("graph.node.add", json!({"def": "uniform", "at": [64, 64]})).unwrap()["id"].as_u64().unwrap());

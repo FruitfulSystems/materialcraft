@@ -24,7 +24,9 @@ struct Template {
 fn starter_info(id: &str) -> &'static str {
     match id {
         "empty" => "A graph with no nodes: start from the library.",
-        "pbr" => "The material outputs (Base Color, Normal, Roughness, Metallic, Height, Ambient Occlusion) with uniform colors wired in.",
+        "pbr" => {
+            "The material outputs (Base Color, Normal, Roughness, Metallic, Height, Ambient Occlusion) with uniform colors wired in; the normal is derived from the height."
+        }
         "atomics" => "The atomic sample: a value input, a function, a pixel processor, an FX-Map pattern and a blur, with an image and a value output.",
         _ => "A graph template.",
     }

@@ -169,6 +169,8 @@ execution use bounded iterative traversal and reject cycles.
 `graph.frame.edit` accepts `title`, `titleVisible`, `description`, `color` and `rect`.
 `graph.frame.move {"id": ..., "by": [dx, dy], "snapToGrid": true}` moves enclosed nodes,
 comments, nested frames and pins together. `graph.comment.edit` accepts `text`, `at` and `size`.
+`graph.pin.edit {"id": ..., "name"?: ..., "at"?: [x, y]}` renames or moves a navigation pin (the
+editor drags pins and renames them from their context menu); `graph.pin.delete {"id"}` removes one.
 `session.inspect` includes annotation selection and the standalone function; `ui.inspect`
 includes frame and comment rectangles for synthetic input.
 

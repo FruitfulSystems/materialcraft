@@ -55,6 +55,8 @@ pub(super) fn handle(
                 } else if let Some(c) = app.session.graph().ok().and_then(|g| g.input_of(h.node, &h.port).cloned()) {
                     app.graph.drag = Some(GraphDrag::Wire { from: (c.from, c.from_port.clone()), detached: Some((h.node, h.port.clone())) });
                 }
+            } else if let Some(id) = app.graph.pins.iter().rev().find(|(_, r)| r.contains(p)).map(|(id, _)| *id) {
+                super::annotation_input::begin_pin(app, id);
             } else if let Some((id, _)) = comments.iter().rev().find(|(_, r)| r.contains(p)) {
                 super::annotation_input::begin_comment(app, *id);
             } else if let Some((id, _)) = nodes.iter().rev().find(|(_, r)| r.rect.contains(p)) {
@@ -74,7 +76,10 @@ pub(super) fn handle(
             let d = ctx.input(|i| i.pointer.delta()) / zoom;
             app.ui.graph_camera.pan = [app.ui.graph_camera.pan[0] - d.x, app.ui.graph_camera.pan[1] - d.y];
         }
-        Some(GraphDrag::Nodes { delta }) | Some(GraphDrag::Frame { delta, .. }) | Some(GraphDrag::Comment { delta, .. }) => *delta += motion,
+        Some(GraphDrag::Nodes { delta })
+        | Some(GraphDrag::Frame { delta, .. })
+        | Some(GraphDrag::Comment { delta, .. })
+        | Some(GraphDrag::Pin { delta, .. }) => *delta += motion,
         Some(GraphDrag::WirePress { wire, start }) => {
             // Dragged far enough: a reroute dot where the press was, carried by the pointer
             if let Some(p) = pointer
@@ -140,7 +145,7 @@ pub(super) fn handle(
                     }
                 }
             }
-            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } => super::annotation_input::finish(app, drag),
+            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } | GraphDrag::Pin { .. } => super::annotation_input::finish(app, drag),
         }
     }
 
@@ -193,6 +198,7 @@ pub(super) fn handle(
         && let Some(p) = pointer
     {
         app.graph.menu_at = cam.to_graph(p);
+        app.graph.menu_pin = app.graph.pins.iter().rev().find(|(_, rect)| rect.contains(p)).map(|(id, _)| *id);
         if let Some((id, _)) = comments.iter().rev().find(|(_, rect)| rect.contains(p)) {
             app.run("graph.annotation.select", json!({"kind": "comment", "id": id}));
         } else if let Some(hit) = frames.iter().rev().find(|frame| frame.contains(p)) {
@@ -208,9 +214,10 @@ pub(super) fn handle(
         }
     }
     let at = app.graph.menu_at;
-    canvas.context_menu(|ui| match app.graph.menu_wire.clone() {
-        Some(w) => wire_menu(app, ui, w, at),
-        None => super::context_menu::show(app, ui, at, None),
+    canvas.context_menu(|ui| match (app.graph.menu_pin, app.graph.menu_wire.clone()) {
+        (Some(pin), _) => super::pin_menu::show(app, ui, pin),
+        (None, Some(w)) => wire_menu(app, ui, w, at),
+        (None, None) => super::context_menu::show(app, ui, at, None),
     });
 
     // Library drops

@@ -275,7 +275,7 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
 
     let comment_hits = super::annotation_canvas::comments(app, ui, &graph.comments, &camera);
     app.graph.comments = comment_hits.clone();
-    super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
+    app.graph.pins = super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
 
     // Ports (drawn last, interactable over the node cards)
     let port_hover = pointer.and_then(|p| nearest_port(&app.graph.ports, p, 9.0)).cloned();

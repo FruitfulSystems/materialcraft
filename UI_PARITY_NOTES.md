@@ -28,6 +28,17 @@ What changed, per area of the reference screenshots. Everything is wired to the 
 - Graph toolbar quick-insert row now has every atomic node (added SVG, Text, Gradient Dynamic, Motion Blur,
   Value Processor, Input Color, Input Value).
 
+## Fixes (2026-11-07)
+- Height in the 3D view: the "Material outputs" template now derives its Normal output from the Height (a
+  `normal` node between them) like the old base material did, so a height wired in shows as relief and shading
+  right away; with the normal map switched off (Material page ▸ Use maps) the relief shades from its own geometry.
+- 3D view ▸ Display ▸ Preview size is a submenu (a combo box inside a menu closed the menu before it applied).
+- Navigation pins can be dragged (snap to grid applies), and right-click gives Rename (in place), Go to pin and
+  Delete; new engine command `graph.pin.edit {id, name?, at?}` in `engine/src/pin_commands.rs`.
+- Function graph library: operations grouped by category (collapsible, with an icon and a count), each with a
+  text badge saying what it is ("F2", "+", "≥", "sin", "if", "(F1)", "$F1"…), its inputs, and a tooltip
+  describing it; the search also matches the badge. Function node cards show the same badge in their body.
+
 ## Menus (File / Edit / Tools / Windows / Help)
 - File: New ▸ Graph / Empty package, Open, Recent, Save, Save as, Save a copy as, Export with dependencies, Import bitmap, Link bitmap, Export outputs, Export material, Send to TextureCraft, Close, Quit.
 - Tools: Switch engine (F9: CPU thread count, rayon pool), Cancel rendering, Suspend engine, Clear cache, Reload resources, Plugin Manager.

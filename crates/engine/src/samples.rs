@@ -13,6 +13,9 @@ pub fn template(id: &str, name: &str, size_log2: u32) -> Result<Graph> {
     graph.name = name.to_string();
     graph.size = [size_log2, size_log2];
     if id == "pbr" {
+        // Uniform colors into every output; the normal is derived from the height, so a height
+        // wired in shows up in the 3D view right away (as a normal map, and as relief).
+        let mut height_source = None;
         for (index, (identifier, color)) in [
             ("basecolor", [0.5, 0.5, 0.5, 1.0]),
             ("normal", [0.5, 0.5, 1.0, 1.0]),
@@ -24,15 +27,32 @@ pub fn template(id: &str, name: &str, size_log2: u32) -> Result<Graph> {
         .into_iter()
         .enumerate()
         {
-            let source = graph.add_node("uniform", [0.0, index as f32 * 180.0]);
-            let node = graph.node_mut(source)?;
-            node.params.insert("color_mode".into(), Value::Bool(index <= 1));
-            node.params.insert("color".into(), Value::Color(color));
-            let output = graph.add_node("output", [220.0, index as f32 * 180.0]);
+            let y = index as f32 * 180.0;
+            let output = graph.add_node("output", [440.0, y]);
             let node = graph.node_mut(output)?;
             node.params.insert("identifier".into(), Value::Text(identifier.into()));
             node.params.insert("usage".into(), Value::Enum(index as u32));
+            if identifier == "normal" {
+                // Filled in below, from the height
+                continue;
+            }
+            let source = graph.add_node("uniform", [0.0, y]);
+            let node = graph.node_mut(source)?;
+            node.params.insert("color_mode".into(), Value::Bool(index == 0));
+            node.params.insert("color".into(), Value::Color(color));
             graph.connect(source, "output", output, "input")?;
+            if identifier == "height" {
+                height_source = Some(source);
+            }
+        }
+        let normal = graph.add_node("normal", [220.0, 180.0]);
+        graph.node_mut(normal)?.params.insert("intensity".into(), Value::Float(2.0));
+        if let Some(height) = height_source {
+            graph.connect(height, "output", normal, "input")?;
+        }
+        let normal_output = graph.nodes.iter().find(|n| n.def == "output" && n.params.get("identifier") == Some(&Value::Text("normal".into()))).map(|n| n.id);
+        if let Some(output) = normal_output {
+            graph.connect(normal, "output", output, "input")?;
         }
     }
     Ok(graph)

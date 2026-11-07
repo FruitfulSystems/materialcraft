@@ -20,13 +20,14 @@ pub(crate) mod node_card;
 mod node_layout;
 mod node_search;
 pub(crate) mod node_selection;
+mod pin_menu;
 pub(crate) mod port_hit;
 pub(crate) mod port_label;
 pub(crate) mod subgraph_navigation;
 
 pub use canvas::show;
 pub(crate) use graph_camera::GraphCamera;
-use graph_drag::GraphDrag;
+pub(crate) use graph_drag::GraphDrag;
 pub use graph_view::GraphView;
 pub use library_drag::LibraryDrag;
 pub use navigation::{add_node_near_selection, view_center};

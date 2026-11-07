@@ -4,6 +4,7 @@ mod function_drag;
 mod function_editor;
 mod function_target;
 pub(crate) mod library;
+pub(crate) mod op_badge;
 mod port_label;
 pub(crate) mod properties;
 
