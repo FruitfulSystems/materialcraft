@@ -31,7 +31,7 @@ impl GraphCamera {
         Self { origin: view.min, pan, zoom }
     }
 
-    pub(crate) fn zoom_from_input(&mut self, ui: &Ui, view: Rect, invert: bool) {
+    pub(crate) fn zoom_from_input(&mut self, ui: &Ui, view: Rect) {
         self.zoom = self.zoom.clamp(crate::state::GraphCamera::ZOOM.0, crate::state::GraphCamera::ZOOM.1);
         if !ui.rect_contains_pointer(view) {
             return;
@@ -39,7 +39,7 @@ impl GraphCamera {
 
         let Some(pointer) = ui.input(|input| input.pointer.hover_pos()).filter(|pointer| view.contains(*pointer)) else { return };
 
-        let scroll = ui.input(|input| input.smooth_scroll_delta.y + input.zoom_delta().ln() * 200.0) * if invert { -1.0 } else { 1.0 };
+        let scroll = ui.input(|input| input.smooth_scroll_delta.y + input.zoom_delta().ln() * 200.0);
         if scroll.is_finite() && scroll != 0.0 {
             let before = self.to_graph(pointer);
             self.zoom = (self.zoom * (scroll * 0.0025).exp()).clamp(crate::state::GraphCamera::ZOOM.0, crate::state::GraphCamera::ZOOM.1);

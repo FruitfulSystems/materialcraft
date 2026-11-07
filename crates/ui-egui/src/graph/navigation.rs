@@ -3,8 +3,7 @@ use crate::MaterialCraftApp;
 use egui::{Pos2, Rect, pos2, vec2};
 use serde_json::json;
 
-/// The graph point at the middle of the view
-pub fn view_center(app: &MaterialCraftApp) -> Pos2 {
+pub(super) fn view_center(app: &MaterialCraftApp) -> Pos2 {
     let c = &app.ui.graph_camera;
     let v = app.graph.view;
     pos2(c.pan[0] + v.width() * 0.5 / c.zoom, c.pan[1] + v.height() * 0.5 / c.zoom)

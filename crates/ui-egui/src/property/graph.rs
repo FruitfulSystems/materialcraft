@@ -5,8 +5,26 @@ use egui_phosphor::regular as icon;
 use materialcraft_engine::core::{Graph, OutputFormat, Resource, Value};
 use serde_json::{Value as JsonValue, json};
 
+/// A one-line field for a value the engine holds: what is typed stays between frames, and the text
+/// comes back when the field loses focus with something new in it. A change to the value from
+/// elsewhere (undo) drops the draft.
+fn draft_field(ui: &mut Ui, salt: String, current: &str, label: &str) -> Option<String> {
+    let id = ui.make_persistent_id(salt);
+    let draft: Option<(String, String)> = ui.data(|data| data.get_temp(id));
+    let mut text = draft.filter(|(seen, _)| seen == current).map_or_else(|| current.to_string(), |(_, text)| text);
+    let response = ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()));
+    crate::widgets::name(&response, egui::Role::TextInput, label);
+    if response.has_focus() {
+        ui.data_mut(|data| data.insert_temp(id, (current.to_string(), text.clone())));
+    } else {
+        ui.data_mut(|data| data.remove_temp::<(String, String)>(id));
+    }
+    (response.lost_focus() && text != current).then_some(text)
+}
+
 pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tokens = Tokens::get(ui.ctx());
+    let graph_index = app.session.graph;
     let Ok(graph) = app.session.graph() else {
         ui.label(tr("No graph is open"));
         return;
@@ -17,10 +35,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     section(ui, "graph-base", tr("Base parameters"), |ui| {
         ui.horizontal(|ui| {
             ui.label(tr("Name"));
-            let mut name = graph.name.clone();
-            let response = ui.add(egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()));
-            crate::widgets::name(&response, egui::Role::TextInput, "Graph name");
-            if response.lost_focus() && name != graph.name {
+            if let Some(name) = draft_field(ui, format!("graph-name-{graph_index}"), &graph.name, "Graph name") {
                 emit("graph.rename", json!({"name": name}));
             }
         });
@@ -57,10 +72,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         ] {
             ui.horizontal(|ui| {
                 ui.label(tr(label));
-                let mut edited = current.clone();
-                let response = ui.add(egui::TextEdit::singleline(&mut edited).desired_width(ui.available_width()));
-                crate::widgets::name(&response, egui::Role::TextInput, label);
-                if response.lost_focus() && edited != *current {
+                if let Some(edited) = draft_field(ui, format!("graph-attribute-{graph_index}-{key}"), current, label) {
                     emit("graph.attributes", json!({key: edited}));
                 }
             });

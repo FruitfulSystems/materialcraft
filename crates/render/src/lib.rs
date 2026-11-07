@@ -14,6 +14,4 @@ mod relief;
 pub use displacement::Displacement;
 pub use relief::Relief;
 
-pub use preview::{
-    Background, Common, Lighting, MapUse, Maps, PointLight, Scene, Settings, Shader, VIEW_TRIANGLES, builtin_mesh, camera, pan, render, render_cancellable,
-};
+pub use preview::{Lighting, Maps, Scene, Settings, VIEW_TRIANGLES, builtin_mesh, pan, render, render_cancellable};

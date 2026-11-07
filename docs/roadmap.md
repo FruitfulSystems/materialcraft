@@ -20,7 +20,7 @@
 
 ## Current focus
 
-1. Node library breadth (gap 1): scan processing, more grunges, spline tools, MCF (distance-field) functions.
+1. Node library breadth (gap 1): scan processing, more grunges, spline tools, SDF shapes.
 2. The GPU 3D view (gap 2) and mesh-based generators (gap 3).
 3. Function loops (gap 5) and the portable-material MCP tool (gap 4).
 

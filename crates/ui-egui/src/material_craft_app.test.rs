@@ -46,7 +46,7 @@ mod unsaved_state_tests {
         let mut a = app(false);
         guard(&mut a, Guarded::Menu { id: "ui.closeAll".into() });
         assert!(a.ui.windows.unsaved.is_none());
-        assert_eq!(a.session.pkg.graphs.first().map(|g| g.name.as_str()), Some("Material_Graph"), "the empty package replaced it");
+        assert_eq!(a.session.pkg.graphs.first().map(|g| g.name.as_str()), Some("New_graph"), "the empty package replaced it");
     }
 
     #[test]

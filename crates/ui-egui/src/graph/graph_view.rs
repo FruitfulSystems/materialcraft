@@ -13,10 +13,6 @@ pub struct GraphView {
     pub ports: Vec<PortHit>,
     pub frames: Vec<(u64, Rect)>,
     pub comments: Vec<(u64, Rect)>,
-    /// The navigation pins' screen rects this frame (icon and name)
-    pub pins: Vec<(u64, Rect)>,
-    /// The pin under the last right-click (its context menu)
-    pub(super) menu_pin: Option<u64>,
     /// The canvas rectangle last frame
     pub view: Rect,
     /// Graph point of the last right-click (context menu actions add things there)
@@ -49,8 +45,6 @@ impl Default for GraphView {
             ports: Vec::new(),
             frames: Vec::new(),
             comments: Vec::new(),
-            pins: Vec::new(),
-            menu_pin: None,
             view: Rect::NOTHING,
             menu_at: Pos2::ZERO,
             framed_graph: None,

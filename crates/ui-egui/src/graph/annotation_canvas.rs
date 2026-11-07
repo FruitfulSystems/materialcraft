@@ -87,29 +87,16 @@ pub(crate) fn comments(app: &MaterialCraftApp, ui: &Ui, comments: &[Comment], ca
     hits
 }
 
-/// Paint the navigation pins; returns each pin's screen rect (icon and name) for hit testing
-pub(crate) fn pins(app: &MaterialCraftApp, ui: &Ui, pins: &[Pin], camera: &GraphCamera) -> Vec<(u64, Rect)> {
+pub(crate) fn pins(app: &MaterialCraftApp, ui: &Ui, pins: &[Pin], camera: &GraphCamera) {
     let painter = ui.painter_at(app.graph.view);
     let theme = Tokens::get(ui.ctx());
-    let mut hits = Vec::with_capacity(pins.len());
 
     for pin in pins {
-        let mut position = pos2(pin.pos[0], pin.pos[1]) + offset(app, |contents| contents.pins.contains(&pin.id));
-        if let Some(GraphDrag::Pin { id, delta }) = &app.graph.drag
-            && *id == pin.id
-        {
-            position += materialcraft_engine::graph_grid::snap_position([delta.x, delta.y], app.ui.prefs.snap_to_grid).into();
-        }
+        let position = pos2(pin.pos[0], pin.pos[1]) + offset(app, |contents| contents.pins.contains(&pin.id));
         let position = camera.to_screen(position);
-        let dragging = matches!(&app.graph.drag, Some(GraphDrag::Pin { id, .. }) if *id == pin.id);
-        let color = if dragging { theme.text_strong } else { theme.accent };
-        painter.text(position, Align2::CENTER_BOTTOM, icon::MAP_PIN, FontId::proportional(18.0), color);
-        let name = painter.text(position + vec2(10.0, -10.0), Align2::LEFT_CENTER, &pin.name, FontId::proportional(11.0), theme.text);
-        let icon_rect = Rect::from_min_max(position + vec2(-9.0, -20.0), position + vec2(9.0, 2.0));
-        hits.push((pin.id, icon_rect.union(name)));
+        painter.text(position, Align2::CENTER_BOTTOM, icon::MAP_PIN, FontId::proportional(18.0), theme.accent);
+        painter.text(position + vec2(10.0, -10.0), Align2::LEFT_CENTER, &pin.name, FontId::proportional(11.0), theme.text);
     }
-
-    hits
 }
 
 pub(crate) fn offset(app: &MaterialCraftApp, contains: impl FnOnce(&materialcraft_engine::FrameContents) -> bool) -> Vec2 {

@@ -216,42 +216,6 @@ pub fn cylinder(radius: f32, height: f32, segs: usize) -> Mesh {
     b.finish("Cylinder")
 }
 
-/// A cylinder along Y with rounded rims (`bevel` = rim radius).
-pub fn rounded_cylinder(radius: f32, height: f32, bevel: f32, segs: usize) -> Mesh {
-    let mut b = Builder::default();
-    let h = height * 0.5;
-    let bev = bevel.clamp(0.0, radius.min(h) * 0.9);
-    let mut profile = Vec::new();
-    for k in 0..=6 {
-        let a = k as f32 / 6.0 * PI * 0.5;
-        profile.push((radius - bev + bev * a.sin(), h - bev + bev * a.cos()));
-    }
-    for k in 0..=6 {
-        let a = k as f32 / 6.0 * PI * 0.5;
-        profile.push((radius - bev + bev * a.cos(), -h + bev - bev * a.sin()));
-    }
-    lathe_into(&mut b, Vec3::ZERO, &profile, segs.max(3), UvRect { o: Vec2::ZERO, s: Vec2::new(1.0, 0.5) }.inset(0.01));
-    disk_into(&mut b, Vec3::Y * h, radius - bev, true, segs.max(3), UvRect { o: Vec2::new(0.0, 0.5), s: Vec2::splat(0.5) }.inset(0.01));
-    disk_into(&mut b, -Vec3::Y * h, radius - bev, false, segs.max(3), UvRect { o: Vec2::new(0.5, 0.5), s: Vec2::splat(0.5) }.inset(0.01));
-    b.finish("Rounded cylinder")
-}
-
-/// A draped square of cloth: a plane with soft folds, facing +Y.
-pub fn cloth(size: f32, subdivisions: usize) -> Mesh {
-    let mut b = Builder::default();
-    let s = subdivisions.max(8);
-    let fold = |x: f32, z: f32| 0.07 * (x * 4.2).sin() * (z * 2.6 + 0.5).cos() + 0.035 * (x * 9.0 + z * 7.0).sin() + 0.02 * (z * 12.0).cos();
-    b.grid(s, s, |i, j| {
-        let (u, v) = (j as f32 / s as f32, i as f32 / s as f32);
-        let (x, z) = ((u - 0.5) * size, (v - 0.5) * size);
-        let y = fold(x, z);
-        let e = 1e-3;
-        let (dx, dz) = ((fold(x + e, z) - fold(x - e, z)) / (2.0 * e), (fold(x, z + e) - fold(x, z - e)) / (2.0 * e));
-        (Vec3::new(x, y, z), Vec3::new(-dx, 1.0, -dz), Vec2::new(u, v))
-    });
-    b.finish("Cloth")
-}
-
 /// A torus around Y.
 pub fn torus(major: f32, minor: f32, segs: usize, sides: usize) -> Mesh {
     let mut b = Builder::default();
@@ -366,11 +330,8 @@ pub fn builtin(id: &str) -> Option<Mesh> {
         "cube" => cube(2.0),
         "rounded_cube" | "roundedcube" | "box" => rounded_box(Vec3::ONE, 0.15),
         "cylinder" => cylinder(1.0, 2.0, 96),
-        "rounded_cylinder" | "roundedcylinder" => rounded_cylinder(1.0, 2.0, 0.12, 96),
         "torus" => torus(1.0, 0.35, 128, 48),
         "plane" => plane(2.0, 16),
-        "plane_hires" | "planehires" => plane(2.0, 128),
-        "cloth" => cloth(2.0, 96),
         "crate" => crate_scene(),
         "udim_plane" | "udimplane" => udim_plane(),
         _ => return None,
@@ -378,17 +339,14 @@ pub fn builtin(id: &str) -> Option<Mesh> {
 }
 
 /// Ids accepted by [`builtin`], in menu order.
-pub const BUILTINS: [(&str, &str); 12] = [
+pub const BUILTINS: [(&str, &str); 9] = [
     ("material_ball", "Material ball"),
     ("sphere", "Sphere"),
     ("cube", "Cube"),
     ("rounded_cube", "Rounded cube"),
     ("cylinder", "Cylinder"),
-    ("rounded_cylinder", "Rounded cylinder"),
     ("torus", "Torus"),
     ("plane", "Plane"),
-    ("plane_hires", "Plane (hi-res)"),
-    ("cloth", "Cloth"),
     ("crate", "Crate"),
     ("udim_plane", "UDIM plane"),
 ];

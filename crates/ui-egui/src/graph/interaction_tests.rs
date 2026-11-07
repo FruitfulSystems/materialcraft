@@ -82,23 +82,6 @@ fn pin_navigation_wraps_and_thumbnail_commands_keep_the_document() {
 }
 
 #[test]
-fn a_dragged_pin_moves_and_its_menu_renames_it() {
-    let mut app = MaterialCraftApp::headless(new_session(), UiState::default());
-    app.ui.prefs.snap_to_grid = false;
-    let id = app.run("graph.pin.add", json!({"at": [100, 200], "name": "Start"})).unwrap()["id"].as_u64().unwrap();
-    app.graph.drag = Some(crate::graph::GraphDrag::Pin { id, delta: vec2(30.0, -10.0) });
-    let drag = app.graph.drag.take().unwrap();
-    crate::graph::annotation_input::finish(&mut app, drag);
-    let pin = app.session.graph().unwrap().pins.iter().find(|p| p.id == id).cloned().unwrap();
-    assert_eq!(pin.pos, [130.0, 190.0]);
-    app.run("graph.pin.edit", json!({"id": id, "name": "  Middle "}));
-    assert_eq!(app.session.graph().unwrap().pins[0].name, "Middle");
-    assert!(app.run("graph.pin.edit", json!({"id": id})).is_none(), "nothing to change is an error");
-    app.session.undo();
-    assert_eq!(app.session.graph().unwrap().pins[0].name, "Start");
-}
-
-#[test]
 fn frame_drag_selects_the_border_and_moves_comments_and_nodes_together() {
     let mut frames = Frames::new(new_session());
     let node = NodeId(frames.app.run("graph.node.add", json!({"def": "uniform", "at": [64, 64]})).unwrap()["id"].as_u64().unwrap());
@@ -546,4 +529,36 @@ fn box_selection_and_alt_panning_are_shared_by_every_canvas() {
         assert!((after - before - (to - from)).length() < 0.01, "{kind} pan: {before:?} -> {after:?}");
         assert_eq!(frames.app.session.pkg, original, "{kind} navigation edited the document");
     }
+}
+
+#[test]
+fn dots_move_from_their_body_and_still_wire_from_just_outside_at_any_zoom() {
+    let mut frames = Frames::new(new_session());
+    let ids: Vec<NodeId> = [[0, 0], [256, 0]]
+        .into_iter()
+        .map(|at| NodeId(frames.app.run("graph.node.add", json!({"def": "dot", "at": at})).unwrap()["id"].as_u64().unwrap()))
+        .collect();
+    frames.app.ui.frame_all = true;
+    frames.run(Vec::new(), Modifiers::NONE);
+
+    // Zoomed in, at 100% and zoomed out: the dot's ports used to cover its whole body
+    for zoom in [2.0, 1.0, 0.5, 0.25] {
+        frames.app.ui.graph_camera.zoom = zoom;
+        frames.run(Vec::new(), Modifiers::NONE);
+        let before = frames.app.session.graph().unwrap().node(ids[0]).unwrap().pos;
+        let from = frames.center(ids[0]);
+        drag(&mut frames, from, from + vec2(40.0, 30.0));
+        let graph = frames.app.session.graph().unwrap();
+        assert_ne!(graph.node(ids[0]).unwrap().pos, before, "the dot did not move at zoom {zoom}");
+        assert!(graph.connections.is_empty(), "pressing the dot started a wire at zoom {zoom}");
+    }
+
+    frames.app.ui.graph_camera.zoom = 1.0;
+    frames.run(Vec::new(), Modifiers::NONE);
+    let output = frames.app.graph.ports.iter().find(|port| port.node == ids[0] && port.output).unwrap().pos;
+    let input = frames.app.graph.ports.iter().find(|port| port.node == ids[1] && !port.output).unwrap().pos;
+    drag(&mut frames, output + vec2(6.0, 0.0), input);
+    let graph = frames.app.session.graph().unwrap();
+    assert_eq!(graph.connections.len(), 1);
+    assert_eq!((graph.connections[0].from, graph.connections[0].to), (ids[0], ids[1]));
 }

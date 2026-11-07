@@ -4,23 +4,11 @@ use egui::{Color32, Pos2, Rect, Stroke, pos2};
 /// Pointer distance in points within which a wire is hit
 pub(super) const WIRE_HIT: f32 = 5.0;
 
-/// Wires are drawn straight this frame (the graph toolbar's wire style)
-static STRAIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Choose straight or curved wires for the frames that follow
-pub(crate) fn set_straight(straight: bool) {
-    STRAIGHT.store(straight, std::sync::atomic::Ordering::Relaxed);
-}
-
 pub(crate) fn bezier_points(a: Pos2, b: Pos2) -> [Pos2; 4] {
     curve_points(a, b, egui::Vec2::X)
 }
 
 pub(crate) fn curve_points(source: Pos2, destination: Pos2, axis: egui::Vec2) -> [Pos2; 4] {
-    if STRAIGHT.load(std::sync::atomic::Ordering::Relaxed) {
-        let d = (destination - source) / 3.0;
-        return [source, source + d, source + d * 2.0, destination];
-    }
     let offset = axis * ((destination - source).dot(axis).abs() * 0.5).max(30.0);
     [source, source + offset, destination - offset, destination]
 }

@@ -20,7 +20,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let owner = pattern.then(|| app.pattern_editor.as_ref().map(|editor| editor.node.0)).flatten();
     row(ui, |ui| {
         let b = button;
-        if common(app, ui, selection.len(), pattern || function, || {
+        if common(app, ui, selection.len(), || {
             let mut parameters = json!({"graph": graph, "ids": selection});
             if let Some(owner) = owner {
                 parameters["pattern"] = json!(owner);
@@ -48,7 +48,35 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
 
         if !pattern && !function {
-            view_tools(app, ui);
+            // Quick insert of the atomic nodes
+            for (ic, def) in [
+                (icon::IMAGE, "bitmap"),
+                (icon::PALETTE, "uniform"),
+                (icon::STACK, "blend"),
+                (icon::DROP, "blur"),
+                (icon::SHUFFLE, "channels_shuffle"),
+                (icon::CHART_LINE, "curve"),
+                (icon::WIND, "directional_blur"),
+                (icon::ARROWS_OUT_LINE_HORIZONTAL, "directional_warp"),
+                (icon::RULER, "distance"),
+                (icon::MOUNTAINS, "emboss"),
+                (icon::GRADIENT, "gradient_map"),
+                (icon::CIRCLE_HALF, "grayscale_conversion"),
+                (icon::SWATCHES, "hsl"),
+                (icon::SLIDERS_HORIZONTAL, "levels"),
+                (icon::CUBE, "normal"),
+                (icon::CODE, "pixel_processor"),
+                (icon::DIAMOND, "sharpen"),
+                (icon::ARROWS_CLOCKWISE, "transformation"),
+                (icon::WAVES, "warp"),
+                (icon::SIGN_IN, "input_grayscale"),
+                (icon::SIGN_OUT, "output"),
+            ] {
+                let label = materialcraft_engine::nodes::find(def).map_or(def, |d| d.label);
+                if b(ui, ic, label) {
+                    add_node_near_selection(app, def);
+                }
+            }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if super::subgraph_navigation::can_return(app) {
@@ -73,99 +101,6 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
         });
     });
-    if pattern || function {
-        return;
-    }
-    // Row 2: quick insert of the atomic nodes and the annotations
-    row(ui, |ui| {
-        let b = button;
-        {
-            for (ic, def) in [
-                (icon::IMAGE, "bitmap"),
-                (icon::BEZIER_CURVE, "svg"),
-                (icon::TEXT_T, "text"),
-                (icon::PALETTE, "uniform"),
-                (icon::STACK, "blend"),
-                (icon::DROP, "blur"),
-                (icon::SHUFFLE, "channels_shuffle"),
-                (icon::CHART_LINE, "curve"),
-                (icon::WIND, "directional_blur"),
-                (icon::ARROWS_OUT_LINE_HORIZONTAL, "directional_warp"),
-                (icon::RULER, "distance"),
-                (icon::MOUNTAINS, "emboss"),
-                (icon::GRADIENT, "gradient_map"),
-                (icon::ARROWS_LEFT_RIGHT, "gradient_dynamic"),
-                (icon::CIRCLE_HALF, "grayscale_conversion"),
-                (icon::SWATCHES, "hsl"),
-                (icon::SLIDERS_HORIZONTAL, "levels"),
-                (icon::FAST_FORWARD, "motion_blur"),
-                (icon::CUBE, "normal"),
-                (icon::CODE, "pixel_processor"),
-                (icon::FUNCTION, "value_processor"),
-                (icon::DIAMOND, "sharpen"),
-                (icon::ARROWS_CLOCKWISE, "transformation"),
-                (icon::WAVES, "warp"),
-                (icon::DICE_FIVE, "fx_map"),
-                (icon::SIGN_IN, "input_grayscale"),
-                (icon::PALETTE, "input_color"),
-                (icon::NUMBER_CIRCLE_ONE, "input_value"),
-                (icon::SIGN_OUT, "output"),
-            ] {
-                let label = materialcraft_engine::nodes::find(def).map_or(def, |d| d.label);
-                if b(ui, ic, label) {
-                    add_node_near_selection(app, def);
-                }
-            }
-        }
-        ui.separator();
-        if b(ui, icon::DOT_OUTLINE, tr("Add dot (reroute)")) {
-            add_node_near_selection(app, "dot");
-        }
-    });
-}
-
-/// Row 1 extras for the material graph: 1:1, screenshot, graph info, find, display toggles,
-/// compute and clean-up
-fn view_tools(app: &mut MaterialCraftApp, ui: &mut Ui) {
-    let toggle = |ui: &mut Ui, ic: &str, tip: &str, on: bool| crate::widgets::icon_button(ui, ic, tip, on, 22.0).clicked();
-    if button(ui, icon::FRAME_CORNERS, tr("Actual size (1:1)")) {
-        super::toolbar_tools::zoom_to(app, 1.0);
-    }
-    if button(ui, icon::CAMERA, tr("Save a screenshot of the graph...")) {
-        super::toolbar_tools::screenshot(app, ui.ctx());
-    }
-    let info = crate::widgets::icon_button(ui, icon::INFO, tr("Graph information"), false, 22.0);
-    egui::Popup::menu(&info).show(|ui| super::toolbar_tools::graph_info(app, ui));
-    if button(ui, icon::MAGNIFYING_GLASS, tr("Find a node (Tab)")) {
-        let c = view_center(app);
-        super::search::open_search(app, c, None);
-    }
-    ui.separator();
-    let timings = app.ui.prefs.node_timings;
-    if toggle(ui, icon::TIMER, tr("Show cook times on nodes"), timings) {
-        app.ui.prefs.node_timings = !timings;
-    }
-    let straight = app.ui.prefs.straight_wires;
-    if toggle(
-        ui,
-        if straight { icon::LINE_SEGMENT } else { icon::WAVE_SINE },
-        if straight { tr("Wires: straight (click for curved)") } else { tr("Wires: curved (click for straight)") },
-        straight,
-    ) {
-        app.ui.prefs.straight_wires = !straight;
-    }
-    let grid_on = app.ui.prefs.show_grid;
-    if toggle(ui, icon::DOTS_NINE, tr("Show the grid"), grid_on) {
-        app.ui.prefs.show_grid = !grid_on;
-    }
-    ui.separator();
-    if button(ui, icon::ARROWS_CLOCKWISE, tr("Compute outputs")) {
-        app.cooker.hold = false;
-        app.session.dirty = true;
-    }
-    if button(ui, icon::BROOM, tr("Clean up: remove unconnected dots and disabled nodes with nothing attached")) {
-        super::toolbar_tools::clean_up(app);
-    }
 }
 
 fn row(ui: &mut Ui, draw: impl FnOnce(&mut Ui)) {
@@ -182,10 +117,9 @@ fn button(ui: &mut Ui, icon: &str, tooltip: &str) -> bool {
     crate::widgets::icon_button(ui, icon, tooltip, false, 22.0).clicked()
 }
 
-fn common(app: &mut MaterialCraftApp, ui: &mut Ui, selection_count: usize, embedded: bool, parameters: impl Fn() -> serde_json::Value) -> bool {
+fn common(app: &mut MaterialCraftApp, ui: &mut Ui, selection_count: usize, parameters: impl Fn() -> serde_json::Value) -> bool {
     let frame = button(ui, icon::CORNERS_OUT, tr("Frame all (F)"));
     let can_align = selection_count > 1;
-    let stack = app.ui.stack_align;
     for (icon, mode, tooltip) in [
         (icon::ALIGN_LEFT, "left", "Align left"),
         (icon::ALIGN_TOP, "top", "Align top"),
@@ -197,24 +131,8 @@ fn common(app: &mut MaterialCraftApp, ui: &mut Ui, selection_count: usize, embed
         if ui.add_enabled_ui(can_align, |ui| button(ui, icon, tr(tooltip))).inner {
             let mut parameters = parameters();
             parameters["mode"] = json!(mode);
-            app.run("graph.align", parameters.clone());
-            // Stack: centring the nodes also closes the gaps between them
-            let also = match (stack, mode) {
-                (true, "hcenter") => Some("vdistribute"),
-                (true, "vcenter") => Some("hdistribute"),
-                _ => None,
-            };
-            if let Some(mode) = also {
-                let mut again = parameters.clone();
-                again["mode"] = json!(mode);
-                app.run("graph.align", again);
-            }
+            app.run("graph.align", parameters);
         }
-    }
-    if !embedded {
-        let r = ui.checkbox(&mut app.ui.stack_align, tr("Stack"));
-        crate::widgets::name(&r, egui::Role::CheckBox, "Stack");
-        r.on_hover_text(tr("Aligning the centers also closes the gaps between the nodes"));
     }
     ui.separator();
     if crate::widgets::icon_button(ui, icon::GRID_FOUR, tr("Snap to grid"), app.ui.prefs.snap_to_grid, 22.0).clicked() {
@@ -246,24 +164,10 @@ fn parent_size(app: &mut MaterialCraftApp, ui: &mut Ui) {
         crate::widgets::name(&r.response, egui::Role::ComboBox, if id == "parent-w" { "Parent width" } else { "Parent height" });
     };
 
-    if crate::widgets::icon_button(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset the parent size to 1024 x 1024"), false, 20.0).clicked() {
-        nw = 10;
-        nh = 10;
-    }
     combo(ui, "parent-h", &mut nh);
-    let link = app.ui.parent_link;
-    if crate::widgets::icon_button(ui, if link { icon::LINK } else { icon::LINK_BREAK }, tr("Link width and height"), link, 20.0).clicked() {
-        app.ui.parent_link = !link;
-    }
+    ui.label("x");
     combo(ui, "parent-w", &mut nw);
     ui.label(egui::RichText::new(tr("Parent size:")).color(Tokens::get(ui.ctx()).text_dim));
-    if app.ui.parent_link {
-        if nw != w {
-            nh = nw;
-        } else if nh != h {
-            nw = nh;
-        }
-    }
     if (nw, nh) != (w, h) {
         app.run("graph.size", json!({"log2": [nw, nh]}));
     }

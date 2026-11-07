@@ -16,7 +16,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Graph...",
             ["File", "New"],
             Some("Ctrl+N"),
-            "{name?, kind? (material|function), template? (see graph.templates), size? (px, power of two)} adds a new graph to the package and opens it",
+            "{name?, kind? (material|function), template? (see graph.templates), size? (default 1024), width?, height?} adds and opens a graph; material dimensions override size per axis, rounded down to powers of two in 16..8192 px",
             always,
             new_graph
         ),
@@ -69,7 +69,8 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
         TEMPLATES.iter().find(|entry| entry.0 == template_id).map_or("Graph", |entry| entry.1)
     };
     let size = u64p(parameters, "size").unwrap_or(1024).clamp(16, 8192);
-    let log2 = 63 - size.leading_zeros();
+    let width_log2 = graph_dimension(parameters, "width", size)?;
+    let height_log2 = graph_dimension(parameters, "height", size)?;
     let base = strp(parameters, "name").map(str::to_string).unwrap_or_else(|| label.replace(' ', "_"));
 
     session.edit("New graph", |session| {
@@ -79,7 +80,9 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
             graph.function = Some(materialcraft_core::FunctionGraph::default());
             graph
         } else {
-            template(template_id, &name, log2)?
+            let mut graph = template(template_id, &name, width_log2)?;
+            graph.size = [width_log2, height_log2];
+            graph
         };
         session.pkg.graphs.push(graph);
         session.graph = session.pkg.graphs.len() - 1;
@@ -91,9 +94,17 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
     })
 }
 
+fn graph_dimension(parameters: &J, axis: &str, default_pixels: u64) -> Result<u32> {
+    let pixels = match parameters.get(axis) {
+        Some(value) => value.as_u64().ok_or_else(|| bad("file.new", format!("`{axis}` must be a nonnegative integer in pixels")))?,
+        None => default_pixels,
+    };
+    Ok(63 - pixels.clamp(16, 8192).leading_zeros())
+}
+
 fn new_package(s: &mut Session, p: &J) -> Result<J> {
     let mut pkg = Package::new(strp(p, "name").unwrap_or("Untitled package"));
-    pkg.graphs.push(template("pbr", "Material_Graph", 10)?);
+    pkg.graphs.push(template("pbr", "New_graph", 10)?);
     replace_package(s, pkg, None);
     Ok(json!({"name": s.pkg.name}))
 }
@@ -232,9 +243,7 @@ pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: O
     }
     let g = pkg.graph(gi)?;
     let dec = s.resource_decoder();
-    let mut opts = materialcraft_eval::Options::new(&dec);
-    opts.max_size = s.cook_limit;
-    let cooked = materialcraft_eval::cook(&pkg, gi, &opts, &s.cache);
+    let cooked = materialcraft_eval::cook(&pkg, gi, &materialcraft_eval::Options::new(&dec), &s.cache);
     let mut out = Vec::new();
     let mut names = std::collections::HashSet::new();
     for (id, usage, ident, img) in materialcraft_eval::outputs(g, &cooked) {
@@ -284,6 +293,11 @@ fn export(s: &mut Session, p: &J) -> Result<J> {
     let (gi, ext, pattern, depth, size) = export_params(s, p)?;
     let files = export_outputs(s, gi, &ext, &pattern, depth, size)?;
     std::fs::create_dir_all(dir).map_err(|e| bad("file.export", format!("{dir}: {e}")))?;
+    for f in &files {
+        if std::path::Path::new(dir).join(&f.file).exists() {
+            return Err(bad("file.export", format!("duplicate export filename `{}`: use unique output identifiers or a different filename pattern", f.file)));
+        }
+    }
     let mut written = Vec::new();
     for f in files {
         let path = std::path::Path::new(dir).join(&f.file);

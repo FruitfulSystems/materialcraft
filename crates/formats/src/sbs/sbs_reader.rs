@@ -67,7 +67,6 @@ impl<'text> SbsReader<'text, '_> {
         let format = child_value(item, "format").unwrap_or("png").trim().to_ascii_lowercase();
         let source = child_element(item, "source");
         let mut bytes: Option<Vec<u8>> = None;
-        let mut link: Option<String> = None;
         let mut why_missing = String::new();
 
         if let Some(embedded) = source.and_then(|s| child_element(s, "binembedded")) {
@@ -87,7 +86,6 @@ impl<'text> SbsReader<'text, '_> {
                 match linked(file) {
                     Some(data) => {
                         bytes = Some(data);
-                        link = Some(file.to_string());
                         break;
                     }
                     None => why_missing = format!("its file `{file}` was not found next to the package"),
@@ -104,11 +102,7 @@ impl<'text> SbsReader<'text, '_> {
                 self.resource_bytes += data.len();
                 let ext = if kind == "svg" { "svg".to_string() } else { format };
 
-                let file = crate::safe_file_name(&format!("{name}.{ext}"));
-                pkg.resources.push(match link {
-                    Some(l) => Resource::linked(name.clone(), file, ResourceBytes::new(data), l),
-                    None => Resource::new(name.clone(), file, ResourceBytes::new(data)),
-                });
+                pkg.resources.push(Resource::new(name.clone(), crate::safe_file_name(&format!("{name}.{ext}")), ResourceBytes::new(data)));
             }
             None => {
                 let why = if why_missing.is_empty() { "it has no data".to_string() } else { why_missing };

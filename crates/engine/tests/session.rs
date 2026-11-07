@@ -1,4 +1,4 @@
-use materialcraft_engine::{Session, command_specs, execute, new_session, sample_session};
+use materialcraft_engine::{Session, command_specs, execute, sample_session};
 use serde_json::{Value, json};
 
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
@@ -235,15 +235,7 @@ fn panic_hunt() {
         // Skip file writes to the working directory and opening paths
         if matches!(
             spec.id,
-            "file.save"
-                | "file.saveAs"
-                | "file.saveCopy"
-                | "file.exportWithDependencies"
-                | "file.export"
-                | "file.open"
-                | "file.importBitmap"
-                | "file.exportMaterial"
-                | "file.sendToTextureCraft"
+            "file.save" | "file.saveAs" | "file.export" | "file.open" | "file.importBitmap" | "file.exportMaterial" | "file.sendToTextureCraft"
         ) {
             continue;
         }
@@ -477,37 +469,13 @@ fn selected_wires_swap_their_sources_and_delete_together() {
 }
 
 #[test]
-fn graphs_import_from_another_package_with_their_dependencies() {
-    use materialcraft_engine::core::{Package, Resource, ResourceBytes, Value};
-    let mut from = Package::new("Other");
-    from.graphs.push(materialcraft_engine::samples::template("empty", "Leaf", 8).unwrap());
-    from.graphs.push(materialcraft_engine::samples::template("empty", "Root", 8).unwrap());
-    from.resources.push(Resource::new("tex", "tex.png", ResourceBytes::new(vec![1, 2, 3])));
-    {
-        let root = &mut from.graphs[1];
-        let inst = root.add_node("graph_instance", [0.0, 0.0]);
-        root.node_mut(inst).unwrap().params.insert("graph".into(), Value::Text("Leaf".into()));
-        let bm = root.add_node("bitmap", [0.0, 100.0]);
-        root.node_mut(bm).unwrap().params.insert("resource".into(), Value::Text("tex".into()));
-    }
-    let mut s = new_session();
-    let name = materialcraft_engine::resource_cmds::import_graph_from(&mut s, &from, "Root").unwrap();
-    assert_eq!(name, "Root");
-    assert!(s.pkg.graph_by_name("Leaf").is_some(), "the instanced graph comes along");
-    assert!(s.pkg.resource("tex").is_some(), "the bitmap comes along");
-    // Importing again reuses identical graphs instead of duplicating them.
-    let again = materialcraft_engine::resource_cmds::import_graph_from(&mut s, &from, "Root").unwrap();
-    assert_eq!(again, "Root");
-    assert_eq!(s.pkg.graphs.iter().filter(|g| g.name.starts_with("Leaf")).count(), 1);
-    assert!(materialcraft_engine::resource_cmds::import_graph_from(&mut s, &from, "Nope").is_err());
-    // graph.add pastes a graph as JSON and refuses garbage.
-    let g = serde_json::to_value(&from.graphs[0]).unwrap();
-    let r = execute(&mut s, "graph.add", &json!({"graph": g})).unwrap();
-    assert_eq!(r["name"], "Leaf_1");
-    assert!(execute(&mut s, "graph.add", &json!({"graph": "nope"})).is_err());
-    assert!(execute(&mut s, "graph.add", &json!({})).is_err());
-    // Resources can be removed.
-    execute(&mut s, "file.deleteResource", &json!({"name": "tex"})).unwrap();
-    assert!(s.pkg.resource("tex").is_none());
-    assert!(execute(&mut s, "file.deleteResource", &json!({"name": "tex"})).is_err());
+fn undo_to_unmodified_state_clears_modified_flag() {
+    let mut s = sample_session();
+    assert!(!s.modified);
+    run(&mut s, "graph.node.add", json!({"def": "uniform", "at": [0, 0]}));
+    assert!(s.modified);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(!s.modified, "undoing to the unmodified state should clear the modified flag");
+    run(&mut s, "edit.redo", json!({}));
+    assert!(s.modified, "redoing to the modified state should set the modified flag");
 }

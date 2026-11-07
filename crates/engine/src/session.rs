@@ -10,11 +10,10 @@ use materialcraft_image::Image;
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::Snapshot;
-use crate::view3d_settings::{Camera3d, Display3d, Lights3d, Material3d, Renderer3d};
 use crate::{AnnotationSelection, Clip, EngineError, Result};
 
-/// Undo keeps this many steps unless the session says otherwise.
-pub const MAX_UNDO: usize = 200;
+/// Undo keeps this many steps.
+const MAX_UNDO: usize = 200;
 
 /// The 3D view's scene and look.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,28 +44,6 @@ pub struct View3d {
     pub transparency: bool,
     /// Show the material's alpha channel on the mesh instead of the lit material.
     pub alpha_view: bool,
-    /// Camera ▸ Edit properties.
-    pub camera: Camera3d,
-    /// Lights ▸ Edit properties.
-    pub lights: Lights3d,
-    /// Environment ▸ Edit properties: the environment lights the scene.
-    pub env_enabled: bool,
-    /// Renderer ▸ Edit settings.
-    pub renderer: Renderer3d,
-    /// Display menu toggles.
-    pub display: Display3d,
-    /// Materials ▸ Default ▸ Edit properties.
-    pub material: Material3d,
-}
-
-impl View3d {
-    /// Every nested value brought into its range (after a command merged JSON in).
-    pub fn sanitize(&mut self) {
-        self.camera.sanitize();
-        self.lights.sanitize();
-        self.renderer.sanitize();
-        self.material.sanitize();
-    }
 }
 
 impl Default for View3d {
@@ -88,12 +65,6 @@ impl Default for View3d {
             show_grid: false,
             transparency: true,
             alpha_view: false,
-            camera: Camera3d::default(),
-            lights: Lights3d::default(),
-            env_enabled: true,
-            renderer: Renderer3d::default(),
-            display: Display3d::default(),
-            material: Material3d::default(),
         }
     }
 }
@@ -180,10 +151,6 @@ pub struct Session {
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
-    /// Undo steps kept (Preferences ▸ History stack size).
-    pub max_undo: usize,
-    /// Cap on the larger side of every cook, previews and exports alike (Preferences ▸ Cooking size limit).
-    pub cook_limit: Option<u32>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     /// Edits with the same key coalesce into one undo step (slider drags).
@@ -217,8 +184,6 @@ impl Session {
             cook_epoch: 0,
             cache: Arc::new(Mutex::new(Cache::default())),
             custom_mesh: None,
-            max_undo: MAX_UNDO,
-            cook_limit: None,
             undo: Vec::new(),
             redo: Vec::new(),
             merge_key: None,
@@ -346,7 +311,9 @@ impl Session {
 
     fn record_undo(&mut self, snapshot: Snapshot) {
         self.undo.push(snapshot);
-        self.trim_undo();
+        if self.undo.len() > MAX_UNDO {
+            self.undo.remove(0);
+        }
         self.redo.clear();
     }
 
@@ -382,23 +349,6 @@ impl Session {
         self.undo.iter().map(|s| s.label.clone()).collect()
     }
 
-    /// Drop the oldest undo steps past `max_undo`.
-    pub fn trim_undo(&mut self) {
-        let max = self.max_undo.max(1);
-        if self.undo.len() > max {
-            let extra = self.undo.len() - max;
-            self.undo.drain(..extra);
-        }
-    }
-
-    /// The preview cap and the cooking size limit, whichever is smaller.
-    pub fn cook_size(&self, preview: Option<u32>) -> Option<u32> {
-        match (preview, self.cook_limit) {
-            (Some(p), Some(l)) => Some(p.min(l)),
-            (p, l) => p.or(l),
-        }
-    }
-
     pub fn undo(&mut self) -> Option<String> {
         self.end_group();
         let s = self.undo.pop()?;
@@ -407,7 +357,7 @@ impl Session {
         self.redo.push(cur);
         self.restore(s);
         self.merge_key = None;
-        self.changed();
+        self.dirty = true;
         Some(label)
     }
 
@@ -419,7 +369,7 @@ impl Session {
         self.undo.push(cur);
         self.restore(s);
         self.merge_key = None;
-        self.changed();
+        self.dirty = true;
         Some(label)
     }
 
@@ -459,7 +409,7 @@ impl Session {
     pub fn cook(&mut self) -> &Cooked {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
-        opts.max_size = self.cook_size(self.preview_size);
+        opts.max_size = self.preview_size;
         let cooked = crate::PreviewCook::run(&self.pkg, self.graph, &self.material_preview.graphs(), &opts, &self.cache);
         self.accept_preview(cooked);
         self.dirty = false;
@@ -480,8 +430,7 @@ impl Session {
     /// Cook graph `gi` at full size, without touching the preview results.
     pub fn cook_full(&self, gi: usize) -> Cooked {
         let dec = self.resource_decoder();
-        let mut opts = Options::new(&dec);
-        opts.max_size = self.cook_limit;
+        let opts = Options::new(&dec);
         materialcraft_eval::cook(&self.pkg, gi, &opts, &self.cache)
     }
 

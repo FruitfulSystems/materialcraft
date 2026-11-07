@@ -39,6 +39,7 @@ Agents drive MaterialCraft three ways, all dispatching the same engine commands:
 | `render {view?, width?, height?, yaw?, pitch?, scene?, node?, port?, full?, tiling?, hq?, displacement?}` | headless | PNG (base64) of the 3D view or of one node; `hq` is the beauty render (displaced mesh, ray-traced AO, shadowed key light, 3×3 supersampling), `displacement` its depth in scene radii |
 | `ui.inspect` | app | UI state, the graph view rectangle, every node's screen rectangle, every port's identifier, display label and screen position, fps, toasts |
 | `ui.menu.list` / `ui.menu.invoke {id}` | app | the menu catalog; behave like a click |
+| `ui.panel.maximize {panel}` | app | maximize an open, active panel: `Graph`, `Explorer`, `Library`, `View3d`, `View2d`, `Properties`, `Console`, or `History`; restore with `ui.menu.invoke {"id":"ui.unmaximize"}` |
 | `ui.set {...}` | app | recursively merge fields into the UI state |
 | `ui.input {events}` | app | synthetic input, below |
 | `view.screenshot {view?: "3d"\|"2d"}` | app | PNG of the 3D or 2D view |
@@ -65,11 +66,15 @@ window points (take them from `ui.inspect`'s `nodes` and `ports`).
 Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (egui key names:
 `A`, `Enter`, `Space`, `Delete`, `F5`, …), `text`. Buttons: `left`, `right`, `middle`.
 
+`ui.inspect.maximizedPanel` reports the temporary maximized panel, or `null`. Maximizing
+preserves the saved workspace. Shift+Space toggles maximization under the pointer; text inputs,
+popups, modal dialogs and pointer drags retain their input.
+
 ## Key commands
 
 | Command | Params |
 |---|---|
-| `file.new` | `{template?, name?, size?}`; templates from `graph.templates` (`empty`, `pbr`, `bricks`, `stone_tiles`, `wood`, `rusty_metal`, `fabric`, `ground`) |
+| `file.new` | `{kind?, template?, name?, size?, width?, height?}`; material width/height override size per axis (default 1024 px), rounded down to powers of two in 16..8192; creation is one undo step. Templates from `graph.templates`: `empty`, `pbr`, `atomics` |
 | `graph.node.edit` | `{}` resolves the selected FX-Map, processor or local graph instance to `{kind, node, parameter?, graph?}`; use `ui.menu.invoke` to enter it in the graph panel |
 | `graph.pattern.set` | `{id, pattern}` replaces an FX-Map subgraph with cycle validation and undo |
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |
@@ -78,19 +83,12 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: swap (two) or reverse (more, in input order) where the wires come from / delete them, one undo step each |
 | `graph.node.param` | `{id?, param, value}`: numbers, `[x, y]`, `"#rrggbb"`, enum index, curve `[[x, y], …]`, gradient `[[pos, color], …]`, or a typed value `{"t": "function", "v": {...}}` |
 | `graph.node.base` | `{id?, sizeMode?, size?, format?, seed?, tiling?}` |
-| `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` / `{id, value}` |
+| `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` (with `bind`, `id` may be omitted: the input is named after the parameter, `opacity`, `opacity_1`…) / `{id, value}` |
 | `graph.node.function` | `{id?, param, function}` drives a parameter by a function graph of the graph's inputs (dynamic parameter); `{id?, param, remove: true}` removes it |
 | `graph.preset.save` / `.apply` / `.delete` | `{name}`: store, restore or remove the current input values |
 | `graph.createFromSelection` | `{name?, ids?}`: move nodes into a sub-graph and replace them with an instance |
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
-| `view.3d` (nested) | `camera? {focalLength, projection, background, backgroundColor, overrideResolution, resolution, resolutionScale, autoClip, near, far}`, `lights? {ambientOn, ambient, point: [{on, color, intensity, position}, …]}`, `renderer? {useViewportResolution, resolution, scale, samples, aoRays}`, `display? {wireframe, backfaceCulling, boundingBox, lights, resolution, stats, fps}`, `material? {shader, common: {…}, useMap: {…}, tessellation, uvScale}`, `envEnabled?`: the keys given change, the rest stays; values are clamped |
-| `view.3d.reset` / `view.3d.state` / `view.3d.loadState` | `{what?: all\|scene\|camera\|lights\|environment\|material\|renderer\|display}` / `{}` → the state as JSON / `{state, keepScene?}` |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
-| `file.linkBitmap` / `file.reloadResources` / `file.deleteResource` | `{path, name?}` a bitmap read from disk (a relative link when it lies in the package's folder) / `{}` / `{name}` |
-| `file.importGraph` / `file.packageGraphs` | `{path, graph?}` copies a graph with its instances and bitmaps from another package / `{path}` lists a package file's graphs |
-| `file.saveCopy` / `file.exportWithDependencies` | `{path}` / `{dir}` the package and copies of its linked bitmaps |
-| `graph.add` | `{graph}`: a graph as JSON, added under a unique name |
-| `session.settings` | `{historySize?, cacheMb?, cookLimit?}` (preferences) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
 
 ## 3D material assignment
@@ -169,8 +167,6 @@ execution use bounded iterative traversal and reject cycles.
 `graph.frame.edit` accepts `title`, `titleVisible`, `description`, `color` and `rect`.
 `graph.frame.move {"id": ..., "by": [dx, dy], "snapToGrid": true}` moves enclosed nodes,
 comments, nested frames and pins together. `graph.comment.edit` accepts `text`, `at` and `size`.
-`graph.pin.edit {"id": ..., "name"?: ..., "at"?: [x, y]}` renames or moves a navigation pin (the
-editor drags pins and renames them from their context menu); `graph.pin.delete {"id"}` removes one.
 `session.inspect` includes annotation selection and the standalone function; `ui.inspect`
 includes frame and comment rectangles for synthetic input.
 

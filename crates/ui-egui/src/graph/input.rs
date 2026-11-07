@@ -55,8 +55,6 @@ pub(super) fn handle(
                 } else if let Some(c) = app.session.graph().ok().and_then(|g| g.input_of(h.node, &h.port).cloned()) {
                     app.graph.drag = Some(GraphDrag::Wire { from: (c.from, c.from_port.clone()), detached: Some((h.node, h.port.clone())) });
                 }
-            } else if let Some(id) = app.graph.pins.iter().rev().find(|(_, r)| r.contains(p)).map(|(id, _)| *id) {
-                super::annotation_input::begin_pin(app, id);
             } else if let Some((id, _)) = comments.iter().rev().find(|(_, r)| r.contains(p)) {
                 super::annotation_input::begin_comment(app, *id);
             } else if let Some((id, _)) = nodes.iter().rev().find(|(_, r)| r.rect.contains(p)) {
@@ -76,10 +74,7 @@ pub(super) fn handle(
             let d = ctx.input(|i| i.pointer.delta()) / zoom;
             app.ui.graph_camera.pan = [app.ui.graph_camera.pan[0] - d.x, app.ui.graph_camera.pan[1] - d.y];
         }
-        Some(GraphDrag::Nodes { delta })
-        | Some(GraphDrag::Frame { delta, .. })
-        | Some(GraphDrag::Comment { delta, .. })
-        | Some(GraphDrag::Pin { delta, .. }) => *delta += motion,
+        Some(GraphDrag::Nodes { delta }) | Some(GraphDrag::Frame { delta, .. }) | Some(GraphDrag::Comment { delta, .. }) => *delta += motion,
         Some(GraphDrag::WirePress { wire, start }) => {
             // Dragged far enough: a reroute dot where the press was, carried by the pointer
             if let Some(p) = pointer
@@ -132,20 +127,26 @@ pub(super) fn handle(
             GraphDrag::Wire { from, detached } => {
                 let target = pointer.and_then(|p| nearest_port(&app.graph.ports, p, 12.0)).filter(|h| !h.output).cloned();
                 match target {
-                    Some(t) => super::auto_convert::connect(app, &from, t.node, &t.port, detached.as_ref()),
+                    Some(t) => {
+                        let mut parameters = json!({"from": from.0.0, "fromPort": from.1, "to": t.node.0, "toPort": t.port});
+                        if let Some((node, port)) = detached {
+                            parameters["detach"] = json!({"to": node.0, "toPort": port});
+                        }
+
+                        app.run("graph.connect", parameters);
+                    }
                     None => {
                         if let Some((n, p)) = &detached {
                             app.run("graph.disconnect", json!({"to": n.0, "toPort": p}));
                         } else if let Some(p) = pointer
                             && rect.contains(p)
-                            && app.ui.prefs.drag_create
                         {
                             open_search(app, cam.to_graph(p), Some(from));
                         }
                     }
                 }
             }
-            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } | GraphDrag::Pin { .. } => super::annotation_input::finish(app, drag),
+            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } => super::annotation_input::finish(app, drag),
         }
     }
 
@@ -198,7 +199,6 @@ pub(super) fn handle(
         && let Some(p) = pointer
     {
         app.graph.menu_at = cam.to_graph(p);
-        app.graph.menu_pin = app.graph.pins.iter().rev().find(|(_, rect)| rect.contains(p)).map(|(id, _)| *id);
         if let Some((id, _)) = comments.iter().rev().find(|(_, rect)| rect.contains(p)) {
             app.run("graph.annotation.select", json!({"kind": "comment", "id": id}));
         } else if let Some(hit) = frames.iter().rev().find(|frame| frame.contains(p)) {
@@ -214,10 +214,9 @@ pub(super) fn handle(
         }
     }
     let at = app.graph.menu_at;
-    canvas.context_menu(|ui| match (app.graph.menu_pin, app.graph.menu_wire.clone()) {
-        (Some(pin), _) => super::pin_menu::show(app, ui, pin),
-        (None, Some(w)) => wire_menu(app, ui, w, at),
-        (None, None) => super::context_menu::show(app, ui, at, None),
+    canvas.context_menu(|ui| match app.graph.menu_wire.clone() {
+        Some(w) => wire_menu(app, ui, w, at),
+        None => super::context_menu::show(app, ui, at, None),
     });
 
     // Library drops
@@ -226,14 +225,17 @@ pub(super) fn handle(
     {
         let gp = cam.to_graph(p);
         let at = [gp.x - NODE_W * 0.5, gp.y - 20.0];
-        crate::library::add_key(app, &payload.0, at);
+        match payload.0.strip_prefix('@') {
+            Some(graph) => app.run("graph.node.add", json!({"def": "graph_instance", "at": at, "params": {"graph": graph}})),
+            None => app.run("graph.node.add", json!({"def": payload.0, "at": at})),
+        };
     }
 
     // Keys over the canvas
     let hovered = pointer.is_some_and(|p| rect.contains(p));
     if hovered && app.graph.search.is_none() {
         let space = !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space));
-        let tab = app.ui.prefs.tab_key_menu && !app.graph.keyboard_was_focused && !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Tab));
+        let tab = !app.graph.keyboard_was_focused && !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Tab));
         if (space || tab)
             && let Some(p) = pointer
         {

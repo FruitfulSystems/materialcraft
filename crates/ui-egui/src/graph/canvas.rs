@@ -56,12 +56,9 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
     // Background and grid
     painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2b, 0x2d, 0x31));
     let mut camera = GraphCamera { origin: rect.min, pan: Vec2::from(app.ui.graph_camera.pan), zoom: app.ui.graph_camera.zoom };
-    camera.zoom_from_input(ui, rect, app.ui.prefs.invert_zoom);
+    camera.zoom_from_input(ui, rect);
     app.ui.graph_camera = camera.state();
-    super::wire_geometry::set_straight(app.ui.prefs.straight_wires);
-    if app.ui.prefs.show_grid {
-        super::grid::paint(&painter, &camera, rect);
-    }
+    super::grid::paint(&painter, &camera, rect);
     let pointer = ctx.input(|input| input.pointer.hover_pos());
 
     let show_thumbnails = app.ui.prefs.thumbnails;
@@ -183,6 +180,7 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let font = FontId::proportional((10.5 * camera.zoom).clamp(6.0, 16.0));
     let small = FontId::proportional((9.0 * camera.zoom).clamp(5.5, 13.0));
     let mut node_responses: Vec<(NodeId, egui::Response)> = Vec::new();
+    let mut dot_grabs: Vec<Rect> = Vec::new();
     for layout in &layouts {
         let Some(node) = index.node(layout.id) else { continue };
 
@@ -193,7 +191,12 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
         let selected = selection.contains(&node.id);
         let result = cooked.nodes.get(&node.id);
         let error = result.and_then(|r| r.error.as_ref());
-        let resp = ui.interact(screen_rect, ui.scope_id().with(("node", node.id.0)), Sense::click_and_drag());
+        // A dot is tiny, so its grab area keeps a minimum on-screen size
+        let grab = if node.def == "dot" { node_card::dot_grab(screen_rect) } else { screen_rect };
+        if node.def == "dot" {
+            dot_grabs.push(grab);
+        }
+        let resp = ui.interact(grab, ui.scope_id().with(("node", node.id.0)), Sense::click_and_drag());
         crate::widgets::name(&resp, egui::Role::Button, &node_label(node));
         if node.def == "dot" {
             node_card::paint_dot(&painter, screen_rect, if selected { theme.accent } else { Color32::from_gray(0xb4) });
@@ -246,12 +249,6 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
             if node.def == "output" {
                 painter.text(header.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER, icon::SIGN_OUT, small.clone(), Color32::WHITE);
             }
-            if app.ui.prefs.node_timings
-                && let Some(r0) = result
-            {
-                let txt = if r0.cached { format!("{:.1} ms ({})", r0.ms, crate::i18n::tr("cached")) } else { format!("{:.1} ms", r0.ms) };
-                painter.text(header.right_bottom() + vec2(-2.0, 2.0), Align2::RIGHT_TOP, txt, small.clone(), theme.warning);
-            }
             let outline = if error.is_some() {
                 Stroke::new(2.0, Color32::from_rgb(0xff, 0x30, 0xd0))
             } else if selected {
@@ -275,10 +272,11 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
 
     let comment_hits = super::annotation_canvas::comments(app, ui, &graph.comments, &camera);
     app.graph.comments = comment_hits.clone();
-    app.graph.pins = super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
+    super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
 
     // Ports (drawn last, interactable over the node cards)
-    let port_hover = pointer.and_then(|p| nearest_port(&app.graph.ports, p, 9.0)).cloned();
+    // except on a dot's body: its port hit circles would otherwise cover it and it could never be moved
+    let port_hover = pointer.filter(|p| !dot_grabs.iter().any(|grab| grab.contains(*p))).and_then(|p| nearest_port(&app.graph.ports, p, 9.0)).cloned();
     for h in &app.graph.ports {
         if !rect.contains(h.pos) {
             continue;

@@ -3,7 +3,7 @@ use egui::{Pos2, Vec2};
 use materialcraft_engine::core::NodeId;
 
 #[derive(Clone, Debug)]
-pub(crate) enum GraphDrag {
+pub(super) enum GraphDrag {
     Nodes {
         delta: Vec2,
     },
@@ -27,11 +27,6 @@ pub(crate) enum GraphDrag {
         contents: materialcraft_engine::FrameContents,
     },
     Comment {
-        id: u64,
-        delta: Vec2,
-    },
-    /// A navigation pin being dragged to a new spot
-    Pin {
         id: u64,
         delta: Vec2,
     },

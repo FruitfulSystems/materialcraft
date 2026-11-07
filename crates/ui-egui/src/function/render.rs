@@ -50,7 +50,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
     }
 
     let mut camera = crate::graph::GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
-    camera.zoom_from_input(ui, canvas_bounds, app.ui.prefs.invert_zoom);
+    camera.zoom_from_input(ui, canvas_bounds);
     editor.pan = camera.pan;
     editor.zoom = camera.zoom;
     let document = standalone.then(|| app.session.graph().ok()).flatten();
@@ -109,10 +109,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             node_card::outline(&painter, screen_rect, editor.zoom, Stroke::new(if selected { 2.0 } else { 1.0 }, outline));
             let body = node_card::body(screen_rect, editor.zoom);
             if node.value.is_none() {
-                // The operation's text icon ("+", "≥", "sin", "F2( )"): what the node is at a glance
-                let badge = super::op_badge::text(&node.op);
-                let size = if badge.chars().count() > 3 { 16.0 } else { 24.0 } * editor.zoom;
-                painter.text(body.center(), Align2::CENTER_CENTER, badge, FontId::monospace(size.min(30.0)), tokens.text_strong);
+                painter.text(body.center(), Align2::CENTER_CENTER, icon::CODE, FontId::proportional(30.0 * editor.zoom), tokens.text_dim);
             }
             if is_output {
                 let header = node_card::header(screen_rect, editor.zoom);

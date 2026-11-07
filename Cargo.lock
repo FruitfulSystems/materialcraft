@@ -2485,7 +2485,6 @@ dependencies = [
  "log",
  "materialcraft-engine",
  "materialcraft-render",
- "rayon",
  "rfd",
  "serde",
  "serde_json",

@@ -13,8 +13,6 @@ use crate::theme::Tokens;
 #[derive(Default)]
 pub struct View2dState {
     tex: Option<(u64, TextureHandle)>,
-    /// Draw the 3D scene's UV layout over the image (3D view ▸ Scene ▸ Display UVs in 2D View)
-    pub show_uvs: bool,
     /// The last shown image (RGBA8, for `view.screenshot`).
     pub shown: Option<(u32, u32, Vec<u8>)>,
     /// Per-channel histograms of `shown` (R, G, B; one channel for gray), keyed like `tex`.
@@ -22,34 +20,6 @@ pub struct View2dState {
 }
 
 const BINS: usize = 64;
-
-/// The 3D scene's UV triangles over the image (the 0..1 tile is `tile`), clipped to `clip`
-fn draw_uvs(app: &MaterialCraftApp, p: &egui::Painter, tile: Rect, clip: Rect) {
-    let v = &app.session.view3d;
-    let mesh = match (&*v.scene, &app.session.custom_mesh) {
-        ("custom", Some((_, m))) => (**m).clone(),
-        _ => materialcraft_render::builtin_mesh(&v.scene),
-    };
-    const MAX_EDGES: usize = 300_000;
-    let to_screen = |uv: materialcraft_engine::geom::glam::Vec2| pos2(tile.left() + uv.x * tile.width(), tile.top() + uv.y * tile.height());
-    let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x40, 0xc0, 0xff, 170));
-    let mut drawn = 0;
-    for t in 0..mesh.triangle_count() {
-        let Some([a, b, c]) = mesh.tri(t) else { break };
-        let (Some(ua), Some(ub), Some(uc)) = (mesh.uvs.get(a), mesh.uvs.get(b), mesh.uvs.get(c)) else { continue };
-        let pts = [to_screen(*ua), to_screen(*ub), to_screen(*uc)];
-        if pts.iter().all(|q| !clip.contains(*q)) {
-            continue;
-        }
-        p.line_segment([pts[0], pts[1]], stroke);
-        p.line_segment([pts[1], pts[2]], stroke);
-        p.line_segment([pts[2], pts[0]], stroke);
-        drawn += 3;
-        if drawn > MAX_EDGES {
-            break;
-        }
-    }
-}
 
 /// Histograms of the displayed 8-bit values: one for gray or isolated channels, else R, G and B.
 fn histogram(px: &[u8], channels: usize) -> Vec<[u32; BINS]> {
@@ -125,6 +95,8 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let texture_limit = ctx.input(|i| i.max_texture_side).max(1);
     let key = app.session.cooked.nodes.get(&id).map_or(0, |r| r.key)
         ^ (texture_limit as u64).rotate_left(32)
+        ^ (img.w as u64).rotate_left(16)
+        ^ img.h as u64
         ^ (app.session.view2d.port as u64).wrapping_mul(0x9e37)
         ^ (app.session.view2d.channel.len() as u64 * 31)
         ^ app.session.view2d.channel.bytes().next().unwrap_or(0) as u64;
@@ -156,7 +128,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         cam.offset = [0.0, 0.0];
     }
     if resp.hovered() {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y) * if app.ui.prefs.invert_zoom { -1.0 } else { 1.0 };
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll.abs() > 0.0 {
             cam.fit = false;
             let old = cam.zoom;
@@ -202,10 +174,6 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             p.rect_stroke(Rect::from_center_size(center, size), 0.0, egui::Stroke::new(1.0, Color32::from_white_alpha(60)), egui::StrokeKind::Outside);
         }
     }
-    let zoom = cam.zoom;
-    if app.view2d.show_uvs {
-        draw_uvs(app, &p, Rect::from_center_size(center, size), rect);
-    }
     if app.session.view2d.histogram {
         let single = img.is_gray() || app.session.view2d.channel != "rgba";
         draw_histogram(&mut app.view2d, &p, rect, key, single);
@@ -220,9 +188,9 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             g.node(id).ok().map(|n| if n.base.format == materialcraft_engine::core::OutputFormat::Inherit { g.format.bits() } else { n.base.format.bits() })
         })
         .unwrap_or("16");
-    let mut text = format!("{} x {} ({}, {}bpc)   {:.0}%", img.w, img.h, if img.is_gray() { "L" } else { "RGBA" }, bits, zoom * 100.0);
+    let mut text = format!("{} x {} ({}, {}bpc)   {:.0}%", img.w, img.h, if img.is_gray() { "L" } else { "RGBA" }, bits, cam.zoom * 100.0);
     if let Some(ptr) = resp.hover_pos() {
-        let local = (ptr - (center - size * 0.5)) / zoom;
+        let local = (ptr - (center - size * 0.5)) / cam.zoom;
         let (x, y) = (local.x.floor() as i64, local.y.floor() as i64);
         let v = img.get(x, y, true);
         if img.is_gray() {

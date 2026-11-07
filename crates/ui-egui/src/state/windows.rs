@@ -10,10 +10,6 @@ pub struct Windows {
     pub preferences: bool,
     pub shortcuts: bool,
     pub home: bool,
-    pub plugin_manager: bool,
-    pub switch_engine: bool,
-    /// The Dependency Manager window (Windows menu)
-    pub dependencies: bool,
     #[serde(skip_deserializing)]
     pub unsaved: Option<crate::unsaved::Guarded>,
 }

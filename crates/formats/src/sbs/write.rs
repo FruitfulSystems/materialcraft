@@ -25,34 +25,16 @@ pub fn write_sbs(pkg: &Package) -> Result<Vec<u8>> {
         for resource in &pkg.resources {
             let svg = resource.file.to_ascii_lowercase().ends_with(".svg");
             let ext = resource.file.rsplit_once('.').map_or("png", |(_, e)| e);
-            // A resource linked to a file next to the package stays a link; one linked from
-            // elsewhere (or opened without a folder) is embedded, so the file is whole
-            let relative = resource.link.as_deref().filter(|l| !l.contains(':') && !l.starts_with('/') && !l.starts_with('\\'));
-            match relative {
-                Some(path) => {
-                    let _ = write!(
-                        content,
-                        "<resource><identifier v=\"{}\"/><uid v=\"{}\"/><type v=\"{}\"/><format v=\"{}\"/><filepath v=\"{}\"/></resource>",
-                        xml_escape(&resource.name),
-                        writer.next_uid(),
-                        if svg { "svg" } else { "bitmap" },
-                        xml_escape(ext),
-                        xml_escape(path)
-                    );
-                }
-                None => {
-                    let _ = write!(
-                        content,
-                        "<resource><identifier v=\"{}\"/><uid v=\"{}\"/><type v=\"{}\"/><format v=\"{}\"/><filepath v=\"\"/><source><binembedded><datalength v=\"{}\"/><strdata v=\"{}\"/></binembedded></source></resource>",
-                        xml_escape(&resource.name),
-                        writer.next_uid(),
-                        if svg { "svg" } else { "bitmap" },
-                        xml_escape(ext),
-                        resource.bytes.len(),
-                        encode_embedded(resource.bytes.as_slice())?
-                    );
-                }
-            }
+            let _ = write!(
+                content,
+                "<resource><identifier v=\"{}\"/><uid v=\"{}\"/><type v=\"{}\"/><format v=\"{}\"/><filepath v=\"\"/><source><binembedded><datalength v=\"{}\"/><strdata v=\"{}\"/></binembedded></source></resource>",
+                xml_escape(&resource.name),
+                writer.next_uid(),
+                if svg { "svg" } else { "bitmap" },
+                xml_escape(ext),
+                resource.bytes.len(),
+                encode_embedded(resource.bytes.as_slice())?
+            );
         }
         content.push_str("</content></group>");
     }

@@ -158,11 +158,19 @@ fn serve_connection(h: &Mutex<Headless>, stream: std::net::TcpStream, token: &st
     let mut authed = false;
     let mut deadline = Some(AuthDeadline::start(&w, AUTH_TIMEOUT)?);
     loop {
-        match read_bounded_line(&mut r, &mut line)? {
-            LineRead::Eof => return Ok(()),
-            LineRead::TooLong => return write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request too large"})),
-            LineRead::Line if line.trim().is_empty() => continue,
-            LineRead::Line => {}
+        match read_bounded_line(&mut r, &mut line) {
+            Ok(LineRead::Eof) => return Ok(()),
+            Ok(LineRead::TooLong) => return write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request too large"})),
+            Ok(LineRead::Line) if line.trim().is_empty() => continue,
+            Ok(LineRead::Line) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                write_reply(&mut w, &json!({"id": null, "ok": false, "error": "request is not UTF-8"}))?;
+                if !authed {
+                    return Ok(());
+                }
+                continue;
+            }
+            Err(e) => return Err(e),
         }
         if authed {
             write_reply(&mut w, &respond(h, &line))?;
@@ -336,6 +344,14 @@ mod tests {
         // The generic command path stays closed too: host paths are still refused.
         let e = call(&h, "command.run", json!({"id": "file.exportMaterial", "params": {"path": abs}})).unwrap_err();
         assert!(e.contains("disabled for automation"), "{e}");
+    }
+
+    #[test]
+    fn render_displacement_applies_without_hq() {
+        let h = session();
+        let flat = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.0})).unwrap();
+        let strong = call(&h, "render", json!({"width": 32, "height": 32, "displacement": 0.5})).unwrap();
+        assert_ne!(flat["png"], strong["png"], "displacement must change the 3D relief without hq");
     }
 
     #[test]

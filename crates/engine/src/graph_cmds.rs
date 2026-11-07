@@ -2,7 +2,7 @@
 
 use serde_json::{Value as J, json};
 
-use materialcraft_core::{ExposedParameter, MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Pin, Value};
+use materialcraft_core::{ExposedParameter, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Pin, Value};
 
 use crate::commands::{CommandSpec, always, bad, boolp, f32p, has_graph, has_selection, i64p, ids_param, point, strp, u64p};
 use crate::{Result, Session, cmd};
@@ -13,15 +13,6 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         cmd!("graph.rename", "Rename graph", [], None, "{name, graph?}", has_graph, rename),
         cmd!("graph.delete", "Delete graph", [], None, "{graph?}", has_graph, delete),
         cmd!("graph.duplicate", "Duplicate graph", [], None, "{graph?}", has_graph, duplicate),
-        cmd!(
-            "graph.add",
-            "Add graph",
-            [],
-            None,
-            "{graph: a graph as JSON (edit.copy of a graph, graph.get)} adds the graph to the package under a unique name and opens it",
-            always,
-            add
-        ),
         cmd!("graph.size", "Graph size", [], None, "{width, height} in pixels (powers of two, 16..8192) or {log2: [w, h]}", has_graph, size),
         cmd!("graph.seed", "Random seed", [], None, "{seed}", has_graph, |s, p| {
             let seed = i64p(p, "seed").ok_or_else(|| bad("graph.seed", "`seed` is required"))?.clamp(0, i32::MAX as i64) as i32;
@@ -40,7 +31,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Expose parameter",
             [],
             None,
-            "{id, label?, default (a typed value or number), min?, max?, group?, bind?: {node, param}}",
+            "{id (optional with bind: then named after the parameter and kept unique), label?, default (a typed value or number), min?, max?, group?, bind?: {node, param}}",
             has_graph,
             exposed_add
         ),
@@ -148,30 +139,6 @@ fn duplicate(s: &mut Session, p: &J) -> Result<J> {
     })
 }
 
-/// Paste a whole graph (the explorer's Copy/Paste): its JSON, renamed when the name is taken.
-fn add(s: &mut Session, p: &J) -> Result<J> {
-    const MAX_NODES: usize = 100_000;
-    let v = p.get("graph").ok_or_else(|| bad("graph.add", "`graph` is required"))?;
-    let mut g: materialcraft_core::Graph = serde_json::from_value(v.clone()).map_err(|e| bad("graph.add", format!("not a graph: {e}")))?;
-    if g.nodes.len() > MAX_NODES {
-        return Err(bad("graph.add", format!("a graph holds at most {MAX_NODES} nodes")));
-    }
-    if g.name.trim().is_empty() {
-        g.name = "Material_Graph".into();
-    }
-    s.edit("Add graph", |s| {
-        g.name = s.pkg.unique_graph_name(&g.name);
-        let name = g.name.clone();
-        s.pkg.graphs.push(g);
-        s.graph = s.pkg.graphs.len() - 1;
-        s.open_material_preview();
-        s.selection.clear();
-        s.annotation_selection = None;
-        s.view2d.node = None;
-        Ok(json!({"graph": s.graph, "name": name}))
-    })
-}
-
 fn size(s: &mut Session, p: &J) -> Result<J> {
     let log = |px: u64| 63 - px.clamp(1, 1 << 20).leading_zeros();
     let (w, h) = if let Some(a) = p.get("log2").and_then(J::as_array) {
@@ -258,12 +225,21 @@ fn pin_delete(s: &mut Session, p: &J) -> Result<J> {
 }
 
 fn exposed_add(s: &mut Session, p: &J) -> Result<J> {
-    let id = strp(p, "id").map(str::trim).filter(|i| !i.is_empty()).ok_or_else(|| bad("graph.exposed.add", "`id` is required"))?.to_string();
-    if s.graph()?.exposed.iter().any(|e| e.id == id) {
-        return Err(bad("graph.exposed.add", format!("an input is already called `{id}`")));
-    }
     // From a bound node parameter: its value, range and options become the input's
     let bind = p.get("bind").and_then(|b| Some((NodeId(b.get("node")?.as_u64()?), b.get("param")?.as_str()?.to_string())));
+    let id = match strp(p, "id").map(str::trim).filter(|i| !i.is_empty()) {
+        Some(id) => {
+            if s.graph()?.exposed.iter().any(|e| e.id == id) {
+                return Err(bad("graph.exposed.add", format!("an input is already called `{id}`")));
+            }
+            id.to_string()
+        }
+        // Without an `id`, a bound input is named after its parameter, kept unique across nodes
+        None => {
+            let (_, param) = bind.as_ref().ok_or_else(|| bad("graph.exposed.add", "`id` is required"))?;
+            unique_exposed_id(s.graph()?, param)
+        }
+    };
     let mut default = Value::Float(0.5);
     let (mut min, mut max, mut options) = (0.0f32, 1.0f32, Vec::new());
     if let Some((node, param)) = &bind {
@@ -297,6 +273,15 @@ fn exposed_add(s: &mut Session, p: &J) -> Result<J> {
         }
         Ok(json!({"id": id}))
     })
+}
+
+/// An input id not used in `graph`: `base`, `base_1`, `base_2`…
+fn unique_exposed_id(graph: &Graph, base: &str) -> String {
+    let taken = |id: &str| graph.exposed.iter().any(|e| e.id == id);
+    if !taken(base) {
+        return base.to_string();
+    }
+    (1..).map(|i| format!("{base}_{i}")).find(|id| !taken(id)).unwrap_or_else(|| base.to_string())
 }
 
 fn exposed_set(s: &mut Session, p: &J) -> Result<J> {

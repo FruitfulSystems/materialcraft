@@ -15,9 +15,6 @@ use egui::Ui;
 
 /// The panel title: "<node> - Properties" or "<graph> - Properties"
 pub fn title(app: &MaterialCraftApp) -> String {
-    if let Some((page, _)) = &app.props3d {
-        return crate::view3d_props::title(*page);
-    }
     match EditorTarget::resolve(app) {
         EditorTarget::Pattern => return crate::pattern::properties::title(app),
         EditorTarget::Function if !EditorTarget::annotation_active(app) => {
@@ -41,18 +38,6 @@ pub fn title(app: &MaterialCraftApp) -> String {
 }
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
-    // A 3D view page stays until the user selects something else in the graph
-    if let Some((page, sel)) = app.props3d.clone() {
-        if sel != app.session.selection {
-            app.props3d = None;
-        } else {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.push_id(("props3d", page.title()), |ui| crate::view3d_props::show(app, ui, page));
-            });
-            return;
-        }
-    }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.set_width(ui.available_width());
         match EditorTarget::resolve(app) {

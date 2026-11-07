@@ -23,11 +23,6 @@ const fn sep(menu: &'static str) -> MenuItem {
 
 pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 
-/// MaterialCraft's page on the ArtCraft site (downloads, requirements, documentation)
-pub const WEBSITE: &str = "https://getartcraft.com/apps/materialcraft";
-/// The ArtCraft community
-pub const DISCORD: &str = "https://discord.gg/artcraft";
-
 /// The menu catalog (the target menu tree with our ids)
 pub const CATALOG: &[MenuItem] = &[
     sub("File", "New", "Graph...", "ui.newGraph", Some("Ctrl+N")),
@@ -37,14 +32,9 @@ pub const CATALOG: &[MenuItem] = &[
     sep("File"),
     it("File", "Save", "file.save", Some("Ctrl+S")),
     it("File", "Save as...", "file.saveAs", Some("Ctrl+Shift+S")),
-    it("File", "Save a copy as...", "file.saveCopy", None),
-    it("File", "Save all", "ui.saveAll", None),
-    it("File", "Export with dependencies...", "file.exportWithDependencies", None),
     it("File", "Close all", "ui.closeAll", None),
     sep("File"),
     it("File", "Import bitmap...", "file.importBitmap", None),
-    it("File", "Link bitmap...", "file.linkBitmap", None),
-    it("File", "Import graph from a package...", "file.importGraph", None),
     it("File", "Export outputs...", "ui.export", Some("Ctrl+Shift+E")),
     it("File", "Export material...", "file.exportMaterial", None),
     it("File", "Send to TextureCraft", "file.sendToTextureCraft", None),
@@ -73,10 +63,6 @@ pub const CATALOG: &[MenuItem] = &[
     it("Tools", "Next pin", "ui.graph.nextPin", Some("F2")),
     it("Tools", "View outputs in 3D view", "ui.graph.viewOutputs", None),
     it("Tools", "Reset and view outputs in 3D view", "ui.graph.resetViewOutputs", None),
-    sep("Tools"),
-    it("Tools", "Switch engine...", "ui.switchEngine", Some("F9")),
-    it("Tools", "Cancel rendering", "ui.cancelRender", Some("Escape")),
-    it("Tools", "Suspend engine", "ui.suspendEngine", None),
     it("Tools", "Clear cache", "ui.clearCache", None),
     sub("Tools", "Preview size", "256 px", "ui.preview.256", None),
     sub("Tools", "Preview size", "512 px", "ui.preview.512", None),
@@ -84,8 +70,6 @@ pub const CATALOG: &[MenuItem] = &[
     sub("Tools", "Preview size", "2048 px", "ui.preview.2048", None),
     sub("Tools", "Preview size", "Full size", "ui.preview.0", None),
     it("Tools", "Create graph from selection", "graph.createFromSelection", None),
-    sep("Tools"),
-    it("Tools", "Plugin Manager...", "ui.pluginManager", None),
     it("Windows", "Explorer", "ui.view.explorer", None),
     it("Windows", "Graph", "ui.view.graph", None),
     it("Windows", "Properties", "ui.view.properties", None),
@@ -94,30 +78,16 @@ pub const CATALOG: &[MenuItem] = &[
     it("Windows", "2D View", "ui.view.2d", None),
     it("Windows", "Library", "ui.view.library", None),
     it("Windows", "History", "ui.view.history", None),
-    it("Windows", "Dependency Manager", "ui.view.dependencies", None),
     sep("Windows"),
-    it("Windows", "Main toolbar", "ui.view.mainToolbar", None),
-    sub("Windows", "New", "Explorer", "ui.new.explorer", None),
-    sub("Windows", "New", "3D View", "ui.new.3d", None),
-    sub("Windows", "New", "Library", "ui.new.library", None),
-    sep("Windows"),
-    it("Windows", "Unmaximize panel", "ui.unmaximize", Some("Shift+Space")),
+    it("Windows", "Restore panel layout", "ui.unmaximize", Some("Shift+Space")),
     it("Windows", "Reset layout", "ui.resetLayout", None),
     it("Help", "Home screen...", "ui.home", None),
     it("Help", "Documentation...", "ui.help.docs", None),
-    it("Help", "Tutorials...", "ui.help.tutorials", None),
     it("Help", "Shortcuts list...", "ui.help.shortcuts", None),
     sep("Help"),
-    it("Help", "Release notes...", "ui.help.releaseNotes", None),
-    it("Help", "What's new (ArtCraft news)...", "ui.help.whatsNew", None),
-    it("Help", "System requirements (FAQ)...", "ui.help.requirements", None),
-    it("Help", "Automation (control protocol)...", "ui.help.automation", None),
-    sep("Help"),
     it("Help", "Join the community (Discord)...", "ui.help.discord", None),
-    it("Help", "MaterialCraft on getartcraft.com...", "ui.help.website", None),
-    it("Help", "Support and feedback...", "ui.help.feedback", None),
-    it("Help", "Report a bug (GitHub)...", "ui.help.bug", None),
-    it("Help", "Export log...", "ui.help.exportLog", None),
+    it("Help", "ArtCraft website...", "ui.help.website", None),
+    it("Help", "Report a bug...", "ui.help.bug", None),
     sep("Help"),
     it("Help", "About MaterialCraft...", "ui.about", None),
 ];
@@ -141,11 +111,7 @@ pub fn enabled(app: &MaterialCraftApp, id: &str) -> bool {
     }
 
     if is_ui(id) {
-        return match id {
-            "ui.cancelRender" => app.cooker.busy(),
-            "ui.unmaximize" => app.ui.dock.maximized.is_some(),
-            _ => true,
-        };
+        return id != "ui.unmaximize" || app.ui.dock.maximized().is_some();
     }
     materialcraft_engine::find(id).is_some_and(|c| (c.enabled)(&app.session).is_ok())
 }
@@ -183,64 +149,24 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         "ui.export" => app.ui.windows.export = true,
         "ui.quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         "ui.preferences" => app.ui.windows.preferences = true,
-        "ui.pluginManager" => app.ui.windows.plugin_manager = true,
-        "ui.switchEngine" => app.ui.windows.switch_engine = true,
-        "ui.view.dependencies" => app.ui.windows.dependencies = !app.ui.windows.dependencies,
-        "ui.view.mainToolbar" => app.ui.prefs.show_main_toolbar = !app.ui.prefs.show_main_toolbar,
-        "ui.saveAll" => invoke(app, ctx, "file.save"),
-        "ui.cancelRender" => crate::cook::cancel(app),
-        "ui.suspendEngine" => {
-            app.cooker.suspended = !app.cooker.suspended;
-            if !app.cooker.suspended {
-                app.session.dirty = true;
-            }
-            let msg = if app.cooker.suspended { tr("Engine suspended: nothing computes until it is resumed") } else { tr("Engine resumed") };
-            app.toast(msg, false);
-        }
-        "ui.new.explorer" => app.ui.dock.focus(crate::docking::Panel::Explorer),
-        "ui.new.3d" => app.ui.dock.focus(crate::docking::Panel::View3d),
-        "ui.new.library" => app.ui.dock.focus(crate::docking::Panel::Library),
-        "ui.unmaximize" => app.ui.dock.maximized = None,
-        "ui.view.graph" => {}
+        "ui.view.graph" => app.ui.dock.focus(crate::docking::Panel::Graph),
+        "ui.unmaximize" => app.ui.dock.restore(),
         "ui.resetLayout" => app.ui.dock = crate::docking::Dock::default(),
-        // These replace the open package: ask first when it has unsaved changes.
+        // Replacing the open package needs confirmation for unsaved changes
         "ui.closeAll" | "file.newPackage" => crate::unsaved::guard(app, crate::unsaved::Guarded::Menu { id: id.to_string() }),
-        "ui.clearCache" => {
+        "ui.reloadResources" | "ui.clearCache" => {
             if let Ok(mut c) = app.session.cache.lock() {
                 c.clear();
             }
             app.session.dirty = true;
         }
-        "ui.reloadResources" => {
-            if let Some(r) = app.run("file.reloadResources", Value::Null) {
-                let n = r["reloaded"].as_array().map_or(0, Vec::len);
-                let missing = r["missing"].as_array().map_or(0, Vec::len);
-                if let Ok(mut c) = app.session.cache.lock() {
-                    c.clear();
-                }
-                app.session.dirty = true;
-                let msg = match (n, missing) {
-                    (0, 0) => tr("Resources reloaded: nothing had changed").to_string(),
-                    (n, 0) => format!("{} {n}", tr("Resources reloaded:")),
-                    (n, m) => format!("{} {n}, {} {m} ({})", tr("Resources reloaded:"), tr("missing:"), tr("see the Console")),
-                };
-                app.toast(msg, missing > 0);
-            }
-        }
         "ui.home" => app.ui.windows.home = true,
         "ui.help.shortcuts" => app.ui.windows.shortcuts = true,
         "ui.about" => app.ui.windows.about = true,
-        "ui.help.discord" => ctx.open_url(egui::OpenUrl::new_tab(DISCORD)),
-        "ui.help.website" => ctx.open_url(egui::OpenUrl::new_tab(WEBSITE)),
-        "ui.help.docs" => ctx.open_url(egui::OpenUrl::new_tab(WEBSITE)),
-        "ui.help.tutorials" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/tutorials")),
-        "ui.help.releaseNotes" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/releases")),
-        "ui.help.whatsNew" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/news")),
-        "ui.help.requirements" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/faq")),
-        "ui.help.automation" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/blob/main/docs/control-protocol.md")),
-        "ui.help.feedback" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/support")),
+        "ui.help.discord" => ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft")),
+        "ui.help.website" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/apps/materialcraft")),
+        "ui.help.docs" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft#readme")),
         "ui.help.bug" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/issues")),
-        "ui.help.exportLog" => crate::tool_windows::export_log(app),
         _ => {
             if crate::windows::file_action(app, ctx, id) {
                 return;
@@ -314,9 +240,6 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     let checked = match item.id {
         "ui.view.graph" => Some(true),
         "ui.graph.snapToGrid" => Some(app.ui.prefs.snap_to_grid),
-        "ui.view.mainToolbar" => Some(app.ui.prefs.show_main_toolbar),
-        "ui.view.dependencies" => Some(app.ui.windows.dependencies),
-        "ui.suspendEngine" => Some(app.cooker.suspended),
         id if id.starts_with("ui.preview.") => id.strip_prefix("ui.preview.").and_then(|s| s.parse::<u32>().ok()).map(|s| s == app.ui.prefs.preview_size),
         id => crate::docking::view_panel(id).map(|p| app.ui.dock.is_open(p)),
     };
@@ -366,9 +289,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         }
     }
 
-    let mut table: Vec<(&'static str, KeyboardShortcut)> = CATALOG.iter().filter_map(|i| Some((i.id, parse_shortcut(i.shortcut?)?))).collect();
-    // A disabled item leaves its key alone (Escape closes dialogs unless a cook is running)
-    table.retain(|(id, _)| !is_ui(id) || enabled(app, id));
+    // The dock handles Shift+Space with the current panel's hit test
+    let mut table: Vec<(&'static str, KeyboardShortcut)> =
+        CATALOG.iter().filter(|item| item.id != "ui.unmaximize").filter_map(|item| Some((item.id, parse_shortcut(item.shortcut?)?))).collect();
     for c in materialcraft_engine::command_specs() {
         if table.iter().any(|(id, _)| *id == c.id) {
             continue;
@@ -391,30 +314,6 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     for id in fire {
         invoke(app, ctx, id);
     }
-    // Node creation shortcuts (Preferences ▸ Shortcuts): add the node next to the selection
-    let node_keys: Vec<(String, KeyboardShortcut)> = app.ui.node_shortcuts.iter().filter_map(|(def, sc)| Some((def.clone(), parse_shortcut(sc)?))).collect();
-    let mut add: Vec<String> = Vec::new();
-    ctx.input_mut(|i| {
-        for (def, sc) in &node_keys {
-            if i.consume_shortcut(sc) {
-                add.push(def.clone());
-            }
-        }
-    });
-    for def in add {
-        if app.ui.dock.is_open(crate::docking::Panel::Graph) {
-            crate::graph::add_node_near_selection(app, &def);
-        }
-    }
-}
-
-/// A context-menu row with an optional shortcut hint on the right
-pub fn menu_row(ui: &mut egui::Ui, label: &str, key: &str, enabled: bool) -> egui::Response {
-    let mut b = egui::Button::new(label);
-    if !key.is_empty() {
-        b = b.shortcut_text(key);
-    }
-    ui.add_enabled(enabled, b)
 }
 
 /// Menu items for `ui.menu.list`

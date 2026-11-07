@@ -47,6 +47,32 @@ fn pair(h: &Harness<'static, MaterialCraftApp>, id: NodeId, param: &str) -> [f32
     }
 }
 #[test]
+fn graph_name_typed_across_frames_commits_on_focus_loss() {
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+    app.run("file.new", json!({"template":"empty"})).unwrap();
+    app.session.reset_history();
+    let builder = Harness::builder().with_size(vec2(1600.0, 960.0)).with_step_dt(1.0 / 60.0);
+    let mut h = builder.build_ui_state(
+        |ui, app: &mut MaterialCraftApp| {
+            app.step(&ui.ctx().clone());
+            app.draw(ui);
+        },
+        app,
+    );
+    h.run_steps(8);
+    h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Graph name").click();
+    h.step();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.step();
+    type_text(&mut h, "My_graph");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().session.graph().unwrap().name, "My_graph", "graph name typed across frames was reset before focus was lost");
+}
+#[test]
 fn offset_x_commits_on_enter_and_focus_loss_with_undo() {
     for enter in [true, false] {
         let (mut h, id) = harness(false);

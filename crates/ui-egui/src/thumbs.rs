@@ -17,43 +17,9 @@ pub struct Thumbs {
     /// (cook key, port) → texture and the frame it was last used
     nodes: HashMap<(u64, usize), (TextureHandle, u64)>,
     library: HashMap<String, TextureHandle>,
-    /// Environment previews by id (the equirectangular map, tone mapped)
-    environments: HashMap<String, TextureHandle>,
     library_rx: Option<Receiver<Previews>>,
     library_started: bool,
     frame: u64,
-}
-
-impl Thumbs {
-    /// A small picture of a 3D view environment (rendered once per id)
-    pub fn environment(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
-        if let Some(t) = self.environments.get(id) {
-            return Some(t.id());
-        }
-        let env = materialcraft_render::ibl::environment(materialcraft_render::ibl::by_id(id), 256);
-        let (w, h) = (env.width as usize, env.height as usize);
-        let mut rgba = Vec::with_capacity(w * h * 4);
-        for px in &env.data {
-            for c in px {
-                // Exposure down a stop and a gamma: bright skies stay readable
-                let v = materialcraft_engine::image::linear_to_srgb((c * 0.5).min(1.0));
-                rgba.push((v * 255.0 + 0.5) as u8);
-            }
-            rgba.push(255);
-        }
-        let img = ColorImage::from_rgba_unmultiplied([w, h], &rgba);
-        let t = ctx.load_texture(format!("env-{id}"), img, TextureOptions::LINEAR);
-        let tid = t.id();
-        self.environments.insert(id.to_string(), t);
-        Some(tid)
-    }
-
-    /// Drop the library previews and generate them again (Preferences ▸ Library ▸ Rebuild Thumbnails)
-    pub fn rebuild_library(&mut self) {
-        self.library.clear();
-        self.library_rx = None;
-        self.library_started = false;
-    }
 }
 
 /// An image as an egui texture image (sRGB display, `side` px)

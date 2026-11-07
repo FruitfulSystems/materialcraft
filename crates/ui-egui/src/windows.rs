@@ -1,9 +1,6 @@
 //! Dialogs (new graph, export outputs, preferences, shortcuts, about, home), the console and history panels, file actions behind the File menu, and the function editor
 
-use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
-
-use egui::{Color32, RichText, TextureHandle, Ui, vec2};
+use egui::{Color32, RichText, Ui, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
@@ -14,65 +11,11 @@ use crate::MaterialCraftApp;
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
-/// Template previews for the New graph dialog (rendered in the background on first open)
-#[derive(Default)]
-pub struct TemplatePreviews {
-    tex: HashMap<String, TextureHandle>,
-    rx: Option<Receiver<crate::thumbs::Previews>>,
-    started: bool,
-}
+mod template_previews;
+pub(crate) use template_previews::TemplatePreviews;
 
-const PREVIEW: u32 = 96;
-
-fn render_templates() -> crate::thumbs::Previews {
-    let light = materialcraft_render::Lighting::new("studio");
-    let scene = materialcraft_render::Scene::builtin("sphere");
-    let settings = materialcraft_render::Settings { distance: 2.7, supersample: 2, ..Default::default() };
-    materialcraft_engine::samples::TEMPLATES
-        .iter()
-        .filter_map(|(id, _)| {
-            let mut s = materialcraft_engine::Session::new(materialcraft_engine::core::Package::new("t"));
-            s.pkg.graphs.push(materialcraft_engine::samples::template(id, "t", 8).ok()?);
-            s.preview_size = Some(256);
-            s.cook();
-            let maps = materialcraft_render::Maps::from_usages(s.material_maps());
-            Some((id.to_string(), materialcraft_render::render(&scene, &maps, &light, &settings, PREVIEW, PREVIEW)))
-        })
-        .collect()
-}
-
-impl TemplatePreviews {
-    fn get(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
-        if !self.started {
-            self.started = true;
-            let (tx, rx) = std::sync::mpsc::channel();
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let c = ctx.clone();
-                let _ = std::thread::Builder::new().name("materialcraft-templates".into()).spawn(move || {
-                    let _ = tx.send(render_templates());
-                    c.request_repaint();
-                });
-            }
-            #[cfg(target_arch = "wasm32")]
-            let _ = tx.send(render_templates());
-            self.rx = Some(rx);
-        }
-        if let Some(rx) = &self.rx
-            && let Ok(list) = rx.try_recv()
-        {
-            for (k, px) in list {
-                let img = egui::ColorImage::from_rgba_unmultiplied([PREVIEW as usize, PREVIEW as usize], &px);
-                self.tex.insert(k.clone(), ctx.load_texture(format!("tpl-{k}"), img, egui::TextureOptions::LINEAR));
-            }
-            self.rx = None;
-        }
-        self.tex.get(id).map(TextureHandle::id)
-    }
-}
-
-thread_local! {
-    static TEMPLATES: std::cell::RefCell<TemplatePreviews> = std::cell::RefCell::new(TemplatePreviews::default());
+pub(crate) fn template_preview(app: &mut MaterialCraftApp, context: &egui::Context, template: &str) -> Option<egui::TextureId> {
+    app.template_previews.get(context, template)
 }
 
 pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
@@ -95,24 +38,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if app.ui.windows.home {
         home(app, ctx);
     }
-    if app.ui.windows.switch_engine {
-        crate::tool_windows::switch_engine(app, ctx);
-    }
-    if app.ui.windows.dependencies {
-        crate::tool_windows::dependencies(app, ctx);
-    }
-    if app.ui.windows.plugin_manager {
-        crate::plugins::window(app, ctx);
-    }
-    if app.import_pick.is_some() {
-        crate::tool_windows::import_pick(app, ctx);
-    }
     crate::unsaved::show(app, ctx);
-}
-
-/// The rendered preview of a starter template (made once, in the background)
-pub(crate) fn template_preview(ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
-    TEMPLATES.with(|t| t.borrow_mut().get(ctx, id))
 }
 
 pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
@@ -227,9 +153,8 @@ fn about(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             ui.label(tr("Node-based procedural materials, built in pure Rust."));
             ui.label(tr("An open-source Crafting App by the ArtCraft team and community."));
             ui.add_space(6.0);
-            ui.hyperlink_to("getartcraft.com/apps/materialcraft", crate::menus::WEBSITE);
-            ui.hyperlink_to("discord.gg/artcraft", crate::menus::DISCORD);
-            ui.hyperlink_to("github.com/storytold/materialcraft", "https://github.com/storytold/materialcraft");
+            ui.hyperlink_to("getartcraft.com/apps/materialcraft", "https://getartcraft.com/apps/materialcraft");
+            ui.hyperlink_to("discord.gg/artcraft", "https://discord.gg/artcraft");
             ui.add_space(6.0);
             ui.label(RichText::new("MIT OR Apache-2.0").size(11.0).color(tk.text_dim));
         });
@@ -273,7 +198,7 @@ fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
 
 fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let mut open = true;
-    let mut create: Option<(String, String, Option<String>)> = None;
+    let mut create: Option<(&str, &str)> = None;
     modal(ctx, "home", tr("Home"), &mut open, vec2(760.0, 470.0), |ui| {
         let tk = Tokens::get(ui.ctx());
         ui.horizontal_top(|ui| {
@@ -290,10 +215,9 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                     crate::menus::invoke(app, ui.ctx(), "file.open");
                 }
                 ui.add_space(16.0);
-                ui.hyperlink_to(tr("Tutorials"), "https://getartcraft.com/tutorials");
-                ui.hyperlink_to(tr("Support"), "https://getartcraft.com/support");
-                ui.hyperlink_to(tr("Community (Discord)"), crate::menus::DISCORD);
-                ui.hyperlink_to("getartcraft.com", crate::menus::WEBSITE);
+                ui.hyperlink_to(tr("Documentation"), "https://github.com/storytold/materialcraft#readme");
+                ui.hyperlink_to(tr("Community (Discord)"), "https://discord.gg/artcraft");
+                ui.hyperlink_to("getartcraft.com", "https://getartcraft.com/apps/materialcraft");
                 ui.add_space(16.0);
                 ui.checkbox(&mut app.ui.prefs.show_home, tr("Show at startup"));
             });
@@ -308,43 +232,29 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 );
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Samples")).strong());
-                // The starter templates, then the graphs of loaded library packages
-                let mut samples: Vec<(String, String, Option<String>)> = materialcraft_engine::samples::TEMPLATES
-                    .iter()
-                    .filter(|(id, _)| !matches!(*id, "empty" | "pbr"))
-                    .map(|(id, l)| (id.to_string(), l.to_string(), None))
-                    .collect();
-                for (_, package, graph, _) in app.plugin_graphs().into_iter().take(12) {
-                    samples.push((graph.clone(), graph, Some(package)));
-                }
                 ui.horizontal_wrapped(|ui| {
-                    for (id, label, package) in &samples {
+                    for (id, label) in materialcraft_engine::samples::TEMPLATES.iter().filter(|(id, _)| !matches!(*id, "empty" | "pbr")) {
                         let (r, resp) = ui.allocate_exact_size(vec2(92.0, 116.0), egui::Sense::click());
                         crate::widgets::name(&resp, egui::Role::ListItem, label);
                         if resp.hovered() {
                             ui.painter().rect_filled(r, 6.0, tk.row_hover);
                         }
                         let img = egui::Rect::from_min_size(r.min + vec2(6.0, 4.0), vec2(80.0, 80.0));
-                        let preview = if package.is_some() { None } else { TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) };
-                        match preview {
+                        match template_preview(app, ui.ctx(), id) {
                             Some(t) => {
                                 ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
                             }
                             None => {
                                 ui.painter().circle_filled(img.center(), 36.0, tk.row);
-                                ui.painter().text(img.center(), egui::Align2::CENTER_CENTER, icon::PUZZLE_PIECE, egui::FontId::proportional(28.0), tk.text_dim);
                             }
                         }
                         let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 90.0);
                         ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
                         if resp.clicked() {
-                            create = Some((id.clone(), label.clone(), package.clone()));
+                            create = Some((id, label));
                         }
                     }
                 });
-                if samples.len() <= 1 {
-                    ui.label(RichText::new(tr("Library packages added in Tools > Plugin Manager show their graphs here")).small().color(tk.text_dim));
-                }
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Recent")).strong());
                 if app.ui.recent.is_empty() {
@@ -360,12 +270,8 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             });
         });
     });
-    if let Some((id, label, package)) = create {
-        let made = match package {
-            Some(package) => app.run("file.importGraph", json!({"path": package, "graph": id})),
-            None => app.run("file.new", json!({"template": id, "name": label.replace(' ', "_"), "size": 1024})),
-        };
-        if made.is_some() {
+    if let Some((id, label)) = create {
+        if app.run("file.new", json!({"template": id, "name": label.replace(' ', "_"), "size": 1024})).is_some() {
             app.ui.frame_all = true;
         }
         open = false;
@@ -457,35 +363,6 @@ pub fn after_open(app: &mut MaterialCraftApp) {
     }
 }
 
-/// Where a file dialog opens (Preferences ▸ Save/Export Path): the last folder used, the
-/// package's folder, or a fixed one
-#[cfg(not(target_arch = "wasm32"))]
-pub fn dialog_dir(app: &MaterialCraftApp) -> Option<std::path::PathBuf> {
-    let p = &app.ui.prefs;
-    let dir = match p.save_path_mode.as_str() {
-        "package" => app.session.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).map(|p| p.to_path_buf()),
-        "custom" if !p.save_path.trim().is_empty() => Some(std::path::PathBuf::from(p.save_path.trim())),
-        _ => (!app.ui.last_dir.is_empty()).then(|| std::path::PathBuf::from(&app.ui.last_dir)),
-    };
-    dir.filter(|d| d.is_dir())
-}
-
-/// A file dialog opening in the preferred folder
-#[cfg(not(target_arch = "wasm32"))]
-pub fn dialog(app: &MaterialCraftApp) -> rfd::FileDialog {
-    match dialog_dir(app) {
-        Some(d) => rfd::FileDialog::new().set_directory(d),
-        None => rfd::FileDialog::new(),
-    }
-}
-
-/// Remember the folder of a path a dialog gave (Save/Export Path: Last path)
-pub fn remember_dir(app: &mut MaterialCraftApp, path: &std::path::Path) {
-    if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        app.ui.last_dir = d.display().to_string();
-    }
-}
-
 /// File menu actions that need a file dialog. Returns true when handled
 pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
@@ -494,8 +371,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     {
         match id {
             "file.open" => {
-                if let Some(p) = dialog(app).add_filter("SBS or MaterialCraft package, or material", OPEN_EXTS).pick_file() {
-                    remember_dir(app, &p);
+                if let Some(p) = rfd::FileDialog::new().add_filter("SBS or MaterialCraft package, or material", OPEN_EXTS).pick_file() {
                     open_path(app, &p.display().to_string());
                 }
                 true
@@ -510,8 +386,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             }
             "file.save" | "file.saveAs" => {
                 let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = dialog(app).set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
-                    remember_dir(app, &p);
+                if let Some(p) = rfd::FileDialog::new().set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
                     let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
                     if app.run("file.save", json!({"path": path})).is_some() {
                         app.ui.add_recent(&path);
@@ -539,62 +414,8 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.importBitmap" => {
-                if let Some(path) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
-                    remember_dir(app, &path);
+                if let Some(path) = rfd::FileDialog::new().add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
                     crate::graph::import_bitmap_file(app, &path.display().to_string());
-                }
-                true
-            }
-            "file.linkBitmap" => {
-                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
-                    remember_dir(app, &p);
-                    if let Some(r) = app.run("file.linkBitmap", json!({"path": p.display().to_string()})) {
-                        let name = r["name"].as_str().unwrap_or_default().to_string();
-                        crate::graph::add_node_near_selection(app, "bitmap");
-                        if let Some(id) = app.session.selection.last().copied() {
-                            app.run("graph.node.param", json!({"id": id.0, "param": "resource", "value": name}));
-                        }
-                        app.toast(format!("{} {}", tr("Linked bitmap"), r["name"].as_str().unwrap_or_default()), false);
-                    }
-                }
-                true
-            }
-            "file.saveCopy" => {
-                let name = format!("{}_copy.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = dialog(app).set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
-                    remember_dir(app, &p);
-                    if let Some(r) = app.run("file.saveCopy", json!({"path": p.display().to_string()})) {
-                        app.toast(format!("{} {}", tr("Saved a copy to"), r["path"].as_str().unwrap_or_default()), false);
-                    }
-                }
-                true
-            }
-            "file.exportWithDependencies" => {
-                if let Some(dir) = dialog(app).set_title(tr("Folder for the package and its dependencies")).pick_folder()
-                    && let Some(r) = app.run("file.exportWithDependencies", json!({"dir": dir.display().to_string()}))
-                {
-                    let n = r["files"].as_array().map_or(0, Vec::len);
-                    app.toast(format!("{} {n} {} {}", tr("Exported"), tr("file(s) to"), dir.display()), false);
-                }
-                true
-            }
-            "file.importGraph" => {
-                if let Some(p) = dialog(app).add_filter("Packages", &["sbs"]).pick_file() {
-                    remember_dir(app, &p);
-                    let path = p.display().to_string();
-                    // Several graphs: the picker window asks which; one graph imports at once
-                    match app.run("file.packageGraphs", json!({"path": path})) {
-                        Some(list) if list.as_array().is_some_and(|a| a.len() > 1) => {
-                            let names = list.as_array().cloned().unwrap_or_default().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect();
-                            app.import_pick = Some((path, names));
-                        }
-                        Some(_) => {
-                            if let Some(r) = app.run("file.importGraph", json!({"path": path})) {
-                                app.toast(format!("{} {}", tr("Imported graph"), r["name"].as_str().unwrap_or_default()), false);
-                            }
-                        }
-                        None => {}
-                    }
                 }
                 true
             }
