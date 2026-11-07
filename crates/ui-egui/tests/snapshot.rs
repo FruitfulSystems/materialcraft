@@ -69,9 +69,7 @@ fn empty_startup_can_create_a_template() {
     }
     harness.get_by_label("New graph...").click();
     settle(&mut harness, 4);
-    harness.get(By::new().role(egui::accesskit::Role::ComboBox).label("Template")).click();
-    settle(&mut harness, 2);
-    harness.get_by_label("Atomic sample").click();
+    harness.get(By::new().role(egui::accesskit::Role::ListItem).label("Atomic sample")).click();
     settle(&mut harness, 4);
     harness.get_by_label("Create").click();
     settle(&mut harness, 40);
@@ -892,4 +890,85 @@ fn explorer_inputs_and_graph_drop_share_labels_and_material_assignment() {
     let frame = &harness.state().view3d.shown.as_ref().unwrap().2;
     assert!(frame.chunks_exact(4).filter(|pixel| u16::from(pixel[0]) > u16::from(pixel[1]) + 30).count() > 100);
     save(&mut harness, &directory, "graph-dropped-on-material");
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn maximized_panels_restore_main_workspace_and_inline_editors() {
+    use materialcraft_ui_egui::{control, docking::Panel, menus};
+
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+    app.ui.prefs.preview_size = 64;
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 30);
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    save(&mut harness, &directory, "transplant-workspace-before");
+    let workspace = harness.state().ui.dock.workspace().clone();
+    let package = harness.state().session.pkg.clone();
+    let context = harness.ctx.clone();
+
+    for panel in [Panel::View2d, Panel::View3d, Panel::Graph, Panel::Explorer] {
+        let response = control::handle(harness.state_mut(), &context, "ui.panel.maximize", &json!({"panel": panel}));
+        assert_eq!(response["ok"], true, "{response}");
+        settle(&mut harness, 15);
+        save(&mut harness, &directory, &format!("transplant-maximized-{panel:?}"));
+        harness.get(By::new().role(egui::accesskit::Role::Button).label("Restore panel layout")).click();
+        settle(&mut harness, 5);
+        assert_eq!(harness.state().ui.dock.maximized(), None);
+        assert_eq!(harness.state().ui.dock.workspace(), &workspace);
+        assert_eq!(harness.state().session.pkg, package);
+    }
+    save(&mut harness, &directory, "transplant-workspace-restored");
+
+    harness.state_mut().run("graph.node.add", json!({"def": "pixel_processor"})).unwrap();
+    menus::invoke(harness.state_mut(), &context, "graph.node.edit");
+    settle(&mut harness, 4);
+    assert!(harness.state().function_editor.is_some());
+    let package = harness.state().session.pkg.clone();
+    control::handle(harness.state_mut(), &context, "ui.panel.maximize", &json!({"panel": "Graph"}));
+    settle(&mut harness, 5);
+    assert_eq!(harness.query_all(By::new().role(egui::accesskit::Role::Canvas).label("Function Graph")).count(), 1);
+    save(&mut harness, &directory, "transplant-maximized-inline-function");
+    harness.get(By::new().role(egui::accesskit::Role::Button).label("Return to parent graph")).click();
+    settle(&mut harness, 4);
+    assert!(harness.state().function_editor.is_none());
+    assert_eq!(harness.state().ui.dock.maximized(), Some(Panel::Graph));
+    assert_eq!(harness.state().session.pkg, package);
+    menus::invoke(harness.state_mut(), &context, "ui.unmaximize");
+    settle(&mut harness, 4);
+    assert_eq!(harness.state().ui.dock.workspace(), &workspace);
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn transplanted_dialogs_render_with_main_settings_and_templates() {
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    for instance in 0..2 {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
+        app.ui.prefs.preview_size = 64;
+        app.ui.windows.new_graph = true;
+        let mut harness = harness(app, 1600.0, 960.0);
+        settle(&mut harness, 30);
+        save(&mut harness, &directory, &format!("transplant-new-graph-{instance}"));
+        let rendered = harness.render().unwrap();
+        for label in ["Empty", "Material outputs", "Atomic sample"] {
+            let tile = harness.get(By::new().role(egui::accesskit::Role::ListItem).label(label)).rect();
+            let pixel = rendered.get_pixel(tile.center().x as u32, (tile.top() + 46.0) as u32);
+            assert!(pixel[0] > 140 && pixel[1] > 140 && pixel[2] > 140, "missing {label} preview in app instance {instance}: {pixel:?}");
+        }
+        let original = harness.state().session.pkg.clone();
+        harness.get_by_label("Cancel").click();
+        settle(&mut harness, 3);
+        assert_eq!(harness.state().session.pkg, original);
+        harness.state_mut().ui.windows.preferences = true;
+        settle(&mut harness, 4);
+        for label in ["General", "Graph", "3D View"] {
+            harness.get(By::new().role(egui::accesskit::Role::Tab).label(label)).click();
+            settle(&mut harness, 3);
+            save(&mut harness, &directory, &format!("transplant-preferences-{instance}-{label}"));
+        }
+        assert_eq!(harness.state().session.pkg, original);
+    }
 }

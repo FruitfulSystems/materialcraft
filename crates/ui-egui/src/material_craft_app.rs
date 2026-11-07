@@ -15,6 +15,7 @@ pub struct MaterialCraftApp {
     pub cooker: cook::Cooker,
     /// Node output thumbnails and library previews
     pub thumbs: thumbs::Thumbs,
+    pub(crate) template_previews: windows::TemplatePreviews,
     /// The graph editor's gesture state
     pub graph: graph::GraphView,
     pub view3d: view3d::View3dState,
@@ -68,6 +69,7 @@ impl MaterialCraftApp {
             toasts: Vec::new(),
             cooker: cook::Cooker::default(),
             thumbs: thumbs::Thumbs::default(),
+            template_previews: windows::TemplatePreviews::default(),
             graph: graph::GraphView::default(),
             view3d: view3d::View3dState::default(),
             view2d: view2d::View2dState::default(),

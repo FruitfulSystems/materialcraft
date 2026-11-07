@@ -21,6 +21,10 @@ pub struct UiState {
     pub new_graph_template: String,
     pub new_graph_name: String,
     pub new_graph_size: u32,
+    pub new_graph_height: u32,
+    pub new_graph_link: bool,
+    #[serde(skip)]
+    pub preferences_tab: crate::preferences::PreferenceTab,
     /// Export dialog fields
     pub export_dir: String,
     pub export_format: String,
@@ -48,6 +52,9 @@ impl Default for UiState {
             new_graph_template: "pbr".into(),
             new_graph_name: "New_graph".into(),
             new_graph_size: 1024,
+            new_graph_height: 1024,
+            new_graph_link: true,
+            preferences_tab: crate::preferences::PreferenceTab::default(),
             export_dir: String::new(),
             export_format: "png".into(),
             export_depth: 0,

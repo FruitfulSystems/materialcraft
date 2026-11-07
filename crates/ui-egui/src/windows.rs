@@ -1,9 +1,6 @@
 //! Dialogs (new graph, export outputs, preferences, shortcuts, about, home), the console and history panels, file actions behind the File menu, and the function editor
 
-use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
-
-use egui::{Color32, RichText, TextureHandle, Ui, vec2};
+use egui::{Color32, RichText, Ui, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
@@ -12,79 +9,25 @@ use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
-use crate::theme::{Accent, Brightness, Tokens};
+use crate::theme::Tokens;
 
-/// Template previews for the New graph dialog (rendered in the background on first open)
-#[derive(Default)]
-pub struct TemplatePreviews {
-    tex: HashMap<String, TextureHandle>,
-    rx: Option<Receiver<crate::thumbs::Previews>>,
-    started: bool,
-}
+mod template_previews;
+pub(crate) use template_previews::TemplatePreviews;
 
-const PREVIEW: u32 = 96;
-
-fn render_templates() -> crate::thumbs::Previews {
-    let light = materialcraft_render::Lighting::new("studio");
-    let scene = materialcraft_render::Scene::builtin("sphere");
-    let settings = materialcraft_render::Settings { distance: 2.7, supersample: 2, ..Default::default() };
-    materialcraft_engine::samples::TEMPLATES
-        .iter()
-        .filter_map(|(id, _)| {
-            let mut s = materialcraft_engine::Session::new(materialcraft_engine::core::Package::new("t"));
-            s.pkg.graphs.push(materialcraft_engine::samples::template(id, "t", 8).ok()?);
-            s.preview_size = Some(256);
-            s.cook();
-            let maps = materialcraft_render::Maps::from_usages(s.material_maps());
-            Some((id.to_string(), materialcraft_render::render(&scene, &maps, &light, &settings, PREVIEW, PREVIEW)))
-        })
-        .collect()
-}
-
-impl TemplatePreviews {
-    fn get(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
-        if !self.started {
-            self.started = true;
-            let (tx, rx) = std::sync::mpsc::channel();
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let c = ctx.clone();
-                let _ = std::thread::Builder::new().name("materialcraft-templates".into()).spawn(move || {
-                    let _ = tx.send(render_templates());
-                    c.request_repaint();
-                });
-            }
-            #[cfg(target_arch = "wasm32")]
-            let _ = tx.send(render_templates());
-            self.rx = Some(rx);
-        }
-        if let Some(rx) = &self.rx
-            && let Ok(list) = rx.try_recv()
-        {
-            for (k, px) in list {
-                let img = egui::ColorImage::from_rgba_unmultiplied([PREVIEW as usize, PREVIEW as usize], &px);
-                self.tex.insert(k.clone(), ctx.load_texture(format!("tpl-{k}"), img, egui::TextureOptions::LINEAR));
-            }
-            self.rx = None;
-        }
-        self.tex.get(id).map(TextureHandle::id)
-    }
-}
-
-thread_local! {
-    static TEMPLATES: std::cell::RefCell<TemplatePreviews> = std::cell::RefCell::new(TemplatePreviews::default());
+pub(crate) fn template_preview(app: &mut MaterialCraftApp, context: &egui::Context, template: &str) -> Option<egui::TextureId> {
+    app.template_previews.get(context, template)
 }
 
 pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     app.thumbs.tick(ctx);
     if app.ui.windows.new_graph {
-        new_graph(app, ctx);
+        crate::new_graph_dialog::show(app, ctx);
     }
     if app.ui.windows.export {
         export(app, ctx);
     }
     if app.ui.windows.preferences {
-        preferences(app, ctx);
+        crate::preferences::show(app, ctx);
     }
     if app.ui.windows.about {
         about(app, ctx);
@@ -98,7 +41,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     crate::unsaved::show(app, ctx);
 }
 
-fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
     egui::Window::new(title)
         .id(egui::Id::unique(id))
         .open(open)
@@ -108,62 +51,6 @@ fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, body);
-}
-
-fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    use materialcraft_engine::core::GraphKind;
-
-    let mut open = true;
-    let mut create = false;
-    modal(ctx, "new-graph", tr("New graph"), &mut open, vec2(440.0, 290.0), |ui| {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.ui.new_graph_kind, GraphKind::Material, tr("Graph"));
-            ui.selectable_value(&mut app.ui.new_graph_kind, GraphKind::Function, tr("Function Graph"));
-        });
-        ui.add_space(12.0);
-        ui.label(tr("Graph name"));
-        let name = ui.text_edit_singleline(&mut app.ui.new_graph_name);
-        crate::widgets::name(&name, egui::Role::TextInput, "Graph name");
-
-        if app.ui.new_graph_kind == GraphKind::Material {
-            ui.add_space(8.0);
-            crate::widgets::combo(ui, tr("Template"), app.ui.new_graph_template.clone(), |ui| {
-                for (id, label) in materialcraft_engine::samples::TEMPLATES {
-                    ui.selectable_value(&mut app.ui.new_graph_template, id.to_string(), tr(label));
-                }
-            });
-            let size = egui::ComboBox::from_label(tr("Size")).selected_text(format!("{} px", app.ui.new_graph_size)).show_ui(ui, |ui| {
-                for size in [256u32, 512, 1024, 2048, 4096] {
-                    ui.selectable_value(&mut app.ui.new_graph_size, size, format!("{size} px"));
-                }
-            });
-            crate::widgets::name(&size.response, egui::Role::ComboBox, "Size");
-        }
-
-        ui.add_space(12.0);
-        ui.label(format!("{}: {}", tr("Package"), app.session.pkg.name));
-        ui.add_space(16.0);
-        ui.horizontal(|ui| {
-            if ui.add(crate::widgets::primary_button(ui, tr("Create"))).clicked() {
-                create = true;
-            }
-            if ui.button(tr("Cancel")).clicked() {
-                app.ui.windows.new_graph = false;
-            }
-        });
-    });
-
-    if create {
-        let parameters =
-            json!({"kind": app.ui.new_graph_kind, "template": app.ui.new_graph_template, "name": app.ui.new_graph_name, "size": app.ui.new_graph_size});
-        if app.run("file.new", parameters).is_some() {
-            app.ui.frame_all = true;
-            open = false;
-        }
-    }
-    if !open {
-        app.ui.windows.new_graph = false;
-    }
 }
 
 fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
@@ -252,46 +139,6 @@ fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     if !open {
         app.ui.windows.export = false;
-    }
-}
-
-fn preferences(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    let mut open = true;
-    modal(ctx, "prefs", tr("Preferences"), &mut open, vec2(380.0, 340.0), |ui| {
-        let p = &mut app.ui.prefs;
-        let current_lang = crate::i18n::current();
-        crate::widgets::combo(ui, tr("Language"), current_lang.name, |ui| {
-            for l in &crate::i18n::LANGUAGES {
-                if ui.selectable_label(p.language == l.code, l.name).clicked() {
-                    p.language = l.code.to_owned();
-                    crate::i18n::set_language(&p.language);
-                }
-            }
-        });
-        crate::widgets::combo(ui, tr("Brightness"), tr(p.brightness.label()), |ui| {
-            for b in Brightness::ALL {
-                ui.selectable_value(&mut p.brightness, b, tr(b.label()));
-            }
-        });
-        crate::widgets::combo(ui, tr("Accent color"), tr(p.accent.label()), |ui| {
-            for a in Accent::ALL {
-                ui.selectable_value(&mut p.accent, a, tr(a.label()));
-            }
-        });
-        crate::widgets::slider(ui, tr("Interface scale"), &mut p.ui_scale, 0.75..=2.0, 2);
-        let mut auto = p.autosave_minutes as f32;
-        if crate::widgets::slider(ui, tr("Autosave every (minutes, 0 = off)"), &mut auto, 0.0..=60.0, 0).changed() {
-            p.autosave_minutes = auto.round() as u32;
-        }
-        crate::widgets::combo(ui, tr("Preview size while editing"), crate::preview_resolution::label(p.preview_size), |ui| {
-            crate::preview_resolution::choices(ui, &mut p.preview_size);
-        });
-        ui.checkbox(&mut p.thumbnails, tr("Show node thumbnails"));
-        crate::widgets::slider(ui, tr("3D pan limit (mesh radii)"), &mut p.camera.pan_limit, 0.0..=20.0, 1);
-        crate::widgets::slider(ui, tr("3D pan speed"), &mut p.camera.pan_speed, 0.1..=4.0, 2);
-    });
-    if !open {
-        app.ui.windows.preferences = false;
     }
 }
 
@@ -393,7 +240,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                             ui.painter().rect_filled(r, 6.0, tk.row_hover);
                         }
                         let img = egui::Rect::from_min_size(r.min + vec2(6.0, 4.0), vec2(80.0, 80.0));
-                        match TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) {
+                        match template_preview(app, ui.ctx(), id) {
                             Some(t) => {
                                 ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
                             }

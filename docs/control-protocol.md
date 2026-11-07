@@ -39,6 +39,7 @@ Agents drive MaterialCraft three ways, all dispatching the same engine commands:
 | `render {view?, width?, height?, yaw?, pitch?, scene?, node?, port?, full?, tiling?, hq?, displacement?}` | headless | PNG (base64) of the 3D view or of one node; `hq` is the beauty render (displaced mesh, ray-traced AO, shadowed key light, 3×3 supersampling), `displacement` its depth in scene radii |
 | `ui.inspect` | app | UI state, the graph view rectangle, every node's screen rectangle, every port's identifier, display label and screen position, fps, toasts |
 | `ui.menu.list` / `ui.menu.invoke {id}` | app | the menu catalog; behave like a click |
+| `ui.panel.maximize {panel}` | app | maximize an open, active panel: `Graph`, `Explorer`, `Library`, `View3d`, `View2d`, `Properties`, `Console`, or `History`; restore with `ui.menu.invoke {"id":"ui.unmaximize"}` |
 | `ui.set {...}` | app | recursively merge fields into the UI state |
 | `ui.input {events}` | app | synthetic input, below |
 | `view.screenshot {view?: "3d"\|"2d"}` | app | PNG of the 3D or 2D view |
@@ -65,11 +66,15 @@ window points (take them from `ui.inspect`'s `nodes` and `ports`).
 Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (egui key names:
 `A`, `Enter`, `Space`, `Delete`, `F5`, …), `text`. Buttons: `left`, `right`, `middle`.
 
+`ui.inspect.maximizedPanel` reports the temporary maximized panel, or `null`. Maximizing
+preserves the saved workspace. Shift+Space toggles maximization under the pointer; text inputs,
+popups, modal dialogs and pointer drags retain their input.
+
 ## Key commands
 
 | Command | Params |
 |---|---|
-| `file.new` | `{template?, name?, size?}`; templates from `graph.templates` (`empty`, `pbr`, `bricks`, `stone_tiles`, `wood`, `rusty_metal`, `fabric`, `ground`) |
+| `file.new` | `{kind?, template?, name?, size?, width?, height?}`; material width/height override size per axis (default 1024 px), rounded down to powers of two in 16..8192; creation is one undo step. Templates from `graph.templates`: `empty`, `pbr`, `atomics` |
 | `graph.node.edit` | `{}` resolves the selected FX-Map, processor or local graph instance to `{kind, node, parameter?, graph?}`; use `ui.menu.invoke` to enter it in the graph panel |
 | `graph.pattern.set` | `{id, pattern}` replaces an FX-Map subgraph with cycle validation and undo |
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |

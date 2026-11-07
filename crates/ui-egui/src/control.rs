@@ -291,6 +291,7 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
             let (view, nodes, ports) = (app.graph.view, &app.graph.rects, &app.graph.ports);
             ok(json!({
                 "state": app.ui,
+                "maximizedPanel": app.ui.dock.maximized(),
                 "graphView": rect(view),
                 "selection": app.session.selection,
                 "inspectedNode": app.graph.inspected_node,
@@ -318,6 +319,19 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 "render3dMs": app.view3d.render_ms,
                 "toasts": app.toasts.iter().map(|t| json!({"text": t.text, "error": t.error})).collect::<Vec<_>>(),
             }))
+        }
+        "ui.panel.maximize" => {
+            let Some(panel) = p.get("panel").cloned().and_then(|value| serde_json::from_value::<crate::docking::Panel>(value).ok()) else {
+                return err("`panel` must name a workspace panel, such as Graph or View2d");
+            };
+
+            match app.ui.dock.maximize(panel) {
+                Ok(()) => {
+                    ctx.request_repaint();
+                    ok(Value::Null)
+                }
+                Err(error) => err(error),
+            }
         }
         "ui.menu.list" => ok(crate::menus::list(app)),
         "ui.menu.invoke" => {

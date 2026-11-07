@@ -16,6 +16,8 @@ pub mod library;
 mod material_preview_menu;
 mod menu_item;
 pub mod menus;
+mod new_graph_dialog;
+pub mod preferences;
 mod preview_resolution;
 #[path = "property/mod.rs"]
 pub mod properties;

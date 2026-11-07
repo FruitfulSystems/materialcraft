@@ -79,6 +79,7 @@ pub const CATALOG: &[MenuItem] = &[
     it("Windows", "Library", "ui.view.library", None),
     it("Windows", "History", "ui.view.history", None),
     sep("Windows"),
+    it("Windows", "Restore panel layout", "ui.unmaximize", Some("Shift+Space")),
     it("Windows", "Reset layout", "ui.resetLayout", None),
     it("Help", "Home screen...", "ui.home", None),
     it("Help", "Documentation...", "ui.help.docs", None),
@@ -110,7 +111,7 @@ pub fn enabled(app: &MaterialCraftApp, id: &str) -> bool {
     }
 
     if is_ui(id) {
-        return true;
+        return id != "ui.unmaximize" || app.ui.dock.maximized().is_some();
     }
     materialcraft_engine::find(id).is_some_and(|c| (c.enabled)(&app.session).is_ok())
 }
@@ -148,9 +149,10 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         "ui.export" => app.ui.windows.export = true,
         "ui.quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         "ui.preferences" => app.ui.windows.preferences = true,
-        "ui.view.graph" => {}
+        "ui.view.graph" => app.ui.dock.focus(crate::docking::Panel::Graph),
+        "ui.unmaximize" => app.ui.dock.restore(),
         "ui.resetLayout" => app.ui.dock = crate::docking::Dock::default(),
-        // These replace the open package: ask first when it has unsaved changes.
+        // Replacing the open package needs confirmation for unsaved changes
         "ui.closeAll" | "file.newPackage" => crate::unsaved::guard(app, crate::unsaved::Guarded::Menu { id: id.to_string() }),
         "ui.reloadResources" | "ui.clearCache" => {
             if let Ok(mut c) = app.session.cache.lock() {
@@ -287,7 +289,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         }
     }
 
-    let mut table: Vec<(&'static str, KeyboardShortcut)> = CATALOG.iter().filter_map(|i| Some((i.id, parse_shortcut(i.shortcut?)?))).collect();
+    // The dock handles Shift+Space with the current panel's hit test
+    let mut table: Vec<(&'static str, KeyboardShortcut)> =
+        CATALOG.iter().filter(|item| item.id != "ui.unmaximize").filter_map(|item| Some((item.id, parse_shortcut(item.shortcut?)?))).collect();
     for c in materialcraft_engine::command_specs() {
         if table.iter().any(|(id, _)| *id == c.id) {
             continue;
