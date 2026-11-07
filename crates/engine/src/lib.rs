@@ -1,12 +1,20 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod document_path;
+mod graph_instance_commands;
+mod linked_files;
+mod linked_packages;
 mod material_preview;
 mod material_preview_commands;
 mod material_source;
+mod node_info_commands;
+mod open_document;
+mod package_commands;
 mod preview_cook;
 pub use material_preview::MaterialPreview;
 pub use material_source::MaterialSource;
+pub use open_document::OpenDocument;
 pub use preview_cook::PreviewCook;
 
 mod alignment_commands;

@@ -11,6 +11,7 @@ mod graph_camera;
 mod graph_drag;
 pub(crate) mod graph_parent;
 mod graph_view;
+mod instance_context_menu;
 #[cfg(test)]
 mod interaction_tests;
 mod library_drag;

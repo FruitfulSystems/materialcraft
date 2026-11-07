@@ -215,7 +215,9 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let (rect, resp) = ui.allocate_exact_size(vec2(avail.x, (avail.y - 22.0).max(40.0)), Sense::click_and_drag());
     crate::widgets::name(&resp, egui::Role::Image, "3D view");
     let graph_hover = resp.dnd_hover_payload::<crate::graph_drag_payload::GraphDragPayload>().is_some();
-    if let Some(graph) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(&resp) {
+    if let Some(graph) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(&resp)
+        && (graph.document == app.session.document_id || app.run("package.activate", json!({"document": graph.document})).is_some())
+    {
         app.run("view.3d.outputs", json!({"graph": graph.name}));
     }
 

@@ -19,6 +19,12 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2, node: Opti
     }
 
     ui.set_min_width(290.0);
+    if let Some(node) = node
+        && app.session.graph().ok().and_then(|graph| graph.node(node).ok()).is_some_and(|node| node.def == "graph_instance")
+    {
+        super::instance_context_menu::show(app, ui, at, node);
+        return;
+    }
     if node.is_some() && menus::enabled(app, "graph.node.edit") {
         action(app, ui, "Edit graph", "graph.node.edit", Value::Null);
         ui.separator();
@@ -55,7 +61,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2, node: Opti
     action(app, ui, "Next pin", "ui.graph.nextPin", Value::Null);
 }
 
-fn add_nodes(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2) {
+pub(super) fn add_nodes(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2) {
     let definitions = materialcraft_engine::nodes::catalog().iter().filter(|definition| definition.id != "dot");
     let entries = definitions.map(|definition| (definition.id, definition.label, definition.category));
     if let Some(definition) = super::add_node_menu::show(ui, entries) {
@@ -63,7 +69,7 @@ fn add_nodes(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2) {
     }
 }
 
-fn outputs(app: &mut MaterialCraftApp, ui: &mut Ui, node: Option<NodeId>) {
+pub(super) fn outputs(app: &mut MaterialCraftApp, ui: &mut Ui, node: Option<NodeId>) {
     let targets: Vec<_> = app
         .session
         .graph()
@@ -97,7 +103,7 @@ fn outputs(app: &mut MaterialCraftApp, ui: &mut Ui, node: Option<NodeId>) {
     });
 }
 
-fn action(app: &mut MaterialCraftApp, ui: &mut Ui, label: &str, command: &str, parameters: Value) {
+pub(super) fn action(app: &mut MaterialCraftApp, ui: &mut Ui, label: &str, command: &str, parameters: Value) {
     if super::edit_menu::button(ui, label, command, menus::enabled(app, command)) {
         if command.starts_with("ui.") || matches!(command, "file.save" | "graph.node.edit") {
             menus::invoke(app, ui.ctx(), command);

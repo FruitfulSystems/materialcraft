@@ -1,3 +1,6 @@
+#[path = "snapshot/function_instances.rs"]
+mod function_instances;
+
 use std::time::Duration;
 
 use egui::vec2;
@@ -30,6 +33,96 @@ fn save(h: &mut Harness<'static, MaterialCraftApp>, dir: &std::path::Path, name:
     let img = h.render().expect("render");
     img.save(dir.join(format!("{name}.png"))).expect("save");
     println!("wrote {}", dir.join(format!("{name}.png")).display());
+}
+
+fn double_click(harness: &mut Harness<'static, MaterialCraftApp>, position: egui::Pos2) {
+    harness.event(egui::Event::PointerMoved(position));
+    harness.step();
+    let start = harness.ctx.input(|input| input.time) + 1.0;
+    for (index, pressed) in [true, false, true, false].into_iter().enumerate() {
+        harness.input_mut().time = Some(start + index as f64 * 0.05);
+        harness.event(egui::Event::PointerButton { pos: position, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        harness.step();
+    }
+    settle(harness, 3);
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_drags_a_linked_graph_between_open_packages() {
+    use materialcraft_engine::{
+        Session,
+        core::{Graph, Package, Value},
+        file_cmds, formats,
+    };
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").expect("set MC_SNAPSHOT_DIR"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut source = Package::new("Source file");
+    let mut graph = Graph::new("Reusable tint");
+    graph.size = [4, 4];
+    let color = graph.add_node("uniform", [0.0; 2]);
+    graph.node_mut(color).unwrap().params.insert("color".into(), Value::Color([0.2, 0.6, 0.8, 1.0]));
+    let output = graph.add_node("output", [256.0, 0.0]);
+    graph.connect(color, "output", output, "input").unwrap();
+    source.graphs.push(graph);
+    let mut session = Session::new(source);
+    session.path = Some(directory.join("source.sbs").to_string_lossy().into_owned());
+    let mut target = Package::new("Target file");
+    target.graphs.push(Graph::new("Target canvas"));
+    file_cmds::open_bytes(&mut session, &formats::sbs::write_sbs(&target).unwrap(), Some(directory.join("target.sbs").to_string_lossy().into_owned())).unwrap();
+    session.preview_size = Some(16);
+    let target_document = session.document_id;
+    let mut app = MaterialCraftApp::headless(session, UiState::default());
+    app.ui.dock.close(materialcraft_ui_egui::docking::Panel::Library);
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 6);
+    let start = harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Reusable tint")).rect().center();
+    let end = harness.state().graph.view.center();
+    harness.event(egui::Event::PointerMoved(start));
+    harness.step();
+    harness.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    harness.step();
+    for position in [start + vec2(12.0, 0.0), end] {
+        harness.event(egui::Event::PointerMoved(position));
+        harness.step();
+    }
+    harness.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    settle(&mut harness, 8);
+    assert_eq!(harness.state().session.document_id, target_document);
+    assert_eq!(harness.state().session.graph().unwrap().nodes.len(), 1);
+    let instance = harness.state().session.graph().unwrap().nodes[0].id;
+    assert_eq!(harness.state().session.graph().unwrap().node(instance).unwrap().instance.as_ref().unwrap().graph, "Reusable tint");
+    assert!(harness.state().session.cooked.nodes[&instance].error.is_none());
+    save(&mut harness, &directory, "linked-instance-explorer-drop");
+    harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Reusable tint")).click();
+    settle(&mut harness, 3);
+    assert_eq!(harness.state().session.document_id, 0);
+    harness.state_mut().run("graph.select", json!({"ids": [color.0]})).unwrap();
+    harness.state_mut().run("graph.node.param", json!({"id": color.0, "param": "color", "value": [0.9, 0.3, 0.1, 1.0]})).unwrap();
+    harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Target canvas")).click();
+    settle(&mut harness, 8);
+    assert_eq!(harness.state().session.document_id, target_document);
+    assert_eq!(harness.state().session.history(), ["Add graph instance"]);
+    let value = harness.state().session.cooked.image(instance, 0).unwrap().get(0, 0, false);
+    assert!(value.into_iter().zip([0.9, 0.3, 0.1, 1.0]).all(|(actual, expected)| (actual - expected).abs() < 1e-6));
+    assert!(harness.state().session.modified);
+    save(&mut harness, &directory, "linked-instance-source-edit");
+    let position = harness.get(By::new().role(egui::accesskit::Role::Button).label("Reusable tint")).rect().center();
+    double_click(&mut harness, position);
+    assert_eq!(harness.state().session.document_id, target_document, "double-click must not open the instance source");
+    assert_eq!(harness.state().session.graph().unwrap().name, "Target canvas");
+    assert_eq!(harness.state().session.history(), ["Add graph instance"]);
+    harness.get(By::new().role(egui::accesskit::Role::Button).label("Reusable tint")).click_secondary();
+    settle(&mut harness, 2);
+    for label in ["View output in 2D view", "Copy info to clipboard", "Open reference Ctrl+E", "Create graph from selection (1)", "Duplicate selection Ctrl+D"]
+    {
+        assert!(harness.query(By::new().label(label)).is_some(), "missing instance action: {label}");
+    }
+    save(&mut harness, &directory, "linked-instance-context-menu");
+    harness.get(By::new().label("Open reference Ctrl+E")).click();
+    settle(&mut harness, 4);
+    assert_eq!(harness.state().session.document_id, 0);
+    assert_eq!(harness.state().session.graph().unwrap().name, "Reusable tint");
 }
 
 #[test]

@@ -16,7 +16,7 @@ pub(super) fn category_color(category: &str) -> Color32 {
 }
 
 fn input_count(node: &FunctionNode) -> usize {
-    materialcraft_engine::nodes::function::definition(&node.op).map_or(0, |definition| definition.inputs.len())
+    materialcraft_engine::nodes::function::input_identifiers(node).count()
 }
 
 pub(super) fn node_rect(node: &FunctionNode, previews: bool) -> Rect {

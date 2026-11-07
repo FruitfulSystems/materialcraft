@@ -1,16 +1,18 @@
 #[cfg(test)]
 mod open_guard_tests {
-    use crate::unsaved::Guarded;
     use crate::{MaterialCraftApp, state::UiState};
 
     #[test]
-    fn opening_a_path_over_unsaved_work_asks_first() {
+    fn a_failed_open_keeps_unsaved_work_without_a_discard_prompt() {
         let mut s = materialcraft_engine::sample_session();
         s.modified = true;
         let mut app = MaterialCraftApp::headless(s, UiState::default());
+        let before = app.session.pkg.clone();
         crate::windows::open_path(&mut app, "does-not-exist.sbs");
-        assert_eq!(app.ui.windows.unsaved, Some(Guarded::OpenPath { path: "does-not-exist.sbs".into() }));
-        assert!(app.toasts.is_empty(), "nothing was attempted yet");
+        assert!(app.ui.windows.unsaved.is_none());
+        assert!(!app.toasts.is_empty());
+        assert_eq!(app.session.pkg, before);
+        assert!(app.session.modified);
     }
 
     #[test]

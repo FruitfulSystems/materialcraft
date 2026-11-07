@@ -124,6 +124,23 @@ pub(super) fn handle(
 
     let camera = GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
 
+    if let Some(payload) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(response)
+        && let Some(pointer) = pointer
+        && let Some(target) = editor.command_target()
+    {
+        let at = camera.to_graph(pointer);
+        if let Some(result) = app.run(
+            "graph.instance.add",
+            serde_json::json!({"document": payload.document, "graph": payload.name,
+            "function": target, "at": [at.x - crate::graph::NODE_W * 0.5, at.y - 20.0], "snapToGrid": snap}),
+        ) && let Some(id) = result.get("id").and_then(serde_json::Value::as_u64).and_then(|id| u32::try_from(id).ok())
+        {
+            editor.selection = vec![id];
+            editor.selected_wires.clear();
+            editor.inspected_node = Some(id);
+        }
+    }
+
     // Adding operations
     if response.secondary_clicked()
         && let Some(pointer_position) = pointer

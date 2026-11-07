@@ -42,6 +42,8 @@ impl FunctionEdit {
                 let definition = materialcraft_nodes::function::definition(operation).ok_or("unknown function operation")?;
                 let id = graph.next_id();
                 graph.nodes.push(FunctionNode {
+                    instance: None,
+                    source: None,
                     id,
                     type_code: 0,
                     op: operation.clone(),
@@ -70,7 +72,7 @@ impl FunctionEdit {
                 }
 
                 let node = graph.nodes.iter_mut().find(|node| node.id == *to).ok_or("missing function destination")?;
-                let count = materialcraft_nodes::function::definition(&node.op).map_or(0, |definition| definition.inputs.len());
+                let count = materialcraft_nodes::function::input_identifiers(node).count();
                 if *input >= count {
                     return Err("invalid function input".into());
                 }

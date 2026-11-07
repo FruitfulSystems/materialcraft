@@ -141,9 +141,12 @@ pub(super) fn handle(
     // Clicks
     for (id, r) in nodes {
         if r.double_clicked() {
-            app.run("view.2d", json!({"node": id.0, "port": 0}));
-            if crate::menus::enabled(app, "graph.node.edit") {
-                crate::menus::invoke(app, ui.ctx(), "graph.node.edit");
+            // Instances open their sources only through Open reference
+            if app.session.graph().ok().and_then(|graph| graph.node(*id).ok()).is_some_and(|node| node.def != "graph_instance") {
+                app.run("view.2d", json!({"node": id.0, "port": 0}));
+                if crate::menus::enabled(app, "graph.node.edit") {
+                    crate::menus::invoke(app, ui.ctx(), "graph.node.edit");
+                }
             }
         } else if r.clicked() && app.session.selection.contains(id) && app.session.view2d.node != Some(*id) {
             // Keep the current output when deselecting or clicking the node already shown
@@ -203,16 +206,20 @@ pub(super) fn handle(
         None => super::context_menu::show(app, ui, at, None),
     });
 
+    if let Some(payload) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(canvas)
+        && let Some(pointer) = pointer
+    {
+        let at = cam.to_graph(pointer);
+        app.run("graph.instance.add", json!({"document": payload.document, "graph": payload.name, "at": [at.x - NODE_W * 0.5, at.y - 20.0]}));
+    }
+
     // Library drops
     if let Some(payload) = crate::widgets::dnd_release::<LibraryDrag>(canvas)
         && let Some(p) = pointer
     {
         let gp = cam.to_graph(p);
         let at = [gp.x - NODE_W * 0.5, gp.y - 20.0];
-        match payload.0.strip_prefix('@') {
-            Some(graph) => app.run("graph.node.add", json!({"def": "graph_instance", "at": at, "params": {"graph": graph}})),
-            None => app.run("graph.node.add", json!({"def": payload.0, "at": at})),
-        };
+        app.run("graph.node.add", json!({"def": payload.0, "at": at}));
     }
 
     // Keys over the canvas

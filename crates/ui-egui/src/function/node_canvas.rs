@@ -29,9 +29,10 @@ pub(super) fn paint(
         return;
     }
 
-    let label = definition.map_or("?", |definition| definition.label);
+    let label = materialcraft_engine::nodes::function::node_label(node);
     let category = definition.map_or("", |definition| definition.category);
-    node_card::paint(painter, bounds, zoom, label, category_color(category));
+    let color = if node.instance.is_some() { crate::graph::header_color("graph_instance") } else { category_color(category) };
+    node_card::paint(painter, bounds, zoom, label, color);
     let body = node_card::body(bounds, zoom);
     if output {
         painter.rect_filled(body, 0.0, OUTPUT_COLOR);

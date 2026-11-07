@@ -40,7 +40,11 @@ pub(crate) fn invoke(app: &mut MaterialCraftApp, command: &str) -> bool {
                 }
                 Some("graph") => {
                     if let Some(index) = result.get("graph").and_then(serde_json::Value::as_u64).and_then(|index| usize::try_from(index).ok()) {
-                        super::subgraph_navigation::open_instance(app, index);
+                        if result.get("document").and_then(serde_json::Value::as_u64) == Some(app.session.document_id) {
+                            super::subgraph_navigation::open_instance(app, index);
+                        } else {
+                            super::subgraph_navigation::open_external_instance(app, &result, index);
+                        }
                     }
                 }
                 _ => {}

@@ -194,7 +194,7 @@ fn selected_node_graph_is_resolved_without_changing_the_document() {
     session.pkg.graphs.push(materialcraft_engine::core::Graph::new("Child"));
     let original = session.pkg.clone();
     let history = session.history();
-    assert_eq!(execute(&mut session, "graph.node.edit", &json!({})).unwrap(), json!({"kind": "graph", "node": node, "graph": 1}));
+    assert_eq!(execute(&mut session, "graph.node.edit", &json!({})).unwrap(), json!({"kind": "graph", "node": node, "graph": 1, "document": 0, "path": null}));
     assert_eq!(session.pkg, original);
     assert_eq!(session.history(), history);
 }

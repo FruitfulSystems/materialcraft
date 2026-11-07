@@ -18,6 +18,7 @@ pub struct FunctionEditor {
     pub(super) drag: Option<FunctionDrag>,
     pub(super) menu_at: Pos2,
     pub(crate) framed: bool,
+    pub(super) open_reference: Option<u32>,
 }
 
 impl FunctionEditor {
@@ -47,6 +48,7 @@ impl FunctionEditor {
             drag: None,
             menu_at: Pos2::ZERO,
             framed: false,
+            open_reference: None,
         }
     }
 

@@ -1,6 +1,6 @@
-use crate::{Cache, Cooked, NodeOutput, NodeResult, Options, identifier, instance_graph, node_size, now_ms};
+use crate::{Cache, Cooked, NodeOutput, NodeResult, Options, identifier, node_size, now_ms};
 use crate::{
-    cache_key::{graph_tree_hash, hash_of, image_key, variable_key},
+    cache_key::{graph_tree_hash_with_registry, hash_of, image_key, variable_key},
     graph_instance::cook_instance,
     parameter::resolve_parameters,
     prepared_graph::PreparedGraph,
@@ -52,9 +52,17 @@ pub(crate) fn cook_node(
         input_keys.push(source.as_ref().map_or(0, |source| source.1));
         let output = source.map(|source| source.0);
 
-        if let Some(expected) = node.input_values.get(&port.id) {
+        let expected = node.input_values.get(&port.id).copied().or_else(|| {
+            node.instance
+                .as_ref()?
+                .inputs
+                .iter()
+                .find(|input| input.identifier == port.id)
+                .and_then(|input| materialcraft_core::ValueType::from_code(input.type_code))
+        });
+        if let Some(expected) = expected {
             let value = match output.as_ref() {
-                Some(NodeOutput::Value(value)) if materialcraft_core::ValueType::of(value) == Some(*expected) => value.clone(),
+                Some(NodeOutput::Value(value)) if materialcraft_core::ValueType::of(value) == Some(expected) => value.clone(),
                 Some(_) => {
                     input_error = Some(format!("input `{}` requires {}", port.id, expected.label()));
                     expected.default_value()
@@ -101,7 +109,12 @@ pub(crate) fn cook_node(
         _ => 0,
     };
 
-    let sub_hash = if node.def == "graph_instance" { instance_graph(pkg, node).map_or(0, |(si, _)| graph_tree_hash(pkg, si)) } else { 0 };
+    let registry = opts.registry.unwrap_or(pkg);
+    let sub_hash = if node.def == "graph_instance" {
+        crate::graph_instance::resolve(registry, pkg, node).map_or(0, |(source, index, _)| graph_tree_hash_with_registry(registry, source, index))
+    } else {
+        0
+    };
 
     let key = hash_of(&(
         &node.def,
@@ -137,8 +150,7 @@ pub(crate) fn cook_node(
 
         Err(format!("unsupported node `{name}`"))
     } else if node.def == "graph_instance" {
-        cook_instance(pkg, gi, node, in_ports, out_ports, &inputs, &params, (w, h), opts, cache)
-            .map(|images| images.into_iter().map(NodeOutput::Image).collect())
+        cook_instance(pkg, gi, node, in_ports, out_ports, &incoming, &params, (w, h), opts, cache)
     } else if let Some(definition) = def {
         let context = CookContext { w, h, seed, tile, inputs: &inputs, params: &params, resource: opts.resource, vars };
         (definition.cook)(&context).map(|images| images.into_iter().map(NodeOutput::Image).collect())

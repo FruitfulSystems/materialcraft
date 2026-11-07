@@ -5,5 +5,5 @@ pub(super) struct FunctionPort {
     pub slot: Option<usize>,
     pub position: Pos2,
     pub radius: f32,
-    pub label: &'static str,
+    pub label: String,
 }

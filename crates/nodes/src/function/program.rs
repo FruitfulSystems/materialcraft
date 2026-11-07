@@ -29,16 +29,18 @@ impl Program {
 
     pub fn evaluate(&self, context: &EvaluationContext<'_>, state: &mut EvaluationState) -> Result<Value, String> {
         state.variables.clone_from(context.variables);
-        self.run(context, state)
+        let mut remaining = MAX_EVALUATION_STEPS;
+        self.run(context, state, &mut remaining)
     }
 
     // Pixel assignments are local; only the general evaluator exports the complete environment
     pub(super) fn evaluate_pixel(&self, context: &EvaluationContext<'_>, state: &mut EvaluationState) -> Result<Value, String> {
         state.variables.clear();
-        self.run(context, state)
+        let mut remaining = MAX_EVALUATION_STEPS;
+        self.run(context, state, &mut remaining)
     }
 
-    fn run(&self, context: &EvaluationContext<'_>, state: &mut EvaluationState) -> Result<Value, String> {
+    fn run(&self, context: &EvaluationContext<'_>, state: &mut EvaluationState, remaining_steps: &mut usize) -> Result<Value, String> {
         use EvaluationStep::*;
 
         state.steps.clear();
@@ -47,10 +49,9 @@ impl Program {
         state.registers.resize(self.instructions.len(), None);
         state.random = context.variables.get("$randomseed").and_then(Value::as_i32).map_or(self.seed, |seed| seed as u32);
         state.steps.push(Enter(self.output));
-        let mut remaining_steps = MAX_EVALUATION_STEPS;
 
         while let Some(step) = state.steps.pop() {
-            remaining_steps = remaining_steps.checked_sub(1).ok_or("function exceeded its execution budget; check loop termination")?;
+            *remaining_steps = remaining_steps.checked_sub(1).ok_or("function exceeded its execution budget; check loop termination")?;
             match step {
                 Enter(index) => {
                     let instruction = self.instruction(index)?;
@@ -81,8 +82,17 @@ impl Program {
                 Apply { instruction: index, base } => {
                     let instruction = self.instruction(index)?;
                     let arguments = state.values.get(base..).ok_or("invalid function operands")?;
-                    let result = operation::evaluate(instruction, arguments, &mut state.variables, &mut state.random, context)
-                        .map_err(|error| format!("{} ({}): {error}", instruction.definition.label, instruction.id))?;
+                    let result = if let Some(call) = &instruction.call {
+                        let storage = state.calls.entry(index).or_default();
+                        storage.variables.clone_from(&state.variables);
+                        for (name, value) in call.inputs.iter().zip(arguments) {
+                            storage.variables.insert(name.clone(), value.clone());
+                        }
+                        call.program.run(context, storage, remaining_steps)
+                    } else {
+                        operation::evaluate(instruction, arguments, &mut state.variables, &mut state.random, context)
+                    }
+                    .map_err(|error| format!("{} ({}): {error}", instruction.definition.label, instruction.id))?;
 
                     state.values.truncate(base);
                     if instruction.pure

@@ -23,8 +23,13 @@ pub fn node_types(graph: &FunctionGraph) -> Result<BTreeMap<u32, u32>, String> {
             }
 
             let node = nodes.get(&id).ok_or_else(|| format!("missing function node {id}"))?;
-            let definition = catalog::definition(&node.op).ok_or_else(|| format!("unknown function `{}`", node.op))?;
-            if node.inputs.len() > definition.inputs.len() {
+            if node.instance.is_some() && node.op != "instance" {
+                return Err("graph references require the instance operation".into());
+            }
+            if node.instance.is_none() && catalog::definition(&node.op).is_none() {
+                return Err(format!("unknown function `{}`", node.op));
+            }
+            if node.inputs.len() > super::input_identifiers(node).count() {
                 return Err(format!("{} has too many inputs", node.op));
             }
             if !visited {
@@ -39,7 +44,11 @@ pub fn node_types(graph: &FunctionGraph) -> Result<BTreeMap<u32, u32>, String> {
 
             active.remove(&id);
             let input_type = |slot| node.inputs.get(slot).copied().flatten().and_then(|id| types.get(&id).copied()).unwrap_or(256);
-            let inferred = inferred_type(&node.op, node.value.as_ref(), input_type);
+            let inferred = node
+                .instance
+                .as_ref()
+                .and_then(|instance| instance.outputs.first())
+                .map_or_else(|| inferred_type(&node.op, node.value.as_ref(), input_type), |port| port.type_code);
             types.insert(id, if node.type_code == 0 { inferred } else { node.type_code });
         }
     }

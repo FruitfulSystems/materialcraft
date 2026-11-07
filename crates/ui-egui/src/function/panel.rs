@@ -15,5 +15,5 @@ pub(crate) fn show_graph(app: &mut MaterialCraftApp, ui: &mut Ui) {
         super::warning_banner::show(ui, document, &target, graph);
     }
     canvas(app, &mut editor, ui);
-    app.function_editor = Some(editor);
+    super::actions::finish_editor(app, editor);
 }

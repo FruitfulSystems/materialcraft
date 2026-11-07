@@ -1,5 +1,5 @@
 use egui::Ui;
-use materialcraft_engine::{core::FunctionGraph, nodes::function::definition};
+use materialcraft_engine::{core::FunctionGraph, nodes::function::node_label};
 
 use crate::{MaterialCraftApp, graph::node_selection, i18n::tr};
 
@@ -14,7 +14,7 @@ fn current(app: &MaterialCraftApp) -> Option<(&FunctionGraph, u32)> {
 pub(crate) fn title(app: &MaterialCraftApp) -> Option<String> {
     let (graph, id) = current(app)?;
     let node = graph.node(id)?;
-    let label = definition(&node.op).map_or(node.op.as_str(), |definition| definition.label);
+    let label = node_label(node);
     Some(format!("{label} - {}", tr("Properties")))
 }
 
@@ -23,12 +23,15 @@ pub(crate) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) -> bool {
 
     let Some(node) = graph.node(id) else { return false };
 
-    let label = definition(&node.op).map_or(node.op.as_str(), |definition| definition.label);
+    let label = node_label(node);
     ui.heading(tr(label));
     if materialcraft_engine::nodes::function::output_node(graph).is_some_and(|node| node.id == id) {
         ui.label(tr("Output node"));
     }
 
+    if let Some(instance) = &node.instance {
+        ui.label(format!("Source: {}", if instance.package.is_empty() { "This package" } else { &instance.package }));
+    }
     let mut value = node.value.clone();
     let changed = value.as_mut().is_some_and(|value| crate::value_editor::show(ui, value));
     if changed

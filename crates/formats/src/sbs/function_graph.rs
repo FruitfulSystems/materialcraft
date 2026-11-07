@@ -19,31 +19,50 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
             return Err(format!("duplicate function uid {id}"));
         }
         let op = child_value(element, "function").ok_or("function node has no operation")?;
-        let definition = function::definition(op).ok_or_else(|| format!("unsupported function `{op}`"))?;
-        let mut inputs = vec![None; definition.inputs.len()];
-        for connection in child_element(element, "connections").into_iter().flat_map(|connections| children_named(connections, "connection")) {
-            let port = child_value(connection, "identifier").unwrap_or("");
-            let index = definition.inputs.iter().position(|input| *input == port).ok_or_else(|| format!("{op}: unknown input `{port}`"))?;
-            let source = child_value(connection, "connRef").and_then(|value| value.parse().ok()).ok_or("invalid function connection")?;
-            let input = inputs.get_mut(index).ok_or("invalid input index")?;
-            if input.replace(source).is_some() {
-                return Err(format!("{op}: duplicate input `{port}`"));
-            }
-        }
-
         let value = child_element(element, "funcDatas")
             .into_iter()
             .flat_map(|data| children_named(data, "funcData"))
             .find(|data| child_value(*data, "name") == Some(op))
             .and_then(|data| data.children().filter(|child| child.is_element()).find_map(|child| sbs_constant_element(child).or_else(|| sbs_constant(child))))
             .map(|value| to_natural_value(&value));
+        let type_code = child_value(element, "type").and_then(|value| value.parse().ok()).unwrap_or(0);
+        let mut instance = if op == "instance" { Some(super::function_instance::read(element, value.as_ref(), type_code)?) } else { None };
+        let mut names: Vec<String> = if let Some(instance) = &instance {
+            instance.inputs.iter().map(|port| port.identifier.clone()).collect()
+        } else {
+            function::definition(op).ok_or_else(|| format!("unsupported function `{op}`"))?.inputs.iter().map(|name| (*name).into()).collect()
+        };
+        let mut inputs = vec![None; names.len()];
+        for connection in child_element(element, "connections").into_iter().flat_map(|connections| children_named(connections, "connection")) {
+            let port = child_value(connection, "identifier").unwrap_or("");
+            let index = if let Some(index) = names.iter().position(|name| name == port) {
+                index
+            } else if let Some(instance) = &mut instance {
+                if names.len() >= 4096 {
+                    return Err("Function instance exceeds the 4096-input limit".into());
+                }
+                instance.inputs.push(materialcraft_core::GraphPort { identifier: port.into(), type_code: 0 });
+                names.push(port.into());
+                inputs.push(None);
+                names.len() - 1
+            } else {
+                return Err(format!("{op}: unknown input `{port}`"));
+            };
+            let source = child_value(connection, "connRef").and_then(|value| value.parse().ok()).ok_or("invalid function connection")?;
+            let input = inputs.get_mut(index).ok_or("invalid input index")?;
+            if input.replace(source).is_some() {
+                return Err(format!("{op}: duplicate input `{port}`"));
+            }
+        }
         let position = child_element(element, "GUILayout").and_then(|layout| child_value(layout, "gpos")).map(parse_floats).unwrap_or_default();
         graph.nodes.push(FunctionNode {
+            instance,
+            source: None,
             id,
             op: op.into(),
             inputs,
-            type_code: child_value(element, "type").and_then(|value| value.parse().ok()).unwrap_or(0),
-            value: value.or_else(|| native_default(op)),
+            type_code,
+            value: if op == "instance" { None } else { value.or_else(|| native_default(op)) },
             pos: [position.first().copied().unwrap_or(0.0), position.get(1).copied().unwrap_or(0.0)],
         });
     }
@@ -84,7 +103,7 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
     }
     output.push_str("<paramNodes>");
     for node in &graph.nodes {
-        let definition = function::definition(&node.op).ok_or_else(|| format!("cannot save unknown function `{}`", node.op))?;
+        let inputs = function::input_identifiers(node);
         let inferred = types.get(&node.id).copied().unwrap_or(256);
         let code = if node.type_code == 0 { inferred } else { node.type_code };
         let _ = write!(
@@ -95,13 +114,15 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
             node.pos[0],
             node.pos[1]
         );
-        for (input, source) in definition.inputs.iter().zip(&node.inputs) {
+        for (input, source) in inputs.zip(&node.inputs) {
             if let Some(source) = source.and_then(|source| identifiers.get(&source)) {
                 let _ = write!(output, "<connection><identifier v=\"{}\"/><connRef v=\"{source}\"/></connection>", xml_escape(input));
             }
         }
         output.push_str("</connections>");
-        if let Some(value) = &node.value {
+        if let Some(instance) = &node.instance {
+            output.push_str(&super::function_instance::write(instance, writer));
+        } else if let Some(value) = &node.value {
             let constant = constant_xml(value).ok_or("function data must be a scalar or vector constant")?;
             let _ =
                 write!(output, "<funcDatas><funcData><name v=\"{}\"/><constantValue>{constant}</constantValue></funcData></funcDatas>", xml_escape(&node.op));

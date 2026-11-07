@@ -32,99 +32,124 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     });
     ui.add_space(2.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        let graph_warnings: Vec<String> = app
-            .session
-            .pkg
-            .graphs
-            .iter()
-            .map(|graph| {
-                materialcraft_engine::function_inspection::warnings(graph).into_iter().flat_map(|(_, messages)| messages).collect::<Vec<_>>().join("\n")
-            })
-            .collect();
-        let package_warnings = app
-            .session
-            .pkg
-            .graphs
-            .iter()
-            .zip(&graph_warnings)
-            .filter(|(_, warning)| !warning.is_empty())
-            .map(|(graph, warning)| format!("{}: {warning}", graph.name))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let name = format!("{}{}", app.session.pkg.name, if app.session.modified { "*" } else { "" });
-        tree_row::show(ui, &name, icon::PACKAGE, false, (!package_warnings.is_empty()).then_some(package_warnings.as_str()));
-        let mut open: Option<usize> = None;
-        let mut action: Option<(&str, usize)> = None;
+        let mut open = None;
+        let mut action = None;
         let mut selected_node = None;
         let mut assignment = None;
-        for (index, graph) in app.session.pkg.graphs.iter().enumerate() {
-            let active = index == app.session.graph;
-            let function = graph.function.is_some();
-            let mut header = |ui: &mut Ui| {
-                let symbol = if function { icon::FUNCTION } else { icon::TREE_STRUCTURE };
-                let warning = graph_warnings.get(index).map(String::as_str).unwrap_or("");
-                let response = tree_row::show(ui, &graph.name, symbol, active, (!warning.is_empty()).then_some(warning));
-                if !function {
-                    response.interact(egui::Sense::drag()).dnd_set_drag_payload(crate::graph_drag_payload::GraphDragPayload { name: graph.name.clone() });
+        for (document, package, path, modified) in app.session.open_packages() {
+            ui.push_id(document, |ui| {
+                let graph_warnings: Vec<String> = package
+                    .graphs
+                    .iter()
+                    .map(|graph| {
+                        materialcraft_engine::function_inspection::warnings(graph).into_iter().flat_map(|(_, messages)| messages).collect::<Vec<_>>().join("\n")
+                    })
+                    .collect();
+                let package_warnings = package
+                    .graphs
+                    .iter()
+                    .zip(&graph_warnings)
+                    .filter(|(_, warning)| !warning.is_empty())
+                    .map(|(graph, warning)| format!("{}: {warning}", graph.name))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let name = format!("{}{}", package.name, if modified { "*" } else { "" });
+                let package_row = tree_row::show(ui, &name, icon::PACKAGE, false, (!package_warnings.is_empty()).then_some(package_warnings.as_str()));
+                if package_row.clicked() {
+                    action = Some(("package", document, 0));
                 }
-                if response.clicked() {
-                    open = Some(index);
+                if let Some(path) = path {
+                    package_row.on_hover_text(path);
                 }
-                response.context_menu(|ui| {
-                    if !function {
-                        for (label, command) in [("View outputs in 3D view", "view3d"), ("Reset and view outputs in 3D view", "reset3d")] {
-                            if ui.button(tr(label)).clicked() {
-                                action = Some((command, index));
-                                ui.close();
-                            }
+                for (index, graph) in package.graphs.iter().enumerate() {
+                    let active = document == app.session.document_id && index == app.session.graph;
+                    let function = graph.function.is_some();
+                    let mut header = |ui: &mut Ui| {
+                        let symbol = if function { icon::FUNCTION } else { icon::TREE_STRUCTURE };
+                        let warning = graph_warnings.get(index).map(String::as_str).unwrap_or("");
+                        let response = tree_row::show(ui, &graph.name, symbol, active, (!warning.is_empty()).then_some(warning));
+                        if graph.function.as_ref().map_or_else(
+                            || graph.nodes.iter().any(|node| node.def == "output"),
+                            |function| materialcraft_engine::nodes::function::output_node(function).is_some(),
+                        ) {
+                            response
+                                .interact(egui::Sense::drag())
+                                .dnd_set_drag_payload(crate::graph_drag_payload::GraphDragPayload { document, name: graph.name.clone() });
                         }
-                    }
-                    for (label, command) in [("Open", "open"), ("Export outputs...", "export"), ("Duplicate", "duplicate"), ("Delete", "delete")] {
-                        if ui.button(tr(label)).clicked() {
-                            action = Some((command, index));
-                            ui.close();
+                        if response.clicked() {
+                            open = Some((document, index));
                         }
-                    }
-                });
-            };
-
-            let mut ports =
-                graph.nodes.iter().filter(|node| matches!(node.def.as_str(), "output" | "input_color" | "input_grayscale" | "input_value")).peekable();
-            if function || ports.peek().is_none() {
-                ui.horizontal(|ui| {
-                    ui.add_space(ui.spacing().indent);
-                    header(ui);
-                });
-                continue;
-            }
-
-            let id = ui.make_persistent_id(("graph", index, &graph.name));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
-                ui.indent("graph-ports", |ui| {
-                    for node in ports {
-                        ui.push_id(node.id, |ui| {
-                            let name = crate::graph::node_label(node);
-                            let selected = active && app.session.selection.contains(&node.id);
-                            let symbol = if node.def == "input_value" { icon::FUNCTION } else { icon::IMAGE };
-                            let response = tree_row::show(ui, &name, symbol, selected, None);
-
-                            response.context_menu(|ui| {
-                                if let Some(parameters) = crate::material_preview_menu::show(ui, &app.session, index, node.id) {
-                                    assignment = Some(parameters);
+                        response.context_menu(|ui| {
+                            if !function {
+                                for (label, command) in [("View outputs in 3D view", "view3d"), ("Reset and view outputs in 3D view", "reset3d")] {
+                                    if ui.button(tr(label)).clicked() {
+                                        action = Some((command, document, index));
+                                        ui.close();
+                                    }
                                 }
-                            });
-                            if response.clicked() || response.double_clicked() {
-                                selected_node = Some((index, node.id, response.double_clicked()));
+                            }
+                            for (label, command) in [("Open", "open"), ("Export outputs...", "export"), ("Duplicate", "duplicate"), ("Delete", "delete")] {
+                                if ui.button(tr(label)).clicked() {
+                                    action = Some((command, document, index));
+                                    ui.close();
+                                }
                             }
                         });
+                    };
+
+                    let mut ports =
+                        graph.nodes.iter().filter(|node| matches!(node.def.as_str(), "output" | "input_color" | "input_grayscale" | "input_value")).peekable();
+                    if function || ports.peek().is_none() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.spacing().indent);
+                            header(ui);
+                        });
+                        continue;
                     }
-                });
+
+                    let id = ui.make_persistent_id(("graph", index, &graph.name));
+                    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
+                        ui.indent("graph-ports", |ui| {
+                            for node in ports {
+                                ui.push_id(node.id, |ui| {
+                                    let name = crate::graph::node_label(node);
+                                    let selected = active && app.session.selection.contains(&node.id);
+                                    let symbol = if node.def == "input_value" { icon::FUNCTION } else { icon::IMAGE };
+                                    let response = tree_row::show(ui, &name, symbol, selected, None);
+
+                                    response.context_menu(|ui| {
+                                        if document == app.session.document_id
+                                            && let Some(parameters) = crate::material_preview_menu::show(ui, &app.session, index, node.id)
+                                        {
+                                            assignment = Some(parameters);
+                                        }
+                                    });
+                                    if response.clicked() || response.double_clicked() {
+                                        selected_node = Some((document, index, node.id, response.double_clicked()));
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
+                if !package.resources.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr("Resources")).color(tk.text_dim).size(11.0));
+                    for resource in &package.resources {
+                        ui.label(format!("{}  {}  ({} KB)", icon::IMAGE, resource.name, resource.bytes.len() / 1024));
+                    }
+                }
             });
         }
-        if let Some(i) = open {
-            app.run("graph.open", json!({"graph": i}));
+        if let Some((document, index)) = open
+            && activate(app, document)
+        {
+            app.run("graph.open", json!({"graph": index}));
         }
-        if let Some((index, node, preview)) = selected_node {
+        if let Some((document, index, node, preview)) = selected_node {
+            if !activate(app, document) {
+                return;
+            }
             if index != app.session.graph && app.run("graph.open", json!({"graph": index})).is_none() {
                 return;
             }
@@ -144,33 +169,34 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         if let Some(parameters) = assignment {
             app.run("view.3d.assign", parameters);
         }
-        match action {
-            Some((command @ ("view3d" | "reset3d"), graph)) => {
+        let Some((command, document, index)) = action else { return };
+        if !activate(app, document) {
+            return;
+        }
+        match (command, index) {
+            (command @ ("view3d" | "reset3d"), graph) => {
                 app.run("view.3d.outputs", json!({"graph": graph, "reset": command == "reset3d"}));
             }
-            Some(("open", i)) => {
+            ("open", i) => {
                 app.run("graph.open", json!({"graph": i}));
             }
-            Some(("export", i)) => {
+            ("export", i) => {
                 // The export window works on the open graph
                 if app.run("graph.open", json!({"graph": i})).is_some() {
                     app.ui.windows.export = true;
                 }
             }
-            Some(("duplicate", i)) => {
+            ("duplicate", i) => {
                 app.run("graph.duplicate", json!({"graph": i}));
             }
-            Some(("delete", i)) => {
+            ("delete", i) => {
                 app.run("graph.delete", json!({"graph": i}));
             }
             _ => {}
         }
-        if !app.session.pkg.resources.is_empty() {
-            ui.add_space(6.0);
-            ui.label(RichText::new(tr("Resources")).color(tk.text_dim).size(11.0));
-            for r in &app.session.pkg.resources {
-                ui.label(format!("{}  {}  ({} KB)", icon::IMAGE, r.name, r.bytes.len() / 1024));
-            }
-        }
     });
+}
+
+fn activate(app: &mut MaterialCraftApp, document: u64) -> bool {
+    document == app.session.document_id || app.run("package.activate", json!({"document": document})).is_some()
 }

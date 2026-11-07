@@ -270,7 +270,13 @@ impl<'text> SbsReader<'text, '_> {
                     Some(port) => port,
                     None if to.open_inputs => {
                         if let Some(node) = graph.nodes.get_mut(to.index) {
-                            add_placeholder_input(node, sbs_input);
+                            if let Some(instance) = &mut node.instance {
+                                if !instance.inputs.iter().any(|port| port.identifier == sbs_input) {
+                                    instance.inputs.push(materialcraft_core::GraphPort { identifier: sbs_input.into(), type_code: 1 });
+                                }
+                            } else {
+                                add_placeholder_input(node, sbs_input);
+                            }
                         }
                         sbs_input.to_string()
                     }
@@ -402,10 +408,35 @@ impl<'text> SbsReader<'text, '_> {
             || params.into_iter().flat_map(|p| children_named(p, "parameter")).filter(|p| !BASE_PARAMS.contains(&child_value(*p, "name").unwrap_or("")));
 
         let own_graph = dependency.as_deref().is_none_or(|d| d == SELF_DEPENDENCY).then(|| self.graph_names.get(&path).cloned()).flatten();
-        if let Some(sub_graph) = own_graph {
+        let external = dependency.as_deref().filter(|file| *file != SELF_DEPENDENCY && !file.contains("://") && file.to_ascii_lowercase().ends_with(".sbs"));
+        if own_graph.is_some() || external.is_some() {
             let (id, index, node) = push_node(graph, "graph_instance", pos);
             if let Some(node) = node {
-                node.params.insert("graph".into(), Value::Text(sub_graph));
+                if let Some(sub_graph) = own_graph {
+                    node.params.insert("graph".into(), Value::Text(sub_graph));
+                } else {
+                    let comp_node = implementation.parent().and_then(|parent| parent.parent());
+                    let types: HashMap<_, _> = comp_node
+                        .and_then(|node| child_element(node, "compOutputs"))
+                        .into_iter()
+                        .flat_map(|outputs| children_named(outputs, "compOutput"))
+                        .map(|output| {
+                            (child_value(output, "uid").unwrap_or(""), child_value(output, "comptype").and_then(|code| code.parse().ok()).unwrap_or(1))
+                        })
+                        .collect();
+                    node.instance = Some(materialcraft_core::GraphInstance {
+                        package: external.unwrap_or("").into(),
+                        graph: path.clone(),
+                        inputs: Vec::new(),
+                        outputs: bridgings
+                            .iter()
+                            .map(|(uid, identifier)| materialcraft_core::GraphPort {
+                                identifier: identifier.clone(),
+                                type_code: types.get(uid.as_str()).copied().unwrap_or(1),
+                            })
+                            .collect(),
+                    });
+                }
                 for param in instance_params() {
                     if let Some(value) = child_element(param, "paramValue").and_then(sbs_constant) {
                         node.params.insert(child_value(param, "name").unwrap_or("").to_string(), to_natural_value(&value));

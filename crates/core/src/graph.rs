@@ -71,6 +71,37 @@ impl Graph {
         }
     }
 
+    /// All editable Function canvases, including processor and parameter functions
+    pub fn functions(&self) -> impl Iterator<Item = &crate::FunctionGraph> {
+        self.function.iter().chain(self.nodes.iter().flat_map(|node| node.functions.values().chain(node.params.values().flat_map(value_functions))))
+    }
+
+    pub fn functions_mut(&mut self) -> impl Iterator<Item = &mut crate::FunctionGraph> {
+        self.function
+            .iter_mut()
+            .chain(self.nodes.iter_mut().flat_map(|node| node.functions.values_mut().chain(node.params.values_mut().flat_map(value_functions_mut))))
+    }
+
+    pub fn instances(&self) -> impl Iterator<Item = &crate::GraphInstance> {
+        self.nodes
+            .iter()
+            .filter_map(|node| node.instance.as_ref())
+            .chain(self.functions().flat_map(|function| function.nodes.iter().filter_map(|node| node.instance.as_ref())))
+    }
+
+    pub fn instances_mut(&mut self) -> impl Iterator<Item = &mut crate::GraphInstance> {
+        self.function.iter_mut().flat_map(|function| function.nodes.iter_mut().filter_map(|node| node.instance.as_mut())).chain(self.nodes.iter_mut().flat_map(
+            |node| {
+                node.instance.iter_mut().chain(
+                    node.functions
+                        .values_mut()
+                        .chain(node.params.values_mut().flat_map(value_functions_mut))
+                        .flat_map(|function| function.nodes.iter_mut().filter_map(|node| node.instance.as_mut())),
+                )
+            },
+        ))
+    }
+
     pub fn kind(&self) -> GraphKind {
         if self.function.is_some() { GraphKind::Function } else { GraphKind::Material }
     }
@@ -163,6 +194,36 @@ impl Graph {
     pub fn size_px(&self) -> [u32; 2] {
         [1 << self.size[0].clamp(MIN_SIZE_LOG2, MAX_SIZE_LOG2), 1 << self.size[1].clamp(MIN_SIZE_LOG2, MAX_SIZE_LOG2)]
     }
+}
+
+fn value_functions(value: &Value) -> impl Iterator<Item = &crate::FunctionGraph> {
+    let (function, pattern) = match value {
+        Value::Function(function) => (Some(function.as_ref()), None),
+        Value::PatternGraph(pattern) => (None, Some(pattern.as_ref())),
+        _ => (None, None),
+    };
+    function.into_iter().chain(
+        pattern
+            .into_iter()
+            .flat_map(|pattern| &pattern.nodes)
+            .flat_map(|node| node.parameters.values())
+            .filter_map(|value| if let Value::Function(function) = value { Some(function.as_ref()) } else { None }),
+    )
+}
+
+fn value_functions_mut(value: &mut Value) -> impl Iterator<Item = &mut crate::FunctionGraph> {
+    let (function, pattern) = match value {
+        Value::Function(function) => (Some(function.as_mut()), None),
+        Value::PatternGraph(pattern) => (None, Some(pattern.as_mut())),
+        _ => (None, None),
+    };
+    function.into_iter().chain(
+        pattern
+            .into_iter()
+            .flat_map(|pattern| &mut pattern.nodes)
+            .flat_map(|node| node.parameters.values_mut())
+            .filter_map(|value| if let Value::Function(function) = value { Some(function.as_mut()) } else { None }),
+    )
 }
 
 #[cfg(test)]

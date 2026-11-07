@@ -20,7 +20,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             always,
             new_graph
         ),
-        cmd!("file.newPackage", "Empty package", ["File", "New"], None, "{name?} replaces the session with an empty package", always, new_package),
+        cmd!("file.newPackage", "Empty package", ["File", "New"], None, "{name?} opens a new package alongside the existing packages", always, new_package),
         cmd!(
             "file.open",
             "Open...",
@@ -94,11 +94,11 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
 fn new_package(s: &mut Session, p: &J) -> Result<J> {
     let mut pkg = Package::new(strp(p, "name").unwrap_or("Untitled package"));
     pkg.graphs.push(template("pbr", "New_graph", 10)?);
-    replace_package(s, pkg, None);
+    s.open_package(pkg, None)?;
     Ok(json!({"name": s.pkg.name}))
 }
 
-/// Make `pkg` the session's document (after open/new): history and views reset
+/// Replace the active document explicitly, resetting its history and views
 pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
     s.pkg = pkg;
     s.clipboard = None;
@@ -130,17 +130,31 @@ pub fn open_bytes(session: &mut Session, bytes: &[u8], name: Option<String>) -> 
 }
 
 pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<String>, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<()> {
+    let name = name.map(|path| crate::document_path::normalize(&path));
+    if let Some(name) = &name
+        && let Some((id, ..)) = session.open_packages().into_iter().find(|entry| entry.2 == Some(name.as_str()))
+    {
+        return session.activate_document(id);
+    }
     if materialcraft_formats::material::is_material(bytes) {
         let (manifest, source) = materialcraft_formats::material::read_material(bytes)?;
-        replace_package(session, materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None)?.pkg, None);
+        session.open_package(materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None)?.pkg, None)?;
         session.graph = session.pkg.graph_by_name(&manifest.graph).map_or(0, |(index, _)| index);
         session.open_material_preview();
         return Ok(());
     }
 
-    let read = materialcraft_formats::sbs::read_sbs(bytes, name.as_deref().unwrap_or(""), linked)?;
+    let mut read = materialcraft_formats::sbs::read_sbs(bytes, name.as_deref().unwrap_or(""), linked)?;
+    if let Some(path) = &name {
+        crate::linked_files::normalize_references(&mut read.pkg, path);
+    }
+    read.pkg.dependencies = session.pkg.dependencies.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let link_warnings = crate::linked_files::load(&mut read.pkg);
     let path = if read.warnings.is_empty() { name } else { None };
-    replace_package(session, read.pkg, path);
+    #[cfg(not(target_arch = "wasm32"))]
+    read.warnings.extend(link_warnings);
+    session.open_package(read.pkg, path)?;
     for warning in &read.warnings {
         session.warn(warning.clone());
     }
@@ -149,7 +163,19 @@ pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<Strin
 }
 
 pub fn save_bytes(session: &Session) -> Result<Vec<u8>> {
-    Ok(materialcraft_formats::sbs::write_sbs(&session.pkg)?)
+    save_bytes_at(session, session.path.as_deref())
+}
+
+fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
+    let mut package = session.pkg.clone();
+    if let Some(path) = path {
+        for instance in package.graphs.iter_mut().flat_map(|graph| graph.instances_mut()) {
+            if !instance.package.is_empty() {
+                instance.package = crate::document_path::relative(path, &instance.package);
+            }
+        }
+    }
+    Ok(materialcraft_formats::sbs::write_sbs(&package)?)
 }
 
 /// Largest file an SBS package may link to
@@ -206,9 +232,14 @@ fn save(s: &mut Session, p: &J) -> Result<J> {
         None => s.path.clone().ok_or_else(|| bad("file.save", "the package has no file yet (new, or opened from another program): give a `path`"))?,
     };
 
-    let bytes = save_bytes(s)?;
+    let path = crate::document_path::normalize(&path);
+    if s.open_packages().into_iter().any(|entry| entry.0 != s.document_id && entry.2 == Some(path.as_str())) {
+        return Err(bad("file.save", "another open package already uses this file"));
+    }
+    let bytes = save_bytes_at(s, Some(&path))?;
     materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
     s.path = Some(path.clone());
+    s.refresh_links();
     s.modified = false;
     s.log(format!("Saved {path}"));
     Ok(json!({"path": path, "bytes": bytes.len()}))

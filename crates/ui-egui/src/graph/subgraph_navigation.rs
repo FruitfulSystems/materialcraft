@@ -17,9 +17,23 @@ pub(crate) fn parent(app: &mut MaterialCraftApp) {
     } else if crate::pattern::active(app) {
         app.pattern_editor = None;
     } else if let Some(parent) = app.graph_parents.pop()
-        && open_graph(app, parent.graph)
+        && open_document_graph(app, parent.document, parent.graph)
     {
-        app.session.selection = parent.selection.into_iter().filter(|id| app.session.graph().is_ok_and(|graph| graph.node(*id).is_ok())).collect();
+        app.session.selection = parent
+            .selection
+            .into_iter()
+            .filter(|id| {
+                app.session.graph().is_ok_and(|graph| {
+                    if let Some(function) = &graph.function {
+                        u32::try_from(id.0).ok().is_some_and(|id| function.node(id).is_some())
+                    } else {
+                        graph.node(*id).is_ok()
+                    }
+                })
+            })
+            .collect();
+        app.function_editor = parent.function;
+        app.pattern_editor = parent.pattern;
         app.ui.graph_camera = parent.camera;
         app.graph.framed_graph = Some(parent.graph);
         app.ui.frame_all = false;
@@ -37,11 +51,37 @@ pub(crate) fn open_function(app: &mut MaterialCraftApp, node: materialcraft_engi
 }
 
 pub(crate) fn open_instance(app: &mut MaterialCraftApp, graph: usize) {
-    let parent = GraphParent { graph: app.session.graph, selection: app.session.selection.clone(), camera: app.ui.graph_camera };
+    let parent = GraphParent::capture(app);
     if open_graph(app, graph) {
         app.graph_parents.push(parent);
         app.ui.dock.focus(Panel::Graph);
     }
+}
+
+pub(crate) fn open_external_instance(app: &mut MaterialCraftApp, result: &serde_json::Value, graph: usize) {
+    let parent = GraphParent::capture(app);
+    let parents = std::mem::take(&mut app.graph_parents);
+    let opened = if let Some(document) = result.get("document").and_then(serde_json::Value::as_u64) {
+        open_document_graph(app, document, graph)
+    } else if let Some(path) = result.get("path").and_then(serde_json::Value::as_str) {
+        app.run("file.open", json!({"path": path})).is_some() && open_graph(app, graph)
+    } else {
+        false
+    };
+    app.graph_parents = parents;
+    if opened {
+        app.graph_parents.push(parent);
+    } else {
+        app.function_editor = parent.function;
+        app.pattern_editor = parent.pattern;
+    }
+}
+
+fn open_document_graph(app: &mut MaterialCraftApp, document: u64, graph: usize) -> bool {
+    let parents = std::mem::take(&mut app.graph_parents);
+    let opened = (document == app.session.document_id || app.run("package.activate", json!({"document": document})).is_some()) && open_graph(app, graph);
+    app.graph_parents = parents;
+    opened
 }
 
 fn open_graph(app: &mut MaterialCraftApp, index: usize) -> bool {
@@ -54,8 +94,18 @@ fn open_graph(app: &mut MaterialCraftApp, index: usize) -> bool {
 }
 
 pub(crate) fn breadcrumb(app: &MaterialCraftApp) -> String {
-    let mut path: Vec<String> =
-        app.graph_parents.iter().filter_map(|parent| app.session.pkg.graphs.get(parent.graph).map(|graph| graph.name.clone())).collect();
+    let mut path: Vec<String> = app
+        .graph_parents
+        .iter()
+        .filter_map(|parent| {
+            app.session
+                .open_packages()
+                .into_iter()
+                .find(|entry| entry.0 == parent.document)
+                .and_then(|entry| entry.1.graphs.get(parent.graph))
+                .map(|graph| graph.name.clone())
+        })
+        .collect();
     if let Ok(graph) = app.session.graph() {
         path.push(graph.name.clone());
         let owner = app.function_editor.as_ref().and_then(|editor| editor.node).or_else(|| app.pattern_editor.as_ref().map(|editor| editor.node));

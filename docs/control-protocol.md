@@ -73,7 +73,11 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | Command | Params |
 |---|---|
 | `file.new` | `{template?, name?, size?}`; templates from `graph.templates` (`empty`, `pbr`, `bricks`, `stone_tiles`, `wood`, `rusty_metal`, `fabric`, `ground`) |
-| `graph.node.edit` | `{}` resolves the selected FX-Map, processor or local graph instance to `{kind, node, parameter?, graph?}`; use `ui.menu.invoke` to enter it in the graph panel |
+| `graph.node.edit` | `{}` resolves the selected FX-Map, processor or graph instance to `{kind, node, parameter?, graph?, document?, path?}`; use `ui.menu.invoke` to open its reference in the graph panel |
+| `graph.node.info` | `{id}` returns `{text}` describing a main-graph node without changing the document or node clipboard |
+| `graph.instance.add` | `{document, graph, function?: FunctionGraphTarget, at?, snapToGrid?}` adds a linked graph instance from an open package; requires a source output and rejects dependency cycles |
+| `package.activate` | `{document}` activates an open package while retaining each package's selection, views and undo history |
+| `package.close` / `package.closeAll` | `{document?, discard?}` / `{discard?}` closes one/all packages; modified packages require explicit discard |
 | `graph.pattern.set` | `{id, pattern}` replaces an FX-Map subgraph with cycle validation and undo |
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |
 | `graph.connect` / `graph.disconnect` | `{from, fromPort?, to, toPort?}` / `{to, toPort}` |
@@ -88,6 +92,35 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
+
+## Linked packages
+
+Opening an SBS file or creating a package retains the other open packages. `session.inspect`
+includes `documents` with each package's document id, path, active state, modified state and graphs.
+Explorer graph drags use that document id and graph name with `graph.instance.add`.
+
+Main graphs with outputs can be instanced in other main graphs. Cross-file sources must be saved
+first; the target stores a file reference and connector metadata, not a copy of the source nodes.
+Unsaved source edits update open instances and mark dependent packages modified, including
+transitive dependencies. Each package keeps its own undo history. Native reopening resolves saved
+file references even when the sources are not open in Explorer. Missing source files retain their
+cached connectors and wires and report a cook error.
+
+Function Graphs with designated outputs can be instanced in Function canvases, including Pixel
+Processor, Value Processor and parameter functions. Pass `function` for embedded canvases; the
+active standalone Function Graph is inferred when it is omitted. FX-Map canvases reject instances.
+The source's exposed inputs become typed connectors; missing connections warn when the instance
+feeds the designated output. An instance can itself be designated as the output. Function calls
+retain separate variable scopes and share the evaluator's execution budget.
+
+`graph.instance.reference {id, function?: FunctionGraphTarget}` resolves the source document, path
+and graph index without changing the package. The UI's Open reference action (Ctrl+E) uses this
+command and retains the parent Function/processor canvas for return navigation. Double-clicking
+an instance has no additional action.
+
+Source-file watching and global Library SBS assets are not implemented yet.
+References currently identify graphs by name; renaming an external source graph requires recreating
+its instances. Save As creates a separate file and does not redirect references to the original.
 
 ## 3D material assignment
 
@@ -182,7 +215,8 @@ cycle, capacity, ID and position validation.
 
 
 A function has `nodes` and an optional `output` node id. Each node has `id`, native `op`,
-`inputs` (source ids or null for unwired ports), optional `value`, `type_code` and `pos`.
+`inputs` (source ids or null for unwired ports), optional `value`, `type_code` and `pos`. Function instances use `op: "instance"` and
+`instance: {package, graph, inputs, outputs}`; resolved call bodies are runtime-only.
 For example, `const_float1` supplies a scalar and `mul` multiplies its `a` and `b` inputs.
 The catalog in `crates/nodes/src/function/catalog.rs` defines all native operation and port ids.
 Processors and dynamic parameters use the same function representation. Graph validation and

@@ -94,15 +94,15 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         geometry.rects.push((materialcraft_engine::core::NodeId(u64::from(id)), screen_rect));
 
         let definition = materialcraft_engine::nodes::function::definition(&node.op);
-        let label = definition.map_or("?", |definition| definition.label);
+        let label = materialcraft_engine::nodes::function::node_label(node);
         let dot = node.op == "passthrough";
         let show_labels = crate::graph::port_label::visible(ui, screen_rect);
         super::node_canvas::paint(&painter, screen_rect, editor.zoom, node, definition, selected.contains(&id), graph.output == Some(id), &tokens);
 
         let port_radius = (4.5 * editor.zoom).clamp(2.5, 7.0);
         let port_color = crate::graph::port_color(materialcraft_engine::nodes::PortKind::Value);
-        if let Some(definition) = definition {
-            for (input_index, identifier) in definition.inputs.iter().enumerate() {
+        {
+            for (input_index, identifier) in materialcraft_engine::nodes::function::input_identifiers(node).enumerate() {
                 let position = camera.to_screen(in_port(node, bounds, input_index));
                 painter.circle(position, port_radius, port_color, Stroke::new(1.0, Color32::from_gray(0x18)));
                 if show_labels {
@@ -120,7 +120,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
                     slot: Some(input_index),
                     position,
                     radius: if dot { (3.5 * editor.zoom).max(2.0) } else { 9.0 },
-                    label: port_label(identifier),
+                    label: port_label(identifier).into(),
                 });
             }
         }
@@ -142,7 +142,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             slot: None,
             position: output_position,
             radius: if dot { (3.5 * editor.zoom).max(2.0) } else { 9.0 },
-            label: port_label("output"),
+            label: port_label("output").into(),
         });
 
         let body = ui.interact(screen_rect, ui.scope_id().with(("fn-node", id)), Sense::click_and_drag());
@@ -185,7 +185,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         .map(|port| crate::graph::PortHit {
             node: materialcraft_engine::core::NodeId(u64::from(port.node)),
             port: port.slot.map_or_else(|| "output".into(), |slot| slot.to_string()),
-            label: port.label.into(),
+            label: port.label.clone(),
             output: port.slot.is_none(),
             kind: materialcraft_engine::nodes::PortKind::Value,
             pos: port.position,

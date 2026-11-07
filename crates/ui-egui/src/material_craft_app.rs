@@ -109,6 +109,7 @@ impl MaterialCraftApp {
         if matches!(
             id,
             "graph.node.add"
+                | "graph.instance.add"
                 | "graph.node.move"
                 | "graph.frame.move"
                 | "graph.wire.insertDot"
@@ -145,11 +146,16 @@ impl MaterialCraftApp {
     }
 
     pub(crate) fn close_subgraph_after(&mut self, command: &str) {
-        if command.starts_with("file.new") || matches!(command, "file.open" | "graph.open" | "graph.delete" | "graph.duplicate") {
+        if command.starts_with("file.new")
+            || command.starts_with("package.")
+            || matches!(command, "file.open" | "graph.open" | "graph.delete" | "graph.duplicate")
+        {
             self.graph.inspected_node = None;
             self.graph_parents.clear();
             self.pattern_editor = None;
             self.function_editor = None;
+            self.graph.selected_wires.clear();
+            self.graph.cancel_gesture();
         }
         self.reconcile_editors();
         if (materialcraft_engine::selection_commands::supports(command) || matches!(command, "edit.undo" | "edit.redo"))

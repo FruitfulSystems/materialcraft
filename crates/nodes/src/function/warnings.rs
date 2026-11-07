@@ -4,28 +4,38 @@ use std::collections::BTreeMap;
 pub fn warnings(graph: &FunctionGraph) -> Vec<String> {
     let Some(output) = super::output_node(graph) else { return vec!["No output node defined".into()] };
 
-    if has_value_source(graph, output.id) { Vec::new() } else { vec!["Output node has no connected value source".into()] }
-}
-
-fn has_value_source(graph: &FunctionGraph, output: u32) -> bool {
     // Match the evaluator's node budget to bound work on malformed graphs
     if graph.nodes.len() > 4096 {
-        return false;
+        return vec!["Function exceeds the 4096-node limit".into()];
     }
-
     let mut remaining: BTreeMap<_, _> = graph.nodes.iter().map(|node| (node.id, node)).collect();
-    let mut pending = vec![output];
+    let mut pending = vec![output.id];
+    let mut has_value_source = false;
     while let Some(id) = pending.pop() {
         let Some(node) = remaining.remove(&id) else { continue };
-        let Some(definition) = super::definition(&node.op) else { continue };
 
-        if definition.inputs.is_empty() {
-            return true;
+        if let Some(instance) = &node.instance {
+            if node.inputs.len() != instance.inputs.len() || node.inputs.iter().any(Option::is_none) {
+                return vec![format!("{}: missing input connection", instance.graph)];
+            }
+            match &node.source {
+                Some(Err(error)) => return vec![error.clone()],
+                None => return vec![format!("{}: source is unavailable", instance.graph)],
+                Some(Ok(source)) => {
+                    let warnings = warnings(source);
+                    if !warnings.is_empty() {
+                        return warnings;
+                    }
+                }
+            }
+        } else if super::definition(&node.op).is_none() {
+            continue;
         }
-
-        pending.extend(node.inputs.iter().take(definition.inputs.len()).flatten().copied());
+        let inputs = super::input_identifiers(node).count();
+        has_value_source |= inputs == 0;
+        pending.extend(node.inputs.iter().take(inputs).flatten().copied());
     }
-    false
+    if has_value_source { Vec::new() } else { vec!["Output node has no connected value source".into()] }
 }
 
 #[cfg(test)]

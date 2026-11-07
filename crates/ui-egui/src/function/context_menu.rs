@@ -25,6 +25,11 @@ fn node_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         ui.close();
     }
     ui.separator();
+    if editor.current(app).and_then(|graph| graph.node(node)).is_some_and(|node| node.instance.is_some())
+        && edit_menu::button(ui, "Open reference", "graph.node.edit", true)
+    {
+        editor.open_reference = Some(node);
+    }
     if let Some(graph) = editor.current(app)
         && graph.node(node).is_some_and(|node| materialcraft_engine::nodes::function::can_be_output(&node.op))
     {

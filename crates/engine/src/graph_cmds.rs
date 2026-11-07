@@ -96,6 +96,11 @@ fn rename(s: &mut Session, p: &J) -> Result<J> {
         let old = std::mem::replace(&mut s.pkg.graph_mut(i)?.name, name.clone());
         // Instances follow the rename
         for g in &mut s.pkg.graphs {
+            for instance in g.instances_mut() {
+                if instance.package.is_empty() && instance.graph == old {
+                    instance.graph = name.clone();
+                }
+            }
             for n in g.nodes.iter_mut().filter(|n| n.def == "graph_instance") {
                 if n.params.get("graph") == Some(&Value::Text(old.clone())) {
                     n.params.insert("graph".into(), Value::Text(name.clone()));
@@ -410,6 +415,9 @@ fn from_selection(s: &mut Session, p: &J) -> Result<J> {
             sub.node_mut(id)?.params.extend([("identifier".to_string(), Value::Text(ident.clone())), ("usage".to_string(), Value::Enum(usage))]);
             sub.connect(c.from, &c.from_port, id, "input")?;
             outputs.push((c.from, c.from_port.clone(), ident));
+        }
+        if !sub.nodes.iter().any(|node| node.def == "output") {
+            return Err(bad("graph.createFromSelection", "the selection needs an output node or an outgoing connection before it can become an instance"));
         }
         s.pkg.graphs.push(sub);
         let g = s.graph_mut()?;

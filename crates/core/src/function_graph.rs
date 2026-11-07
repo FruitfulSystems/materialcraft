@@ -28,8 +28,16 @@ impl FunctionGraph {
     pub fn add(&mut self, operation: &str, inputs: &[u32], value: Option<Value>) -> u32 {
         let id = self.next_id();
         let horizontal_position = self.nodes.len() as f32 * 140.0;
-        let node =
-            FunctionNode { id, type_code: 0, op: operation.into(), inputs: inputs.iter().copied().map(Some).collect(), value, pos: [horizontal_position, 0.0] };
+        let node = FunctionNode {
+            id,
+            instance: None,
+            source: None,
+            type_code: 0,
+            op: operation.into(),
+            inputs: inputs.iter().copied().map(Some).collect(),
+            value,
+            pos: [horizontal_position, 0.0],
+        };
 
         self.nodes.push(node);
         id

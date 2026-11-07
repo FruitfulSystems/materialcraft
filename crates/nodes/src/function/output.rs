@@ -1,7 +1,7 @@
 use materialcraft_core::{FunctionGraph, FunctionNode};
 
 pub fn can_be_output(operation: &str) -> bool {
-    operation != "passthrough" && super::definition(operation).is_some()
+    operation == "instance" || (operation != "passthrough" && super::definition(operation).is_some())
 }
 
 pub fn output_node(graph: &FunctionGraph) -> Option<&FunctionNode> {
