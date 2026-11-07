@@ -32,7 +32,10 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2, node: Node
         action(app, ui, "Add Navigation pin", "graph.pin.add", json!({"at": [at.x, at.y]}));
     });
     ui.separator();
-    action(app, ui, "Open reference", "graph.node.edit", Value::Null);
+    if ui.add_enabled(crate::menus::enabled(app, "graph.node.edit"), egui::Button::new(tr("Open reference"))).clicked() {
+        crate::menus::invoke(app, ui.ctx(), "graph.node.edit");
+        ui.close();
+    }
     ui.separator();
     let label = format!("{} ({})", tr("Create graph from selection"), app.session.selection.len());
     action(app, ui, &label, "graph.createFromSelection", Value::Null);

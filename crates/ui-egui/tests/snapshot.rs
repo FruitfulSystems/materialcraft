@@ -112,14 +112,18 @@ fn explorer_drags_a_linked_graph_between_open_packages() {
     assert_eq!(harness.state().session.document_id, target_document, "double-click must not open the instance source");
     assert_eq!(harness.state().session.graph().unwrap().name, "Target canvas");
     assert_eq!(harness.state().session.history(), ["Add graph instance"]);
+    harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::COMMAND, egui::Key::E);
+    settle(&mut harness, 3);
+    assert_eq!(harness.state().session.document_id, target_document, "Ctrl+E must not open the instance source");
+    assert_eq!(harness.state().session.graph().unwrap().name, "Target canvas");
+    assert_eq!(harness.state().session.history(), ["Add graph instance"]);
     harness.get(By::new().role(egui::accesskit::Role::Button).label("Reusable tint")).click_secondary();
     settle(&mut harness, 2);
-    for label in ["View output in 2D view", "Copy info to clipboard", "Open reference Ctrl+E", "Create graph from selection (1)", "Duplicate selection Ctrl+D"]
-    {
+    for label in ["View output in 2D view", "Copy info to clipboard", "Open reference", "Create graph from selection (1)", "Duplicate selection Ctrl+D"] {
         assert!(harness.query(By::new().label(label)).is_some(), "missing instance action: {label}");
     }
     save(&mut harness, &directory, "linked-instance-context-menu");
-    harness.get(By::new().label("Open reference Ctrl+E")).click();
+    harness.get(By::new().label("Open reference")).click();
     settle(&mut harness, 4);
     assert_eq!(harness.state().session.document_id, 0);
     assert_eq!(harness.state().session.graph().unwrap().name, "Reusable tint");

@@ -303,7 +303,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         }
     });
     for id in fire {
-        invoke(app, ctx, id);
+        if crate::graph::editor_actions::shortcut_enabled(app, id) {
+            invoke(app, ctx, id);
+        }
     }
 }
 

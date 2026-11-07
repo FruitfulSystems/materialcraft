@@ -57,10 +57,14 @@ fn function_instances_drop_into_compatible_canvases_and_return_from_their_source
         };
         let mut harness = harness(app, 1600.0, 960.0);
         settle(&mut harness, 5);
-        let context = harness.ctx.clone();
         if owner.is_some() {
-            materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "graph.node.edit");
+            harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::COMMAND, egui::Key::E);
             settle(&mut harness, 4);
+            if kind == "fx_map" {
+                assert!(harness.state().pattern_editor.is_some());
+            } else {
+                assert_eq!(harness.state().function_editor.as_ref().unwrap().node, owner);
+            }
         }
         let original = harness.state().session.pkg.clone();
         drag(&mut harness, "Incomplete source");
@@ -87,10 +91,16 @@ fn function_instances_drop_into_compatible_canvases_and_return_from_their_source
         assert_eq!(harness.state().function_editor.as_ref().unwrap().node, owner);
         assert_eq!(target.current(&harness.state().session).unwrap().output, Some(instance));
         assert_eq!(harness.state().session.history(), history);
+        harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::COMMAND, egui::Key::E);
+        settle(&mut harness, 3);
+        assert_eq!(harness.state().session.document_id, target_document, "Ctrl+E must not open the {kind} instance source");
+        assert_eq!(harness.state().function_editor.as_ref().unwrap().node, owner);
+        assert_eq!(target.current(&harness.state().session).unwrap().output, Some(instance));
+        assert_eq!(harness.state().session.history(), history);
         harness.get(By::new().role(egui::accesskit::Role::Button).label("Reusable color")).click_secondary();
         settle(&mut harness, 2);
         save(&mut harness, &directory, &format!("function-instance-{kind}-menu"));
-        harness.get(By::new().label("Open reference Ctrl+E")).click();
+        harness.get(By::new().label("Open reference")).click();
         settle(&mut harness, 4);
         assert_eq!(harness.state().session.document_id, 0);
         assert_eq!(harness.state().session.graph().unwrap().name, "Reusable color");

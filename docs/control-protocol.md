@@ -114,9 +114,10 @@ feeds the designated output. An instance can itself be designated as the output.
 retain separate variable scopes and share the evaluator's execution budget.
 
 `graph.instance.reference {id, function?: FunctionGraphTarget}` resolves the source document, path
-and graph index without changing the package. The UI's Open reference action (Ctrl+E) uses this
-command and retains the parent Function/processor canvas for return navigation. Double-clicking
-an instance has no additional action.
+and graph index without changing the package. The UI's Open reference action uses this command
+and retains the parent Function/processor canvas for return navigation. Double-clicking an instance
+has no additional action, and Ctrl+E does not open its source. Ctrl+E still opens the embedded canvas
+of a Pixel Processor, Value Processor or FX-Map node.
 
 Source-file watching and global Library SBS assets are not implemented yet.
 References currently identify graphs by name; renaming an external source graph requires recreating
