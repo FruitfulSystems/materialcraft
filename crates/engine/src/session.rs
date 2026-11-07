@@ -9,7 +9,9 @@ use materialcraft_eval::{Cache, Cooked, Options};
 use materialcraft_image::Image;
 use serde::{Deserialize, Serialize};
 
-use crate::{EngineError, Result};
+use crate::snapshot::Snapshot;
+use crate::view3d_settings::{Camera3d, Display3d, Lights3d, Material3d, Renderer3d};
+use crate::{AnnotationSelection, Clip, EngineError, Result};
 
 /// Undo keeps this many steps unless the session says otherwise.
 pub const MAX_UNDO: usize = 200;
@@ -32,11 +34,9 @@ pub struct View3d {
     pub environment: String,
     pub env_rotation: f32,
     pub exposure: f32,
-    /// How far the height output raises the surface (white above black), in mesh radii; 0 = off.
+    /// Height relief in mesh radii
     pub height_scale: f32,
-    /// The height (0..1) that stays on the surface: 0 = the relief rises out of the mesh, 0.5 = centered on it.
     pub height_level: f32,
-    /// Flip green when reading DirectX normal maps; false matches the Normal node's OpenGL default.
     pub normal_y_flip: bool,
     pub show_axis: bool,
     pub show_grid: bool,
@@ -57,177 +57,6 @@ pub struct View3d {
     pub display: Display3d,
     /// Materials ▸ Default ▸ Edit properties.
     pub material: Material3d,
-}
-
-/// The 3D view's camera properties.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Camera3d {
-    /// Millimetres (a 36 mm frame): 35 mm ≈ 35° vertical field of view on a 3:2 frame.
-    pub focal_length: f32,
-    /// `perspective` or `orthographic`.
-    pub projection: String,
-    /// `backdrop`, `color` or `environment`.
-    pub background: String,
-    /// Linear RGBA.
-    pub background_color: [f32; 4],
-    /// Render at a fixed resolution (Save Render) instead of the viewport's.
-    pub override_resolution: bool,
-    pub resolution: [u32; 2],
-    /// Multiplier on the render resolution.
-    pub resolution_scale: f32,
-    /// Clip planes from the scene size; else `near`/`far` in mesh radii from the camera.
-    pub auto_clip: bool,
-    pub near: f32,
-    pub far: f32,
-}
-
-impl Default for Camera3d {
-    fn default() -> Self {
-        Camera3d {
-            focal_length: 35.0,
-            projection: "perspective".into(),
-            background: "backdrop".into(),
-            background_color: [0.016, 0.016, 0.016, 1.0],
-            override_resolution: false,
-            resolution: [1920, 1080],
-            resolution_scale: 1.0,
-            auto_clip: true,
-            near: 0.1,
-            far: 100.0,
-        }
-    }
-}
-
-impl Camera3d {
-    /// Vertical field of view in degrees for the focal length (36 × 24 mm frame).
-    pub fn fov(&self) -> f32 {
-        (2.0 * (12.0 / self.focal_length.max(1.0)).atan()).to_degrees().clamp(5.0, 120.0)
-    }
-
-    fn sanitize(&mut self) {
-        let d = Camera3d::default();
-        let f = |v: f32, lo: f32, hi: f32, dv: f32| if v.is_finite() { v.clamp(lo, hi) } else { dv };
-        self.focal_length = f(self.focal_length, 4.0, 1200.0, d.focal_length);
-        if !["perspective", "orthographic"].contains(&self.projection.as_str()) {
-            self.projection = d.projection;
-        }
-        if !["backdrop", "color", "environment"].contains(&self.background.as_str()) {
-            self.background = d.background;
-        }
-        for (i, v) in self.background_color.iter_mut().enumerate() {
-            *v = f(*v, 0.0, 1.0, d.background_color[i]);
-        }
-        self.resolution = self.resolution.map(|v| v.clamp(16, 8192));
-        self.resolution_scale = f(self.resolution_scale, 0.1, 4.0, d.resolution_scale);
-        self.near = f(self.near, 0.001, 1000.0, d.near);
-        self.far = f(self.far, 0.01, 10_000.0, d.far).max(self.near * 1.01);
-    }
-}
-
-/// The 3D view's lights: an ambient term and two point lights.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Lights3d {
-    pub ambient_on: bool,
-    /// Linear RGB.
-    pub ambient: [f32; 3],
-    pub point: [materialcraft_geom::preview::PointLight; 2],
-}
-
-impl Default for Lights3d {
-    fn default() -> Self {
-        Lights3d { ambient_on: true, ambient: [0.0; 3], point: materialcraft_geom::preview::PointLight::DEFAULTS }
-    }
-}
-
-impl Lights3d {
-    fn sanitize(&mut self) {
-        for v in self.ambient.iter_mut() {
-            *v = if v.is_finite() { v.clamp(0.0, 16.0) } else { 0.0 };
-        }
-        let d = materialcraft_geom::preview::PointLight::DEFAULTS;
-        self.point = [self.point[0].sanitized(d[0]), self.point[1].sanitized(d[1])];
-    }
-}
-
-/// Renderer ▸ Edit settings.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Renderer3d {
-    pub use_viewport_resolution: bool,
-    pub resolution: [u32; 2],
-    /// Resolution scale of the viewport render (0.25..2).
-    pub scale: f32,
-    /// Supersampling of the resting frame (1..4 per axis).
-    pub samples: u32,
-    /// Ray-traced ambient occlusion rays per sample (0 = off).
-    pub ao_rays: u32,
-}
-
-impl Default for Renderer3d {
-    fn default() -> Self {
-        Renderer3d { use_viewport_resolution: true, resolution: [1920, 1080], scale: 1.0, samples: 2, ao_rays: 0 }
-    }
-}
-
-impl Renderer3d {
-    fn sanitize(&mut self) {
-        self.resolution = self.resolution.map(|v| v.clamp(16, 4096));
-        self.scale = if self.scale.is_finite() { self.scale.clamp(0.25, 2.0) } else { 1.0 };
-        self.samples = self.samples.clamp(1, 4);
-        self.ao_rays = self.ao_rays.min(64);
-    }
-}
-
-/// Display menu toggles.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Display3d {
-    pub wireframe: bool,
-    pub backface_culling: bool,
-    pub bounding_box: bool,
-    /// Draw the point lights.
-    pub lights: bool,
-    /// Overlay the render resolution.
-    pub resolution: bool,
-    /// Overlay the scene statistics (triangles, maps).
-    pub stats: bool,
-    /// Overlay the frame rate.
-    pub fps: bool,
-}
-
-/// Materials ▸ Default: the shading model and what each channel is without a map.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Material3d {
-    pub shader: materialcraft_geom::preview::Shader,
-    pub common: materialcraft_geom::preview::Common,
-    pub use_map: materialcraft_geom::preview::MapUse,
-    /// Displacement subdivision budget multiplier (0.1..4).
-    pub tessellation: f32,
-    /// Extra UV scale of the material on the mesh.
-    pub uv_scale: [f32; 2],
-}
-
-impl Default for Material3d {
-    fn default() -> Self {
-        Material3d {
-            shader: materialcraft_geom::preview::Shader::OpenPbr,
-            common: materialcraft_geom::preview::Common::default(),
-            use_map: materialcraft_geom::preview::MapUse::default(),
-            tessellation: 1.0,
-            uv_scale: [1.0, 1.0],
-        }
-    }
-}
-
-impl Material3d {
-    fn sanitize(&mut self) {
-        self.common = self.common.sanitized();
-        self.tessellation = if self.tessellation.is_finite() { self.tessellation.clamp(0.1, 4.0) } else { 1.0 };
-        self.uv_scale = self.uv_scale.map(|v| if v.is_finite() { v.clamp(0.01, 64.0) } else { 1.0 });
-    }
 }
 
 impl View3d {
@@ -315,24 +144,6 @@ pub struct View2d {
     pub histogram: bool,
 }
 
-#[derive(Clone)]
-struct Snapshot {
-    pkg: Package,
-    graph: usize,
-    selection: Vec<NodeId>,
-    label: String,
-    modified: bool,
-    dirty: bool,
-    cook_epoch: u64,
-}
-
-/// Nodes and connections copied to the clipboard (as JSON, so other sessions can paste them).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Clip {
-    pub nodes: Vec<materialcraft_core::Node>,
-    pub connections: Vec<materialcraft_core::Connection>,
-}
-
 /// The prefix of warning lines in [`Session::log`].
 pub const WARNING_PREFIX: &str = "Warning: ";
 
@@ -343,8 +154,12 @@ pub struct Session {
     /// Index of the graph being edited.
     pub graph: usize,
     pub selection: Vec<NodeId>,
+    pub annotation_selection: Option<AnnotationSelection>,
     pub view2d: View2d,
     pub view3d: View3d,
+    pub material_preview: crate::MaterialPreview,
+    pub(crate) cooked_graph: Option<usize>,
+    pub(crate) material_cooked: std::collections::BTreeMap<usize, Cooked>,
     /// Cap on node output size while editing (`None` = full size).
     pub preview_size: Option<u32>,
     /// 3D view camera preferences (set with [`Session::set_camera_prefs`]).
@@ -354,12 +169,12 @@ pub struct Session {
     /// What the last opened SBS package held that MaterialCraft couldn't read; empty after a clean open.
     pub load_warnings: Vec<String>,
     pub clipboard: Option<Clip>,
+    pub embedded_clipboard: Option<crate::EmbeddedClipboard>,
     /// The last cook of the open graph.
     pub cooked: Cooked,
     /// Set when the graph changed and needs cooking.
     pub dirty: bool,
-    /// Bumped by every synchronous [`Session::cook`]; a background cook that started before the
-    /// bump holds stale results and must not replace `cooked`.
+    /// Synchronous cooks invalidate older worker results
     pub cook_epoch: u64,
     /// Cooked node outputs, shared with background cooks.
     pub cache: Arc<Mutex<Cache>>,
@@ -373,7 +188,6 @@ pub struct Session {
     redo: Vec<Snapshot>,
     /// Edits with the same key coalesce into one undo step (slider drags).
     merge_key: Option<String>,
-    /// Snapshot and successful-edit flag for the current command group.
     group: Option<(Snapshot, bool)>,
     decoded: Arc<Mutex<HashMap<(u64, bool), Image>>>,
 }
@@ -381,10 +195,14 @@ pub struct Session {
 impl Session {
     pub fn new(pkg: Package) -> Session {
         Session {
+            material_preview: crate::MaterialPreview::for_graph(&pkg, 0),
+            cooked_graph: None,
+            material_cooked: std::collections::BTreeMap::new(),
             pkg,
             path: None,
             graph: 0,
             selection: Vec::new(),
+            annotation_selection: None,
             view2d: View2d { channel: "rgba".into(), ..View2d::default() },
             view3d: View3d::default(),
             preview_size: Some(512),
@@ -393,6 +211,7 @@ impl Session {
             log: Vec::new(),
             load_warnings: Vec::new(),
             clipboard: None,
+            embedded_clipboard: None,
             cooked: Cooked::default(),
             dirty: true,
             cook_epoch: 0,
@@ -422,6 +241,8 @@ impl Session {
             pkg: self.pkg.clone(),
             graph: self.graph,
             selection: self.selection.clone(),
+            annotation_selection: self.annotation_selection,
+            material_preview: self.material_preview.clone(),
             label: label.into(),
             modified: self.modified,
             dirty: self.dirty,
@@ -442,7 +263,7 @@ impl Session {
             return self.edit_inner(label, f);
         }
         if self.merge_key.as_deref() == Some(key) && !self.undo.is_empty() {
-            // The merged step keeps its original snapshot; restore the session if `f` fails.
+            // Preserve the gesture snapshot while rolling back failed edits
             let snap = self.snapshot(label);
             let r = f(self);
             match &r {
@@ -458,15 +279,11 @@ impl Session {
         r
     }
 
-    /// End the current coalescing run: the next [`Session::edit_merged`] starts a new undo step.
-    /// Call it when a gesture ends (pointer release) and once per control or MCP request.
-    pub fn end_merge(&mut self) {
+    /// End the current gesture without adding an undo step
+    pub fn finish_edit(&mut self) {
         self.merge_key = None;
     }
 
-    /// Start grouping: every edit until [`Session::end_group`] becomes one undo entry labelled
-    /// `label` (a gesture that runs several commands, such as rewiring a link). Nothing is
-    /// recorded if no edit ran. A group started inside a group is ignored.
     pub fn begin_group(&mut self, label: &str) {
         if self.group.is_none() {
             self.merge_key = None;
@@ -474,19 +291,14 @@ impl Session {
         }
     }
 
-    /// Close the group opened by [`Session::begin_group`], recording one undo entry if any edit ran.
     pub fn end_group(&mut self) {
         if let Some((snap, edited)) = self.group.take()
             && edited
         {
-            self.undo.push(snap);
-            self.trim_undo();
-            self.redo.clear();
+            self.record_undo(snap);
         }
     }
 
-    /// Run `f` as one undo entry, however many edits it makes. On error everything `f` did is
-    /// undone and nothing is recorded.
     pub fn group<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
         if self.group.is_some() {
             let snap = self.snapshot(label);
@@ -514,44 +326,41 @@ impl Session {
     }
 
     fn edit_inner<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        let snap = self.snapshot(label);
-        if self.group.is_some() {
-            // Only successful edits make the group an undo entry.
-            return match f(self) {
-                Ok(v) => {
-                    if let Some((_, edited)) = self.group.as_mut() {
-                        *edited = true;
-                    }
-                    self.changed();
-                    Ok(v)
-                }
-                Err(e) => {
-                    self.restore(snap);
-                    Err(e)
-                }
-            };
-        }
+        let snapshot = self.snapshot(label);
         match f(self) {
-            Ok(v) => {
-                self.undo.push(snap);
-                self.trim_undo();
-                self.redo.clear();
+            Ok(value) => {
+                if let Some((_, edited)) = self.group.as_mut() {
+                    *edited = true;
+                } else {
+                    self.record_undo(snapshot);
+                }
                 self.changed();
-                Ok(v)
+                Ok(value)
             }
-            Err(e) => {
-                self.restore(snap);
-                Err(e)
+            Err(error) => {
+                self.restore(snapshot);
+                Err(error)
             }
         }
+    }
+
+    fn record_undo(&mut self, snapshot: Snapshot) {
+        self.undo.push(snapshot);
+        self.trim_undo();
+        self.redo.clear();
     }
 
     fn restore(&mut self, s: Snapshot) {
         self.pkg = s.pkg;
         self.graph = s.graph.min(self.pkg.graphs.len().saturating_sub(1));
         self.selection = s.selection;
+        self.annotation_selection = s.annotation_selection;
+        self.material_preview = s.material_preview;
         self.modified = s.modified;
         self.dirty = s.dirty || self.cook_epoch != s.cook_epoch;
+        if self.cook_epoch != s.cook_epoch {
+            self.clear_preview_results();
+        }
     }
 
     /// Mark the document modified and in need of a cook.
@@ -626,7 +435,7 @@ impl Session {
     pub fn resource_decoder(&self) -> impl Fn(&str) -> Option<Image> + Sync + Send + 'static {
         let res: Vec<(String, ResourceBytes)> = self.pkg.resources.iter().map(|r| (r.name.clone(), r.bytes.clone())).collect();
         let memo = self.decoded.clone();
-        // Free images of resources that were deleted or replaced.
+        // Release decoded images of deleted or replaced resources
         memo.lock().unwrap_or_else(PoisonError::into_inner).retain(|(k, _), _| res.iter().any(|(_, b)| b.content_hash() == *k));
         move |requested: &str| {
             let (name, linear) = materialcraft_image::split_resource_key(requested);
@@ -651,10 +460,21 @@ impl Session {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
         opts.max_size = self.cook_size(self.preview_size);
-        self.cooked = materialcraft_eval::cook(&self.pkg, self.graph, &opts, &self.cache);
+        let cooked = crate::PreviewCook::run(&self.pkg, self.graph, &self.material_preview.graphs(), &opts, &self.cache);
+        self.accept_preview(cooked);
         self.dirty = false;
         self.cook_epoch = self.cook_epoch.wrapping_add(1);
         &self.cooked
+    }
+
+    /// Publish a completed editor and material cook together
+    pub fn accept_preview(&mut self, result: crate::PreviewCook) {
+        if result.graph != self.graph || result.cancelled() {
+            return;
+        }
+        self.cooked_graph = Some(result.graph);
+        self.cooked = result.cooked;
+        self.material_cooked = result.materials;
     }
 
     /// Cook graph `gi` at full size, without touching the preview results.
@@ -690,12 +510,6 @@ impl Session {
     pub fn set_camera_prefs(&mut self, prefs: CameraPrefs) {
         self.camera = prefs.sanitized();
         self.view3d.target = self.camera.clamp_target(self.view3d.target);
-    }
-
-    /// The open graph's material channels for the 3D view: usage id → image.
-    pub fn material_maps(&self) -> Vec<(&'static str, &Image)> {
-        let Ok(g) = self.graph() else { return Vec::new() };
-        materialcraft_eval::outputs(g, &self.cooked).into_iter().filter_map(|(_, usage, _, img)| Some((usage, img?))).collect()
     }
 
     /// Show a mesh file in the 3D view (OBJ, glTF, GLB).

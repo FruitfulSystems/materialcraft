@@ -61,7 +61,7 @@ pub fn dependencies(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         let tk = Tokens::get(ui.ctx());
         ui.label(RichText::new(tr("RESOURCES")).small().color(tk.text_dim));
         if app.session.pkg.resources.is_empty() {
-            ui.label(RichText::new(tr("No bitmap resources: Tools ▸ Import bitmap... embeds one, Link bitmap... keeps it on disk.")).color(tk.text_dim));
+            ui.label(RichText::new(tr("No bitmap resources: Tools > Import bitmap... embeds one, Link bitmap... keeps it on disk.")).color(tk.text_dim));
         }
         egui::Grid::new("deps-resources").num_columns(4).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
             ui.label(RichText::new(tr("Name")).strong());

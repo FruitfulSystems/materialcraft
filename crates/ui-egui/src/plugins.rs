@@ -1,5 +1,5 @@
 //! Plugins (Tools ▸ Plugin Manager): packages dropped in the plugins folder whose graphs the
-//! library offers. A plugin is a package file (`.sbs`, `.mcraft`) in `Documents/MaterialCraft/plugins`,
+//! library offers (filed under each graph's category attribute). A plugin is a package file (`.sbs`) in `Documents/MaterialCraft/plugins`,
 //! or a folder there holding package files and an optional `plugin.json`
 //! (`{"name", "version", "author", "description"}`). Loaded plugins are remembered per user.
 
@@ -21,16 +21,16 @@ pub struct Plugin {
     pub version: String,
     pub author: String,
     pub description: String,
-    /// The package files and the graphs each one holds: (path, [graph names]).
-    pub packages: Vec<(String, Vec<String>)>,
+    /// The package files and the graphs each one holds: (path, [(graph name, category attribute)]).
+    pub packages: Vec<(String, Vec<(String, String)>)>,
     /// Why a package could not be read, if any.
     pub error: Option<String>,
 }
 
 impl Plugin {
-    /// Every graph of the plugin: (package path, graph name).
-    pub fn graphs(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.packages.iter().flat_map(|(p, gs)| gs.iter().map(move |g| (p.as_str(), g.as_str())))
+    /// Every graph of the plugin: (package path, graph name, category attribute).
+    pub fn graphs(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.packages.iter().flat_map(|(p, gs)| gs.iter().map(move |(g, c)| (p.as_str(), g.as_str(), c.as_str())))
     }
 }
 
@@ -44,16 +44,23 @@ pub struct Plugins {
 
 /// The plugins folder.
 pub fn folder() -> PathBuf {
-    crate::user_dir("plugins")
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::user_dir("plugins")
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        PathBuf::from("plugins")
+    }
 }
 
 fn is_package(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("sbs") || e.eq_ignore_ascii_case("mcraft"))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("sbs"))
 }
 
-/// The graphs of a package file, read without opening it.
+/// The graphs of a package file, read without opening it: (name, category attribute).
 #[cfg(not(target_arch = "wasm32"))]
-fn graphs_of(path: &Path) -> Result<Vec<String>, String> {
+fn graphs_of(path: &Path) -> Result<Vec<(String, String)>, String> {
     const MAX_PLUGIN_BYTES: u64 = 256 * 1024 * 1024;
     let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if len > MAX_PLUGIN_BYTES {
@@ -62,12 +69,12 @@ fn graphs_of(path: &Path) -> Result<Vec<String>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let name = path.display().to_string();
     let linked = materialcraft_engine::file_cmds::linked_files(&name);
-    let pkg = crate::cook::guard("plugin", || materialcraft_engine::file_cmds::load_bytes(&bytes, &name, &linked).map_err(|e| e.to_string()))?;
-    Ok(pkg.graphs.iter().map(|g| g.name.clone()).collect())
+    let pkg = crate::cook::guard("plugin", || materialcraft_engine::resource_cmds::load_bytes(&bytes, &name, &linked).map_err(|e| e.to_string()))?;
+    Ok(pkg.graphs.iter().map(|g| (g.name.clone(), g.attributes.category.clone())).collect())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn graphs_of(_: &Path) -> Result<Vec<String>, String> {
+fn graphs_of(_: &Path) -> Result<Vec<(String, String)>, String> {
     Err("the browser has no plugins folder".into())
 }
 
@@ -111,7 +118,7 @@ fn read_plugin(path: &Path) -> Plugin {
         }
     }
     if plugin.packages.is_empty() && plugin.error.is_none() {
-        plugin.error = Some(tr("No package files (.sbs, .mcraft) in this plugin").to_string());
+        plugin.error = Some(tr("No package files (.sbs) in this plugin").to_string());
     }
     plugin
 }
@@ -141,15 +148,15 @@ impl MaterialCraftApp {
         self.ui.plugins_loaded.iter().any(|p| p == path)
     }
 
-    /// The graphs of every loaded plugin: (plugin name, package path, graph name).
-    pub fn plugin_graphs(&mut self) -> Vec<(String, String, String)> {
+    /// The graphs of every loaded plugin: (plugin name, package path, graph name, category).
+    pub fn plugin_graphs(&mut self) -> Vec<(String, String, String, String)> {
         self.plugins.ensure();
         let loaded = &self.ui.plugins_loaded;
         self.plugins
             .list
             .iter()
             .filter(|p| loaded.contains(&p.path))
-            .flat_map(|p| p.graphs().map(|(pkg, g)| (p.name.clone(), pkg.to_string(), g.to_string())).collect::<Vec<_>>())
+            .flat_map(|p| p.graphs().map(|(pkg, g, c)| (p.name.clone(), pkg.to_string(), g.to_string(), c.to_string())).collect::<Vec<_>>())
             .collect()
     }
 
@@ -168,7 +175,7 @@ impl MaterialCraftApp {
 /// Copy the picked package files (or a folder) into the plugins folder.
 #[cfg(not(target_arch = "wasm32"))]
 fn install(app: &mut MaterialCraftApp) {
-    let Some(files) = rfd::FileDialog::new().add_filter("Packages", &["sbs", "mcraft"]).pick_files() else { return };
+    let Some(files) = rfd::FileDialog::new().add_filter("Packages", &["sbs"]).pick_files() else { return };
     let dir = folder();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         app.toast(format!("{}: {e}", tr("Could not create the plugins folder")), true);
@@ -267,7 +274,7 @@ pub fn window(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                         }
                         None => {
                             let n = p.graphs().count();
-                            ui.label(n.to_string()).on_hover_text(p.graphs().map(|(_, g)| g).collect::<Vec<_>>().join("\n"));
+                            ui.label(n.to_string()).on_hover_text(p.graphs().map(|(_, g, _)| g).collect::<Vec<_>>().join("\n"));
                         }
                     }
                     ui.label(RichText::new(&p.path).color(tk.text_dim).small());

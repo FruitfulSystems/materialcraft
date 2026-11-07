@@ -350,7 +350,7 @@ impl DockContent<Panel> for Panels<'_> {
             app.ui.dock.hovered = Some(*panel);
         }
         match panel {
-            Panel::Graph => crate::graph_view::show(app, ui),
+            Panel::Graph => crate::graph::show(app, ui),
             Panel::View3d => crate::view3d::show(app, ui),
             Panel::View2d => crate::view2d::show(app, ui),
             _ => {

@@ -54,15 +54,6 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("view.previewSize", "Preview size", [], None, "{size: 64..8192, or 0 for full size} caps node outputs while editing", always, preview_size),
         cmd!(
-            "session.settings",
-            "Session settings",
-            [],
-            None,
-            "{historySize? (1..10000 undo steps), cacheMb? (16..65536, the cooked image cache), cookLimit? (256..8192 px, or 0 for none: caps every cook, exports included)} sets what is given; returns all three",
-            always,
-            session_settings
-        ),
-        cmd!(
             "library.list",
             "Library",
             [],
@@ -329,28 +320,6 @@ fn preview_size(s: &mut Session, p: &J) -> Result<J> {
     s.preview_size = if size == 0 { None } else { Some(size.clamp(64, 8192) as u32) };
     s.dirty = true;
     Ok(json!({"previewSize": s.preview_size}))
-}
-
-fn session_settings(s: &mut Session, p: &J) -> Result<J> {
-    if let Some(n) = u64p(p, "historySize") {
-        s.max_undo = n.clamp(1, 10_000) as usize;
-        s.trim_undo();
-    }
-    if let Some(mb) = u64p(p, "cacheMb") {
-        let bytes = (mb.clamp(16, 65_536) as usize) << 20;
-        if let Ok(mut c) = s.cache.lock() {
-            c.set_cap(bytes);
-        }
-    }
-    if let Some(px) = u64p(p, "cookLimit") {
-        let limit = if px == 0 { None } else { Some(px.clamp(256, 8192) as u32) };
-        if limit != s.cook_limit {
-            s.cook_limit = limit;
-            s.dirty = true;
-        }
-    }
-    let cache_mb = s.cache.lock().map(|c| c.cap() >> 20).unwrap_or(0);
-    Ok(json!({"historySize": s.max_undo, "cacheMb": cache_mb, "cookLimit": s.cook_limit.unwrap_or(0)}))
 }
 
 fn library(_: &mut Session, p: &J) -> Result<J> {

@@ -1,31 +1,32 @@
 //! The library: a category tree on the left, the matching entries as preview tiles (or a list)
 //! on the right, with search and favorites. Drag a tile into the graph, or double-click it to
-//! add it next to the selection. Entries are nodes, graph items (frame, comment, pin), function
-//! nodes (for the open function graph), the package's own graphs and loaded plugin graphs.
+//! add it next to the selection. Entries are the native primitives, graph items (frame,
+//! comment, pin), function operations (for the function editor), the package's own graphs and
+//! the graphs of loaded library packages (plugins), filed under their category attribute
 
 use egui::{Color32, Rect, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::MaterialCraftApp;
-use crate::graph_view::{LibraryDrag, header_color};
+use crate::graph::{LibraryDrag, header_color};
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
-/// The favorites pseudo-category.
+/// The favorites pseudo-category
 pub const FAVORITES: &str = "@favorites";
 
-/// Where an entry comes from, and so what adding it does.
+/// Where an entry comes from, and so what adding it does
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    /// A node of the catalog (`id` is its def).
+    /// A node of the catalog (`id` is its definition)
     Node,
-    /// A frame, comment or navigation pin: `id` is the engine command.
+    /// A frame, comment or navigation pin: `id` is the engine command
     GraphItem,
-    /// A function node for the open function graph: `id` is the op.
+    /// A function operation for the function editor: `id` is the op
     FnOp,
-    /// A graph of the open package: `id` is its name.
+    /// A graph of the open package: `id` is its name
     PackageGraph,
-    /// A graph of a loaded plugin: `id` is the graph, `package` the file it lives in.
+    /// A graph of a loaded library package: `id` is the graph, `package` the file it lives in
     PluginGraph { package: String },
 }
 
@@ -42,7 +43,7 @@ impl Entry {
         Entry { id: id.into(), label: label.into(), category: category.into(), kind }
     }
 
-    /// The key favorites and drags use.
+    /// The key favorites and drags use
     pub fn key(&self) -> String {
         match &self.kind {
             Kind::Node => self.id.clone(),
@@ -53,7 +54,7 @@ impl Entry {
         }
     }
 
-    /// The def whose header colour the tile borrows.
+    /// The definition whose header colour the tile borrows
     fn color_def(&self) -> &str {
         match self.kind {
             Kind::Node => &self.id,
@@ -64,65 +65,75 @@ impl Entry {
     }
 }
 
-/// The tree in display order: (top level, sub-categories as full paths). Groups the catalog
-/// has no nodes for yet are listed too, greyed with a zero count.
-pub fn tree() -> Vec<(String, Vec<String>)> {
-    let planned: [(&str, &[&str]); 13] = [
-        ("Graph items", &[]),
-        ("Atomic nodes", &[]),
-        ("FxMap nodes", &[]),
-        ("Function nodes", &[]),
-        ("Texture generators", &[]),
-        ("Filters", &[]),
-        ("Material filters", &["Material filters/1-click", "Material filters/Effects", "Material filters/Transforms", "Material filters/Scan processing"]),
-        ("Mesh-based generators", &[]),
-        ("Spline & Path tools", &[]),
-        ("SDF functions", &[]),
-        ("Functions", &[]),
-        ("PBR materials", &["PBR materials/This package", "PBR materials/Plugins"]),
-        ("Values", &["Values/Constant"]),
-    ];
-    let mut out: Vec<(String, Vec<String>)> = planned.iter().map(|(t, subs)| (t.to_string(), subs.iter().map(|s| s.to_string()).collect())).collect();
-    let mut place = |cat: String| {
-        let top = cat.split('/').next().unwrap_or(&cat).to_string();
+/// The groups of the reference library, in order, with the sub-groups that exist before any
+/// library package fills them (empty ones show greyed with a zero count)
+const PLANNED: [(&str, &[&str]); 13] = [
+    ("Graph items", &[]),
+    ("Atomic nodes", &[]),
+    ("FxMap nodes", &[]),
+    ("Function nodes", &[]),
+    ("Texture generators", &["Texture generators/Noises", "Texture generators/Patterns"]),
+    (
+        "Filters",
+        &[
+            "Filters/Adjustments",
+            "Filters/Blending",
+            "Filters/Blurs",
+            "Filters/Channels",
+            "Filters/Effects",
+            "Filters/Normal map",
+            "Filters/Tiling",
+            "Filters/Transforms",
+        ],
+    ),
+    (
+        "Material filters",
+        &[
+            "Material filters/1-click",
+            "Material filters/Effects",
+            "Material filters/Transforms",
+            "Material filters/Blending",
+            "Material filters/PBR utilities",
+            "Material filters/Scan processing",
+        ],
+    ),
+    ("Mesh-based generators", &[]),
+    ("Spline & Path tools", &[]),
+    ("MCF functions", &[]),
+    ("Functions", &[]),
+    ("PBR materials", &["PBR materials/This package", "PBR materials/Plugins"]),
+    ("Values", &["Values/Constant"]),
+];
+
+/// The tree in display order: (top level, sub-categories as full paths)
+pub fn tree(entries: &[Entry]) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = PLANNED.iter().map(|(t, subs)| (t.to_string(), subs.iter().map(|s| s.to_string()).collect())).collect();
+    let mut place = |cat: &str| {
+        let top = cat.split('/').next().unwrap_or(cat).to_string();
         match out.iter_mut().find(|(t, _)| *t == top) {
             Some((_, subs)) => {
-                if cat != top && !subs.contains(&cat) {
-                    // Groups the catalog fills go before the planned (empty) ones.
-                    let at = subs.iter().position(|s| planned.iter().any(|(_, p)| p.contains(&s.as_str()))).unwrap_or(subs.len());
-                    subs.insert(at, cat);
+                if cat != top && !subs.iter().any(|s| s == cat) {
+                    subs.push(cat.to_string());
                 }
             }
-            None => out.push((top.clone(), if cat != top { vec![cat] } else { Vec::new() })),
+            None => out.push((top.clone(), if cat != top { vec![cat.to_string()] } else { Vec::new() })),
         }
     };
-    for (cat, _) in materialcraft_engine::nodes::categories() {
-        place(cat.to_string());
-    }
-    for (group, _) in fn_groups() {
-        place(fn_path(group));
+    for e in entries {
+        place(&e.category);
     }
     out
 }
 
-/// Function node groups in catalog order: (group, ops).
-/// One function node operation of the catalog: (id, label, inputs, group).
-type FnOp = &'static (&'static str, &'static str, usize, &'static str);
-
-fn fn_groups() -> Vec<(&'static str, Vec<FnOp>)> {
-    let mut out: Vec<(&'static str, Vec<FnOp>)> = Vec::new();
-    for op in materialcraft_engine::nodes::function::FN_OPS {
-        match out.iter_mut().find(|(c, _)| *c == op.3) {
-            Some((_, ops)) => ops.push(op),
-            None => out.push((op.3, vec![op])),
-        }
-    }
-    out
-}
-
-/// The library path of a function node group: constants are values, the rest function nodes.
+/// The library path of a function operation group: constants are values, the rest function nodes
 fn fn_path(group: &str) -> String {
     if group == "Constant" { "Values/Constant".to_string() } else { format!("Function nodes/{group}") }
+}
+
+/// The library path of a library package graph: its category attribute, else the plugins group
+fn plugin_path(category: &str) -> String {
+    let c = category.trim();
+    if c.is_empty() { "PBR materials/Plugins".to_string() } else { c.to_string() }
 }
 
 fn category_icon(top: &str) -> &'static str {
@@ -136,14 +147,14 @@ fn category_icon(top: &str) -> &'static str {
         "Material filters" => icon::SPHERE,
         "Mesh-based generators" => icon::CUBE_TRANSPARENT,
         "Spline & Path tools" => icon::BEZIER_CURVE,
-        "SDF functions" => icon::CIRCLES_THREE,
+        "MCF functions" => icon::CIRCLES_THREE,
         "Functions" => icon::GRAPH,
         "PBR materials" => icon::PAINT_BUCKET,
         _ => icon::FOLDER_OPEN,
     }
 }
 
-/// Every entry the library can show (unfiltered).
+/// Every entry the library can show (unfiltered)
 pub fn all_entries(app: &mut MaterialCraftApp) -> Vec<Entry> {
     let mut out: Vec<Entry> = vec![
         Entry::new("graph.comment.add", tr("Comment"), "Graph items", Kind::GraphItem),
@@ -157,25 +168,25 @@ pub fn all_entries(app: &mut MaterialCraftApp) -> Vec<Entry> {
         let category = if d.id == "fx_map" { "FxMap nodes" } else { d.category };
         out.push(Entry::new(d.id, d.label, category, Kind::Node));
     }
-    for (group, ops) in fn_groups() {
-        let path = fn_path(group);
-        for op in ops {
-            out.push(Entry::new(op.0, op.1, path.clone(), Kind::FnOp));
-        }
+    for op in materialcraft_engine::nodes::function::FUNCTIONS {
+        out.push(Entry::new(op.id, op.label, fn_path(op.category), Kind::FnOp));
     }
     let open = app.session.graph;
     for (i, g) in app.session.pkg.graphs.iter().enumerate() {
         if i == open {
             continue;
         }
-        let cat = match g.kind {
-            materialcraft_engine::core::GraphKind::Function => "Functions",
-            materialcraft_engine::core::GraphKind::Material => "PBR materials/This package",
+        let cat = match g.kind() {
+            materialcraft_engine::core::GraphKind::Function => "Functions".to_string(),
+            materialcraft_engine::core::GraphKind::Material => {
+                let c = g.attributes.category.trim();
+                if c.is_empty() { "PBR materials/This package".to_string() } else { c.to_string() }
+            }
         };
         out.push(Entry::new(&g.name, &g.name, cat, Kind::PackageGraph));
     }
-    for (plugin, package, graph) in app.plugin_graphs() {
-        out.push(Entry::new(&graph, format!("{graph}  ·  {plugin}"), "PBR materials/Plugins", Kind::PluginGraph { package }));
+    for (plugin, package, graph, category) in app.plugin_graphs() {
+        out.push(Entry::new(&graph, format!("{graph}  ·  {plugin}"), plugin_path(&category), Kind::PluginGraph { package }));
     }
     out
 }
@@ -184,7 +195,7 @@ fn in_category(e: &Entry, cat: &str) -> bool {
     cat.is_empty() || e.category == cat || e.category.starts_with(&format!("{cat}/"))
 }
 
-/// Library entries for the current filter.
+/// Library entries for the current filter
 fn entries(app: &mut MaterialCraftApp, all: &[Entry]) -> Vec<Entry> {
     let search = app.ui.library_search.to_ascii_lowercase();
     let cat = app.ui.library_category.clone();
@@ -197,6 +208,18 @@ fn entries(app: &mut MaterialCraftApp, all: &[Entry]) -> Vec<Entry> {
 }
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    match crate::graph::editor_target::EditorTarget::resolve(app) {
+        crate::graph::editor_target::EditorTarget::Function => {
+            crate::function::library::show(app, ui);
+            return;
+        }
+        crate::graph::editor_target::EditorTarget::Pattern => {
+            crate::pattern::library::show(app, ui);
+            return;
+        }
+        crate::graph::editor_target::EditorTarget::Material => {}
+    }
+
     let tk = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(tk.text_dim));
@@ -285,10 +308,13 @@ fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui, all: &[Entry]) {
         if resp.double_clicked() && arrow.is_some() {
             toggle = Some(path.to_string());
         }
+        if empty {
+            resp.on_hover_text(tr("Empty: library packages (Tools > Plugin Manager) fill this group with their graphs"));
+        }
     };
     row(ui, format!("{}  {}", icon::SQUARES_FOUR, tr("All nodes")), "", 4.0, None, None);
     row(ui, format!("{}  {}", icon::STAR, tr("Favorites")), FAVORITES, 4.0, Some(app.ui.library_favorites.len()), None);
-    for (top, subs) in tree() {
+    for (top, subs) in tree(all) {
         let open = !app.ui.library_collapsed.contains(&top);
         let n = count(&top);
         row(ui, format!("{}  {}", category_icon(&top), tr(&top)), &top, 4.0, Some(n), if subs.is_empty() { None } else { Some(open) });
@@ -318,10 +344,8 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, all: &[Entry]) {
     if list.is_empty() {
         let hint = if app.ui.library_category == FAVORITES {
             tr("No favorites yet: right-click a tile and choose Add to favorites")
-        } else if app.ui.library_category.starts_with("PBR materials/Plugins") {
-            tr("No plugin graphs: load a plugin in Tools ▸ Plugin Manager")
         } else if app.ui.library_search.is_empty() {
-            tr("Nothing here yet")
+            tr("Nothing here yet: library packages (Tools > Plugin Manager) fill this group with their graphs")
         } else {
             tr("Nothing matches")
         };
@@ -373,7 +397,7 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, all: &[Entry]) {
                         );
                     }
                 }
-                // The category color as a strip, like the node headers.
+                // The category color as a strip, like the node headers
                 let strip = Rect::from_min_size(img_rect.left_bottom() - vec2(0.0, 3.0), vec2(img_rect.width(), 3.0));
                 ui.painter().rect_filled(strip, 0.0, header_color(def_id));
                 let key = e.key();
@@ -396,7 +420,7 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, all: &[Entry]) {
                     ui.painter().galley(pos, galley, tk.text);
                 }
                 let hint = match &e.kind {
-                    Kind::FnOp => format!("{}\n{}\n{}", e.label, e.category, tr("Function node: for the open function graph")),
+                    Kind::FnOp => format!("{}\n{}\n{}", e.label, e.category, tr("Function operation: for the function editor")),
                     Kind::PluginGraph { package } => format!("{}\n{}\n{package}", e.label, e.category),
                     _ => format!("{}\n{}", e.label, e.category),
                 };
@@ -433,21 +457,17 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, all: &[Entry]) {
     }
 }
 
-/// Add a library entry to the graph (double-click, context menu), or at `at` (a drop).
+/// Add a library entry to the graph (double-click, context menu), or at `at` (a drop)
 pub fn add_entry(app: &mut MaterialCraftApp, e: &Entry, at: Option<[f32; 2]>) {
     match &e.kind {
         Kind::Node => match at {
             Some(at) => {
                 app.run("graph.node.add", serde_json::json!({"def": e.id, "at": at}));
             }
-            None => crate::graph_view::add_node_near_selection(app, &e.id),
+            None => crate::graph::add_node_near_selection(app, &e.id),
         },
         Kind::GraphItem => add_graph_item(app, &e.id, at),
-        Kind::FnOp => {
-            if !crate::function_editor::add_op(app, &e.id) {
-                app.toast(tr("Function nodes go into a function graph: open one from a Pixel Processor or a function parameter first"), true);
-            }
-        }
+        Kind::FnOp => app.toast(tr("Function operations go into a function graph: open one from a Pixel Processor or Value Processor first"), true),
         Kind::PackageGraph => {
             let mut p = serde_json::json!({"def": "graph_instance", "params": {"graph": e.id}});
             if let Some(at) = at {
@@ -459,9 +479,9 @@ pub fn add_entry(app: &mut MaterialCraftApp, e: &Entry, at: Option<[f32; 2]>) {
     }
 }
 
-/// A frame (around the selection, or an empty one at `at`), a comment or a pin.
+/// A frame (around the selection, or an empty one at `at`), a comment or a pin
 fn add_graph_item(app: &mut MaterialCraftApp, cmd: &str, at: Option<[f32; 2]>) {
-    let c = crate::graph_view::view_center(app);
+    let c = crate::graph::view_center(app);
     let at = at.unwrap_or([c.x - 60.0, c.y - 20.0]);
     let params = match cmd {
         "graph.frame.add" if app.session.selection.is_empty() => serde_json::json!({"rect": [at[0], at[1], 320.0, 200.0]}),
@@ -471,14 +491,12 @@ fn add_graph_item(app: &mut MaterialCraftApp, cmd: &str, at: Option<[f32; 2]>) {
     app.run(cmd, params);
 }
 
-/// Add whatever a library drag key names at `at` (the graph view's drop handler).
+/// Add whatever a library drag key names at `at` (the graph view's drop handler)
 pub fn add_key(app: &mut MaterialCraftApp, key: &str, at: [f32; 2]) {
     if let Some(cmd) = key.strip_prefix('!') {
         add_graph_item(app, cmd, Some(at));
-    } else if let Some(op) = key.strip_prefix("fn:") {
-        if !crate::function_editor::add_op(app, op) {
-            app.toast(tr("Function nodes go into a function graph: open one from a Pixel Processor or a function parameter first"), true);
-        }
+    } else if key.starts_with("fn:") {
+        app.toast(tr("Function operations go into a function graph: open one from a Pixel Processor or Value Processor first"), true);
     } else if let Some(plugin) = key.strip_prefix('+') {
         if let Some((pkg, graph)) = plugin.split_once('\n') {
             app.add_plugin_graph(pkg, graph, Some(at));
@@ -495,8 +513,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tree_lists_every_catalog_category_once() {
-        let t = tree();
+    fn the_tree_lists_every_catalog_category_once_and_the_planned_groups() {
+        let entries: Vec<Entry> = materialcraft_engine::nodes::catalog().iter().map(|d| Entry::new(d.id, d.label, d.category, Kind::Node)).collect();
+        let t = tree(&entries);
         for (cat, _) in materialcraft_engine::nodes::categories() {
             let top = cat.split('/').next().unwrap_or(cat);
             let hits = t.iter().filter(|(c, subs)| c == top && (cat == top || subs.iter().any(|s| s == cat))).count();
@@ -506,13 +525,19 @@ mod tests {
         let mut dedup = tops.clone();
         dedup.dedup();
         assert_eq!(tops, dedup, "no duplicate top-level groups");
+        assert!(tops.iter().any(|t| t == "Texture generators"));
+        // A library package graph with a category attribute lands in that group
+        let plugin = Entry::new("Clouds", "Clouds", plugin_path("Texture generators/Noises"), Kind::PluginGraph { package: "x.sbs".into() });
+        let t = tree(&[plugin]);
+        assert!(t.iter().any(|(c, subs)| c == "Texture generators" && subs.iter().any(|s| s == "Texture generators/Noises")));
+        assert_eq!(plugin_path("  "), "PBR materials/Plugins");
     }
 
     #[test]
     fn keys_round_trip_through_the_drop_handler_prefixes() {
         let plugin = Entry::new("Rust", "Rust", "PBR materials/Plugins", Kind::PluginGraph { package: "C:/p/x.sbs".into() });
         assert_eq!(plugin.key(), "+C:/p/x.sbs\nRust");
-        assert_eq!(Entry::new("blur", "Blur", "Filters/Blurs", Kind::Node).key(), "blur");
+        assert_eq!(Entry::new("blur", "Blur", "Atomic nodes", Kind::Node).key(), "blur");
         assert_eq!(Entry::new("Base", "Base", "PBR materials/This package", Kind::PackageGraph).key(), "@Base");
         assert_eq!(Entry::new("add", "Add", "Function nodes/Operator", Kind::FnOp).key(), "fn:add");
         assert_eq!(Entry::new("graph.pin.add", "Pin", "Graph items", Kind::GraphItem).key(), "!graph.pin.add");

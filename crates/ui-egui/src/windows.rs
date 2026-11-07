@@ -1,13 +1,12 @@
-//! Dialogs (new graph, export outputs, preferences, shortcuts, about, home), the console and
-//! history panels, file actions behind the File menu, and the function editor.
+//! Dialogs (new graph, export outputs, preferences, shortcuts, about, home), the console and history panels, file actions behind the File menu, and the function editor
 
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
 use egui::{Color32, RichText, TextureHandle, Ui, vec2};
 use egui_phosphor::regular as icon;
+use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
-use materialcraft_engine::core::function::FnGraph;
 use materialcraft_engine::formats::material::MATERIAL_EXT;
 use serde_json::{Value, json};
 
@@ -15,7 +14,7 @@ use crate::MaterialCraftApp;
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
-/// Template previews for the New graph dialog (rendered in the background on first open).
+/// Template previews for the New graph dialog (rendered in the background on first open)
 #[derive(Default)]
 pub struct TemplatePreviews {
     tex: HashMap<String, TextureHandle>,
@@ -31,13 +30,13 @@ fn render_templates() -> crate::thumbs::Previews {
     let settings = materialcraft_render::Settings { distance: 2.7, supersample: 2, ..Default::default() };
     materialcraft_engine::samples::TEMPLATES
         .iter()
-        .map(|(id, _)| {
+        .filter_map(|(id, _)| {
             let mut s = materialcraft_engine::Session::new(materialcraft_engine::core::Package::new("t"));
-            s.pkg.graphs.push(materialcraft_engine::samples::template(id, "t", 8));
+            s.pkg.graphs.push(materialcraft_engine::samples::template(id, "t", 8).ok()?);
             s.preview_size = Some(256);
             s.cook();
             let maps = materialcraft_render::Maps::from_usages(s.material_maps());
-            (id.to_string(), materialcraft_render::render(&scene, &maps, &light, &settings, PREVIEW, PREVIEW))
+            Some((id.to_string(), materialcraft_render::render(&scene, &maps, &light, &settings, PREVIEW, PREVIEW)))
         })
         .collect()
 }
@@ -79,7 +78,7 @@ thread_local! {
 pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     app.thumbs.tick(ctx);
     if app.ui.windows.new_graph {
-        new_graph(app, ctx);
+        crate::new_graph_dialog::show(app, ctx);
     }
     if app.ui.windows.export {
         export(app, ctx);
@@ -111,9 +110,9 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     crate::unsaved::show(app, ctx);
 }
 
-/// Help ▸ Export log.
-pub fn export_log(app: &mut MaterialCraftApp) {
-    crate::tool_windows::export_log(app);
+/// The rendered preview of a starter template (made once, in the background)
+pub(crate) fn template_preview(ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
+    TEMPLATES.with(|t| t.borrow_mut().get(ctx, id))
 }
 
 pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
@@ -126,182 +125,6 @@ pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool,
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, body);
-}
-
-/// Template groups for the new graph dialog: (group, template ids).
-fn template_groups() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
-    let mut starter = Vec::new();
-    let mut materials = Vec::new();
-    for t in materialcraft_engine::samples::TEMPLATES {
-        if matches!(t.0, "empty" | "pbr") { starter.push(*t) } else { materials.push(*t) }
-    }
-    vec![("Starter", starter), ("Materials", materials)]
-}
-
-/// What a template holds (the ⓘ in the new graph dialog).
-fn template_info(id: &str) -> &'static str {
-    match id {
-        "empty" => "A graph with no nodes: start from the library.",
-        "pbr" => "The PBR outputs (Base Color, Normal, Roughness, Metallic, Height, Ambient Occlusion) with nothing wired yet.",
-        "bricks" => "A tiling brick wall: Tile Generator, mortar, edge wear and colour variation.",
-        "stone_tiles" => "Irregular stone tiles with grout, bevelled edges and dirt in the gaps.",
-        "wood" => "Wooden planks with grain, knots and gaps between boards.",
-        "metal_plates" => "Painted metal plates with rivets, scratches and chipped edges.",
-        "rusty_metal" => "Sheet metal with rust spreading from the edges and a worn finish.",
-        "lava" => "Dark cooled rock with glowing cracks (an emissive output).",
-        "marble" => "Polished marble with veins and a glossy roughness.",
-        "wicker" => "A woven wicker weave with height and ambient occlusion.",
-        "fabric" => "Woven fabric fibres with a tiling thread pattern.",
-        "ground" => "Mossy ground: soil, pebbles and moss in the hollows.",
-        _ => "A graph template.",
-    }
-}
-
-fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    let mut open = true;
-    let mut create = false;
-    modal(ctx, "new-graph", tr("New graph"), &mut open, vec2(680.0, 520.0), |ui| {
-        let tk = Tokens::get(ui.ctx());
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(420.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(tr("Category")).strong());
-                    let shown = if app.ui.new_graph_category.is_empty() { tr("All").to_string() } else { tr(&app.ui.new_graph_category).to_string() };
-                    let r = egui::ComboBox::from_id_salt("new-category").selected_text(shown).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut app.ui.new_graph_category, String::new(), tr("All"));
-                        for (group, _) in template_groups() {
-                            ui.selectable_value(&mut app.ui.new_graph_category, group.to_string(), tr(group));
-                        }
-                    });
-                    crate::widgets::name(&r.response, egui::Role::ComboBox, "Category");
-                });
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical().max_height(410.0).show(ui, |ui| {
-                    for (group, templates) in template_groups() {
-                        if !app.ui.new_graph_category.is_empty() && app.ui.new_graph_category != group {
-                            continue;
-                        }
-                        ui.label(RichText::new(tr(group)).small().strong().color(tk.text_dim));
-                        for row in templates.chunks(4) {
-                            ui.horizontal(|ui| {
-                                for (id, label) in row {
-                                    let on = app.ui.new_graph_template == *id;
-                                    let (r, resp) = ui.allocate_exact_size(vec2(98.0, 124.0), egui::Sense::click());
-                                    crate::widgets::name(&resp, egui::Role::ListItem, label);
-                                    if on {
-                                        ui.painter().rect_filled(r, 6.0, tk.row_selected);
-                                        ui.painter().rect_stroke(r, 6.0, egui::Stroke::new(1.5, tk.accent), egui::StrokeKind::Inside);
-                                    } else if resp.hovered() {
-                                        ui.painter().rect_filled(r, 6.0, tk.row_hover);
-                                    }
-                                    let img = egui::Rect::from_min_size(r.min + vec2(9.0, 6.0), vec2(80.0, 80.0));
-                                    match TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) {
-                                        Some(t) => {
-                                            ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
-                                        }
-                                        None => {
-                                            ui.painter().circle_filled(img.center(), 36.0, tk.row);
-                                        }
-                                    }
-                                    // ⓘ in the corner: what the template holds.
-                                    let info = egui::Rect::from_center_size(img.right_top() + vec2(-8.0, 8.0), vec2(16.0, 16.0));
-                                    let info_resp = ui.interact(info, resp.id.with("info"), egui::Sense::hover());
-                                    ui.painter().text(
-                                        info.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        icon::INFO,
-                                        egui::FontId::proportional(13.0),
-                                        if info_resp.hovered() { tk.text_strong } else { tk.text_dim },
-                                    );
-                                    info_resp.on_hover_text(tr(template_info(id)));
-                                    let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 94.0);
-                                    ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
-                                    if resp.clicked() {
-                                        app.ui.new_graph_template = id.to_string();
-                                        app.ui.new_graph_name = label.replace(' ', "_");
-                                    }
-                                    if resp.double_clicked() {
-                                        create = true;
-                                    }
-                                }
-                            });
-                        }
-                        ui.add_space(6.0);
-                    }
-                });
-            });
-            ui.separator();
-            ui.vertical(|ui| {
-                ui.label(RichText::new(tr("Graph name")).strong());
-                ui.text_edit_singleline(&mut app.ui.new_graph_name);
-                ui.add_space(8.0);
-                ui.label(RichText::new(tr("Size")).strong());
-                let sizes = [16u32, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
-                ui.horizontal(|ui| {
-                    let r = egui::ComboBox::from_id_salt("new-size").width(90.0).selected_text(format!("{} px", app.ui.new_graph_size)).show_ui(ui, |ui| {
-                        for s in sizes {
-                            ui.selectable_value(&mut app.ui.new_graph_size, s, format!("{s} px"));
-                        }
-                    });
-                    crate::widgets::name(&r.response, egui::Role::ComboBox, "Size");
-                    if crate::widgets::icon_button(
-                        ui,
-                        if app.ui.new_graph_link { icon::LINK } else { icon::LINK_BREAK },
-                        tr("Link width and height"),
-                        app.ui.new_graph_link,
-                        20.0,
-                    )
-                    .clicked()
-                    {
-                        app.ui.new_graph_link = !app.ui.new_graph_link;
-                        if !app.ui.new_graph_link && app.ui.new_graph_height == 0 {
-                            app.ui.new_graph_height = app.ui.new_graph_size;
-                        }
-                    }
-                    let height = if app.ui.new_graph_link || app.ui.new_graph_height == 0 { app.ui.new_graph_size } else { app.ui.new_graph_height };
-                    ui.add_enabled_ui(!app.ui.new_graph_link, |ui| {
-                        let r = egui::ComboBox::from_id_salt("new-height").width(90.0).selected_text(format!("{height} px")).show_ui(ui, |ui| {
-                            for s in sizes {
-                                ui.selectable_value(&mut app.ui.new_graph_height, s, format!("{s} px"));
-                            }
-                        });
-                        crate::widgets::name(&r.response, egui::Role::ComboBox, "Height");
-                    });
-                });
-                ui.label(RichText::new(tr("width × height")).small().color(tk.text_dim));
-                ui.add_space(8.0);
-                ui.label(RichText::new(tr("Create graph in")).strong());
-                let r = egui::ComboBox::from_id_salt("new-package").selected_text(&app.session.pkg.name).show_ui(ui, |ui| {
-                    let _ = ui.selectable_label(true, &app.session.pkg.name);
-                });
-                crate::widgets::name(&r.response, egui::Role::ComboBox, "Create graph in");
-                ui.label(RichText::new(tr("The open package (File ▸ New ▸ Empty package starts another)")).small().color(tk.text_dim));
-                ui.add_space(20.0);
-                ui.horizontal(|ui| {
-                    if ui.add(crate::widgets::primary_button(ui, tr("Create"))).clicked() {
-                        create = true;
-                    }
-                    if ui.button(tr("Cancel")).clicked() {
-                        app.ui.windows.new_graph = false;
-                    }
-                });
-            });
-        });
-    });
-    if create {
-        let p = json!({"template": app.ui.new_graph_template, "name": app.ui.new_graph_name, "size": app.ui.new_graph_size});
-        if app.run("file.new", p).is_some() {
-            if !app.ui.new_graph_link && app.ui.new_graph_height != 0 && app.ui.new_graph_height != app.ui.new_graph_size {
-                app.run("graph.size", json!({"width": app.ui.new_graph_size, "height": app.ui.new_graph_height}));
-            }
-            app.ui.frame_all = true;
-            open = false;
-        }
-    }
-    if !open {
-        app.ui.windows.new_graph = false;
-    }
 }
 
 fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
@@ -404,8 +227,9 @@ fn about(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             ui.label(tr("Node-based procedural materials, built in pure Rust."));
             ui.label(tr("An open-source Crafting App by the ArtCraft team and community."));
             ui.add_space(6.0);
-            ui.hyperlink_to("getartcraft.com/apps/materialcraft", "https://getartcraft.com/apps/materialcraft");
-            ui.hyperlink_to("discord.gg/artcraft", "https://discord.gg/artcraft");
+            ui.hyperlink_to("getartcraft.com/apps/materialcraft", crate::menus::WEBSITE);
+            ui.hyperlink_to("discord.gg/artcraft", crate::menus::DISCORD);
+            ui.hyperlink_to("github.com/storytold/materialcraft", "https://github.com/storytold/materialcraft");
             ui.add_space(6.0);
             ui.label(RichText::new("MIT OR Apache-2.0").size(11.0).color(tk.text_dim));
         });
@@ -449,11 +273,11 @@ fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
 
 fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let mut open = true;
-    let mut create: Option<(&str, &str)> = None;
+    let mut create: Option<(String, String, Option<String>)> = None;
     modal(ctx, "home", tr("Home"), &mut open, vec2(760.0, 470.0), |ui| {
         let tk = Tokens::get(ui.ctx());
         ui.horizontal_top(|ui| {
-            // Left rail: actions and links.
+            // Left rail: actions and links
             ui.vertical(|ui| {
                 ui.set_width(150.0);
                 if ui.add(crate::widgets::primary_button(ui, tr("New graph"))).clicked() {
@@ -466,9 +290,10 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                     crate::menus::invoke(app, ui.ctx(), "file.open");
                 }
                 ui.add_space(16.0);
-                ui.hyperlink_to(tr("Documentation"), "https://github.com/storytold/materialcraft#readme");
-                ui.hyperlink_to(tr("Community (Discord)"), "https://discord.gg/artcraft");
-                ui.hyperlink_to("getartcraft.com", "https://getartcraft.com/apps/materialcraft");
+                ui.hyperlink_to(tr("Tutorials"), "https://getartcraft.com/tutorials");
+                ui.hyperlink_to(tr("Support"), "https://getartcraft.com/support");
+                ui.hyperlink_to(tr("Community (Discord)"), crate::menus::DISCORD);
+                ui.hyperlink_to("getartcraft.com", crate::menus::WEBSITE);
                 ui.add_space(16.0);
                 ui.checkbox(&mut app.ui.prefs.show_home, tr("Show at startup"));
             });
@@ -483,29 +308,43 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 );
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Samples")).strong());
+                // The starter templates, then the graphs of loaded library packages
+                let mut samples: Vec<(String, String, Option<String>)> = materialcraft_engine::samples::TEMPLATES
+                    .iter()
+                    .filter(|(id, _)| !matches!(*id, "empty" | "pbr"))
+                    .map(|(id, l)| (id.to_string(), l.to_string(), None))
+                    .collect();
+                for (_, package, graph, _) in app.plugin_graphs().into_iter().take(12) {
+                    samples.push((graph.clone(), graph, Some(package)));
+                }
                 ui.horizontal_wrapped(|ui| {
-                    for (id, label) in materialcraft_engine::samples::TEMPLATES.iter().filter(|(id, _)| !matches!(*id, "empty" | "pbr")) {
+                    for (id, label, package) in &samples {
                         let (r, resp) = ui.allocate_exact_size(vec2(92.0, 116.0), egui::Sense::click());
                         crate::widgets::name(&resp, egui::Role::ListItem, label);
                         if resp.hovered() {
                             ui.painter().rect_filled(r, 6.0, tk.row_hover);
                         }
                         let img = egui::Rect::from_min_size(r.min + vec2(6.0, 4.0), vec2(80.0, 80.0));
-                        match TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) {
+                        let preview = if package.is_some() { None } else { TEMPLATES.with(|t| t.borrow_mut().get(ui.ctx(), id)) };
+                        match preview {
                             Some(t) => {
                                 ui.painter().image(t, img, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
                             }
                             None => {
                                 ui.painter().circle_filled(img.center(), 36.0, tk.row);
+                                ui.painter().text(img.center(), egui::Align2::CENTER_CENTER, icon::PUZZLE_PIECE, egui::FontId::proportional(28.0), tk.text_dim);
                             }
                         }
                         let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 90.0);
                         ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
                         if resp.clicked() {
-                            create = Some((id, label));
+                            create = Some((id.clone(), label.clone(), package.clone()));
                         }
                     }
                 });
+                if samples.len() <= 1 {
+                    ui.label(RichText::new(tr("Library packages added in Tools > Plugin Manager show their graphs here")).small().color(tk.text_dim));
+                }
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Recent")).strong());
                 if app.ui.recent.is_empty() {
@@ -521,8 +360,12 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             });
         });
     });
-    if let Some((id, label)) = create {
-        if app.run("file.new", json!({"template": id, "name": label.replace(' ', "_"), "size": 1024})).is_some() {
+    if let Some((id, label, package)) = create {
+        let made = match package {
+            Some(package) => app.run("file.importGraph", json!({"path": package, "graph": id})),
+            None => app.run("file.new", json!({"template": id, "name": label.replace(' ', "_"), "size": 1024})),
+        };
+        if made.is_some() {
             app.ui.frame_all = true;
         }
         open = false;
@@ -571,12 +414,11 @@ pub fn history(app: &mut MaterialCraftApp, ui: &mut Ui) {
     });
 }
 
-/// The function parameter of a pixel/value processor: a button opening the function graph
-/// editor, and the function as JSON for copy and paste.
-pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, param: &str, f: &FnGraph) {
+/// The function parameter of a pixel/value processor: a button opening the function graph editor, and the function as JSON for copy and paste
+pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, param: &str, f: &FunctionGraph) {
     let tk = Tokens::get(ui.ctx());
     if ui.add(crate::widgets::primary_button(ui, &format!("{}  {}", icon::FLOW_ARROW, tr("Edit function graph...")))).clicked() {
-        app.fn_editor = Some(crate::function_editor::FnEditor::new(node, param));
+        crate::graph::subgraph_navigation::open_function(app, node, crate::function::FunctionTarget::Parameter(param.to_string()));
     }
     ui.label(RichText::new(format!("{} {}", f.nodes.len(), tr("function nodes"))).size(10.5).color(tk.text_dim));
     let id = egui::Id::unique(("fn-edit", node.0, param));
@@ -587,7 +429,7 @@ pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, p
         }
         ui.horizontal(|ui| {
             if ui.button(tr("Apply")).clicked() {
-                match serde_json::from_str::<FnGraph>(&text) {
+                match serde_json::from_str::<FunctionGraph>(&text) {
                     Ok(g) => {
                         let v = serde_json::to_value(materialcraft_engine::core::Value::Function(Box::new(g))).unwrap_or(Value::Null);
                         app.run("graph.node.param", json!({"id": node.0, "param": param, "value": v}));
@@ -603,10 +445,10 @@ pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, p
     });
 }
 
-/// Extensions File ▸ Open reads: SBS (the main format) and `.mcraft` packages, and materials (their source package).
-pub const OPEN_EXTS: &[&str] = &["sbs", "mcraft", MATERIAL_EXT];
+/// Extensions File ▸ Open reads: SBS packages, and materials (their source package)
+pub const OPEN_EXTS: &[&str] = &["sbs", MATERIAL_EXT];
 
-/// After a package opened with warnings (an SBS file using nodes MaterialCraft lacks, say), bring the Console forward.
+/// After a package opened with warnings (an SBS file using nodes MaterialCraft lacks, say), bring the Console forward
 pub fn after_open(app: &mut MaterialCraftApp) {
     let warning_count = app.session.load_warnings.len();
     if warning_count > 0 {
@@ -615,7 +457,36 @@ pub fn after_open(app: &mut MaterialCraftApp) {
     }
 }
 
-/// File menu actions that need a file dialog. Returns true when handled.
+/// Where a file dialog opens (Preferences ▸ Save/Export Path): the last folder used, the
+/// package's folder, or a fixed one
+#[cfg(not(target_arch = "wasm32"))]
+pub fn dialog_dir(app: &MaterialCraftApp) -> Option<std::path::PathBuf> {
+    let p = &app.ui.prefs;
+    let dir = match p.save_path_mode.as_str() {
+        "package" => app.session.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).map(|p| p.to_path_buf()),
+        "custom" if !p.save_path.trim().is_empty() => Some(std::path::PathBuf::from(p.save_path.trim())),
+        _ => (!app.ui.last_dir.is_empty()).then(|| std::path::PathBuf::from(&app.ui.last_dir)),
+    };
+    dir.filter(|d| d.is_dir())
+}
+
+/// A file dialog opening in the preferred folder
+#[cfg(not(target_arch = "wasm32"))]
+pub fn dialog(app: &MaterialCraftApp) -> rfd::FileDialog {
+    match dialog_dir(app) {
+        Some(d) => rfd::FileDialog::new().set_directory(d),
+        None => rfd::FileDialog::new(),
+    }
+}
+
+/// Remember the folder of a path a dialog gave (Save/Export Path: Last path)
+pub fn remember_dir(app: &mut MaterialCraftApp, path: &std::path::Path) {
+    if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        app.ui.last_dir = d.display().to_string();
+    }
+}
+
+/// File menu actions that need a file dialog. Returns true when handled
 pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ctx;
@@ -639,12 +510,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             }
             "file.save" | "file.saveAs" => {
                 let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = dialog(app)
-                    .set_file_name(name)
-                    .add_filter("SBS package", &["sbs"])
-                    .add_filter("MaterialCraft package (older format)", &["mcraft"])
-                    .save_file()
-                {
+                if let Some(p) = dialog(app).set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
                     remember_dir(app, &p);
                     let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
                     if app.run("file.save", json!({"path": path})).is_some() {
@@ -673,31 +539,33 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.importBitmap" => {
-                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
-                    remember_dir(app, &p);
-                    crate::graph_view::import_bitmap_file(app, &p.display().to_string());
+                if let Some(path) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
+                    remember_dir(app, &path);
+                    crate::graph::import_bitmap_file(app, &path.display().to_string());
                 }
                 true
             }
             "file.linkBitmap" => {
-                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file()
-                    && let Some(r) = app.run("file.linkBitmap", json!({"path": p.display().to_string()}))
-                {
-                    let name = r["name"].as_str().unwrap_or_default().to_string();
-                    app.toast(format!("{} {name}", tr("Linked bitmap")), false);
+                if let Some(p) = dialog(app).add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file() {
+                    remember_dir(app, &p);
+                    if let Some(r) = app.run("file.linkBitmap", json!({"path": p.display().to_string()})) {
+                        let name = r["name"].as_str().unwrap_or_default().to_string();
+                        crate::graph::add_node_near_selection(app, "bitmap");
+                        if let Some(id) = app.session.selection.last().copied() {
+                            app.run("graph.node.param", json!({"id": id.0, "param": "resource", "value": name}));
+                        }
+                        app.toast(format!("{} {}", tr("Linked bitmap"), r["name"].as_str().unwrap_or_default()), false);
+                    }
                 }
                 true
             }
             "file.saveCopy" => {
                 let name = format!("{}_copy.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = dialog(app)
-                    .set_file_name(name)
-                    .add_filter("SBS package", &["sbs"])
-                    .add_filter("MaterialCraft package (older format)", &["mcraft"])
-                    .save_file()
-                    && let Some(r) = app.run("file.saveCopy", json!({"path": p.display().to_string()}))
-                {
-                    app.toast(format!("{} {}", tr("Saved a copy to"), r["path"].as_str().unwrap_or_default()), false);
+                if let Some(p) = dialog(app).set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
+                    remember_dir(app, &p);
+                    if let Some(r) = app.run("file.saveCopy", json!({"path": p.display().to_string()})) {
+                        app.toast(format!("{} {}", tr("Saved a copy to"), r["path"].as_str().unwrap_or_default()), false);
+                    }
                 }
                 true
             }
@@ -711,16 +579,14 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.importGraph" => {
-                if let Some(p) = dialog(app).add_filter("Packages", &["sbs", "mcraft"]).pick_file() {
+                if let Some(p) = dialog(app).add_filter("Packages", &["sbs"]).pick_file() {
                     remember_dir(app, &p);
                     let path = p.display().to_string();
-                    // Several graphs: the picker window asks which; one graph imports at once.
+                    // Several graphs: the picker window asks which; one graph imports at once
                     match app.run("file.packageGraphs", json!({"path": path})) {
                         Some(list) if list.as_array().is_some_and(|a| a.len() > 1) => {
-                            app.import_pick = Some((
-                                path,
-                                list.as_array().cloned().unwrap_or_default().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect(),
-                            ));
+                            let names = list.as_array().cloned().unwrap_or_default().iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect();
+                            app.import_pick = Some((path, names));
                         }
                         Some(_) => {
                             if let Some(r) = app.run("file.importGraph", json!({"path": path})) {
@@ -748,45 +614,14 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     }
 }
 
-/// Where a file dialog opens (Preferences ▸ Save/Export Path): the last folder used, the
-/// package's folder, or a fixed one.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn dialog_dir(app: &MaterialCraftApp) -> Option<std::path::PathBuf> {
-    let p = &app.ui.prefs;
-    let dir = match p.save_path_mode.as_str() {
-        "package" => app.session.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).map(|p| p.to_path_buf()),
-        "custom" if !p.save_path.trim().is_empty() => Some(std::path::PathBuf::from(p.save_path.trim())),
-        _ => (!app.ui.last_dir.is_empty()).then(|| std::path::PathBuf::from(&app.ui.last_dir)),
-    };
-    dir.filter(|d| d.is_dir())
-}
-
-/// A file dialog opening in the preferred folder.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn dialog(app: &MaterialCraftApp) -> rfd::FileDialog {
-    match dialog_dir(app) {
-        Some(d) => rfd::FileDialog::new().set_directory(d),
-        None => rfd::FileDialog::new(),
-    }
-}
-
-/// Remember the folder of a path a dialog gave (Save/Export Path: Last path).
-pub fn remember_dir(app: &mut MaterialCraftApp, path: &std::path::Path) {
-    if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        app.ui.last_dir = d.display().to_string();
-    }
-}
-
-/// Open a package from a path (recent list, drag and drop, command line). Asks first when the
-/// open package has unsaved changes.
+/// Open a package from a path (recent list, command line)
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_path(app: &mut MaterialCraftApp, path: &str) {
     crate::unsaved::guard(app, crate::unsaved::Guarded::OpenPath { path: path.to_string() });
 }
 
-/// Open a package from a path, replacing the open one (already confirmed).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn open_path_now(app: &mut MaterialCraftApp, path: &str) {
+pub(crate) fn open_path_now(app: &mut MaterialCraftApp, path: &str) {
     if app.run("file.open", json!({"path": path})).is_some() {
         app.ui.add_recent(path);
         app.ui.frame_all = true;

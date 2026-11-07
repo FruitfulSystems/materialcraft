@@ -1,28 +1,18 @@
-//! The explorer: the open package, its graphs and its bitmap resources, each with a context menu.
+//! The package tree, its graphs, inputs, outputs and resources, each with a context menu
 
-use egui::{RichText, Sense, Ui, vec2};
+use egui::{RichText, Sense, Ui};
+
+mod actions;
+mod package_menu;
+mod tree_row;
 use egui_phosphor::regular as icon;
 use serde_json::json;
+
+pub use actions::{GraphClipboard, Rename};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 use crate::theme::Tokens;
-
-/// What a context menu asked for; carried out after the tree is drawn.
-#[derive(Clone, Debug, PartialEq)]
-enum Action {
-    Menu(&'static str),
-    Graph(&'static str, usize),
-    Resource(&'static str, usize),
-}
-
-/// A graph on the explorer's clipboard (Copy / Paste a graph).
-#[derive(Clone, Debug, Default)]
-pub struct GraphClipboard(pub Option<serde_json::Value>);
-
-/// Rename-in-place state: the graph index and the text being edited.
-#[derive(Clone, Debug, Default)]
-pub struct Rename(pub Option<(usize, String)>);
 
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
@@ -45,46 +35,183 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
     });
     ui.add_space(2.0);
-    let mut action: Option<Action> = None;
+    let mut menu_pick: Option<&'static str> = None;
+    let mut resource_action: Option<(&str, usize)> = None;
+    let mut rename_done: Option<(usize, Option<String>)> = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let name = format!("{}{}", app.session.pkg.name, if app.session.modified { "*" } else { "" });
-        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
-        crate::widgets::name(&resp, egui::Role::TreeItem, &app.session.pkg.name);
-        if resp.hovered() {
-            ui.painter().rect_filled(r, 4.0, tk.row_hover);
-        }
-        ui.painter().text(
-            r.left_center() + vec2(4.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            format!("{}  {name}", icon::PACKAGE),
-            egui::FontId::proportional(12.5),
-            tk.text_strong,
-        );
+        let package_row = tree_row::show(ui, &name, icon::PACKAGE, false);
         if let Some(path) = &app.session.path {
-            resp.clone().on_hover_text(path);
+            package_row.clone().on_hover_text(path);
         }
-        resp.context_menu(|ui| package_menu(app, ui, &mut action));
-
-        let focused_tree = ui.ui_contains_pointer();
-        for i in 0..app.session.pkg.graphs.len() {
-            graph_row(app, ui, i, &mut action);
-        }
-        // Keyboard: Return opens, Del removes, F2 renames the open graph while the pointer is here.
-        if focused_tree && app.explorer_rename.0.is_none() && !ui.ctx().egui_wants_keyboard_input() {
+        package_row.context_menu(|ui| {
+            if let Some(id) = package_menu::show(app, ui) {
+                menu_pick = Some(id);
+            }
+        });
+        let mut open: Option<usize> = None;
+        let mut action: Option<(&str, usize)> = None;
+        let mut selected_node = None;
+        let mut assignment = None;
+        let renaming = app.explorer_rename.0.clone();
+        let can_paste = app.explorer_clipboard.0.is_some();
+        // Keyboard over the tree: F2 renames the open graph, Delete removes it
+        if ui.ui_contains_pointer() && renaming.is_none() && !ui.ctx().egui_wants_keyboard_input() {
             let gi = app.session.graph;
             ui.input(|i| {
                 if i.key_pressed(egui::Key::F2) {
-                    action = Some(Action::Graph("rename", gi));
+                    action = Some(("rename", gi));
                 } else if i.key_pressed(egui::Key::Delete) {
-                    action = Some(Action::Graph("delete", gi));
+                    action = Some(("delete", gi));
                 }
             });
+        }
+        for (index, graph) in app.session.pkg.graphs.iter().enumerate() {
+            let active = index == app.session.graph;
+            let function = graph.function.is_some();
+            // Rename in place (F2 / the context menu)
+            if let Some((ri, mut text)) = renaming.clone()
+                && ri == index
+            {
+                let resp = ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width() - 24.0));
+                if !resp.has_focus() && !resp.lost_focus() {
+                    resp.request_focus();
+                }
+                let enter = ui.input(|inp| inp.key_pressed(egui::Key::Enter));
+                let escape = ui.input(|inp| inp.key_pressed(egui::Key::Escape));
+                if escape {
+                    rename_done = Some((index, None));
+                } else if resp.lost_focus() || enter {
+                    rename_done = Some((index, Some(text.clone())));
+                } else if resp.changed() {
+                    app.explorer_rename.0 = Some((index, text));
+                }
+                continue;
+            }
+            let mut header = |ui: &mut Ui| {
+                let symbol = if function { icon::FUNCTION } else { icon::TREE_STRUCTURE };
+                let response = tree_row::show(ui, &graph.name, symbol, active);
+                if !function {
+                    response.interact(egui::Sense::drag()).dnd_set_drag_payload(crate::graph_drag_payload::GraphDragPayload { name: graph.name.clone() });
+                }
+                if response.clicked() {
+                    open = Some(index);
+                }
+                response.context_menu(|ui| {
+                    if !function {
+                        for (label, command) in [("View outputs in 3D view", "view3d"), ("Reset and view outputs in 3D view", "reset3d")] {
+                            if ui.button(tr(label)).clicked() {
+                                action = Some((command, index));
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                    }
+                    for (label, command, key, enabled) in [
+                        ("Open", "open", "Return", true),
+                        ("Copy", "copy", "", true),
+                        ("Paste", "paste", "", can_paste),
+                        ("Remove", "delete", "Del", true),
+                        ("Rename", "rename", "F2", true),
+                        ("Duplicate", "duplicate", "", true),
+                        ("Compute Outputs", "compute", "", true),
+                        ("Export outputs...", "export", "", true),
+                    ] {
+                        if crate::menus::menu_row(ui, tr(label), key, enabled).clicked() {
+                            action = Some((command, index));
+                            ui.close();
+                        }
+                    }
+                });
+            };
+
+            if function {
+                ui.horizontal(|ui| {
+                    ui.add_space(ui.spacing().indent);
+                    header(ui);
+                });
+                continue;
+            }
+
+            let id = ui.make_persistent_id(("graph", index, &graph.name));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
+                ui.indent("graph-ports", |ui| {
+                    for node in graph.nodes.iter().filter(|node| matches!(node.def.as_str(), "output" | "input_color" | "input_grayscale" | "input_value")) {
+                        ui.push_id(node.id, |ui| {
+                            let name = crate::graph::node_label(node);
+                            let selected = active && app.session.selection.contains(&node.id);
+                            let symbol = if node.def == "input_value" { icon::FUNCTION } else { icon::IMAGE };
+                            let response = tree_row::show(ui, &name, symbol, selected);
+
+                            response.context_menu(|ui| {
+                                if let Some(parameters) = crate::material_preview_menu::show(ui, &app.session, index, node.id) {
+                                    assignment = Some(parameters);
+                                }
+                            });
+                            if response.clicked() || response.double_clicked() {
+                                selected_node = Some((index, node.id, response.double_clicked()));
+                            }
+                        });
+                    }
+                });
+            });
+        }
+        if let Some(i) = open {
+            app.run("graph.open", json!({"graph": i}));
+        }
+        if let Some((index, node, preview)) = selected_node {
+            if index != app.session.graph && app.run("graph.open", json!({"graph": index})).is_none() {
+                return;
+            }
+
+            app.pattern_editor = None;
+            app.function_editor = None;
+            app.run("graph.annotation.select", json!({}));
+            app.run("graph.select", json!({"ids": [node.0]}));
+            app.graph.inspected_node = Some(node);
+            app.ui.dock.focus(crate::docking::Panel::Properties);
+            if preview {
+                app.run("view.2d", json!({"node": node.0}));
+                app.ui.dock.focus(crate::docking::Panel::View2d);
+            }
+        }
+
+        if let Some(parameters) = assignment {
+            app.run("view.3d.assign", parameters);
+        }
+        match action {
+            Some((command @ ("view3d" | "reset3d"), graph)) => {
+                app.run("view.3d.outputs", json!({"graph": graph, "reset": command == "reset3d"}));
+            }
+            Some(("open", i)) => {
+                app.run("graph.open", json!({"graph": i}));
+            }
+            Some(("export", i)) => {
+                // The export window works on the open graph
+                if app.run("graph.open", json!({"graph": i})).is_some() {
+                    app.ui.windows.export = true;
+                }
+            }
+            Some(("duplicate", i)) => {
+                app.run("graph.duplicate", json!({"graph": i}));
+            }
+            Some(("delete", i)) => {
+                app.run("graph.delete", json!({"graph": i}));
+            }
+            Some(("copy", i)) => actions::copy_graph(app, ui.ctx(), i),
+            Some(("paste", _)) => actions::paste_graph(app),
+            Some(("rename", i)) => {
+                if let Some(g) = app.session.pkg.graphs.get(i) {
+                    app.explorer_rename.0 = Some((i, g.name.clone()));
+                }
+            }
+            Some(("compute", i)) if app.run("graph.open", json!({"graph": i})).is_some() => actions::compute(app),
+            _ => {}
         }
         if !app.session.pkg.resources.is_empty() {
             ui.add_space(6.0);
             ui.label(RichText::new(tr("Resources")).color(tk.text_dim).size(11.0));
-            for i in 0..app.session.pkg.resources.len() {
-                let Some(r) = app.session.pkg.resources.get(i) else { continue };
+            for (i, r) in app.session.pkg.resources.iter().enumerate() {
                 let linked = r.link.is_some();
                 let text = format!("{}  {}  ({} KB)", if linked { icon::LINK } else { icon::IMAGE }, r.name, r.bytes.len() / 1024);
                 let hover = match &r.link {
@@ -94,239 +221,48 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 let resp = ui.add(egui::Label::new(text).sense(Sense::click())).on_hover_text(hover);
                 resp.context_menu(|ui| {
                     if linked && ui.button(tr("Relink...")).clicked() {
-                        action = Some(Action::Resource("relink", i));
+                        resource_action = Some(("relink", i));
                         ui.close();
                     }
                     if ui.button(tr("Add a Bitmap node")).clicked() {
-                        action = Some(Action::Resource("node", i));
+                        resource_action = Some(("node", i));
                         ui.close();
                     }
                     if ui.button(tr("Remove")).clicked() {
-                        action = Some(Action::Resource("delete", i));
+                        resource_action = Some(("delete", i));
                         ui.close();
                     }
                 });
             }
         }
     });
-    if let Some(a) = action {
-        perform(app, ui.ctx(), a);
+    if let Some((i, text)) = rename_done {
+        let old = app.session.pkg.graphs.get(i).map(|g| g.name.clone()).unwrap_or_default();
+        app.explorer_rename.0 = None;
+        if let Some(new) = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && *t != old) {
+            app.run("graph.rename", json!({"graph": i, "name": new}));
+        }
     }
-}
-
-fn graph_row(app: &mut MaterialCraftApp, ui: &mut Ui, i: usize, action: &mut Option<Action>) {
-    let tk = Tokens::get(ui.ctx());
-    let Some(g) = app.session.pkg.graphs.get(i) else { return };
-    let gname = g.name.clone();
-    let on = i == app.session.graph;
-    // Rename in place.
-    if let Some((ri, text)) = &mut app.explorer_rename.0
-        && *ri == i
-    {
-        let resp = ui.add(egui::TextEdit::singleline(text).desired_width(ui.available_width() - 24.0));
-        if !resp.has_focus() && !resp.lost_focus() {
-            resp.request_focus();
-        }
-        let enter = ui.input(|inp| inp.key_pressed(egui::Key::Enter));
-        let escape = ui.input(|inp| inp.key_pressed(egui::Key::Escape));
-        if resp.lost_focus() || enter {
-            let new = text.trim().to_string();
-            app.explorer_rename.0 = None;
-            if !new.is_empty() && new != gname && !escape {
-                app.run("graph.rename", json!({"graph": i, "name": new}));
-            }
-        } else if escape {
-            app.explorer_rename.0 = None;
-        }
-        return;
+    match menu_pick {
+        Some("explorer.copy") => actions::copy_graph(app, ui.ctx(), app.session.graph),
+        Some("explorer.paste") => actions::paste_graph(app),
+        Some("explorer.compute") => actions::compute(app),
+        Some("explorer.reveal") => actions::reveal(app),
+        Some(id) => crate::menus::invoke(app, ui.ctx(), id),
+        None => {}
     }
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
-    crate::widgets::name(&resp, egui::Role::TreeItem, &gname);
-    if on {
-        ui.painter().rect_filled(r, 4.0, tk.row_selected);
-        ui.painter().rect_stroke(r, 4.0, egui::Stroke::new(1.0, tk.accent), egui::StrokeKind::Inside);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(r, 4.0, tk.row_hover);
-    }
-    ui.painter().text(
-        r.left_center() + vec2(18.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        format!("{}  {}", icon::TREE_STRUCTURE, gname),
-        egui::FontId::proportional(12.0),
-        if on { tk.text_strong } else { tk.text },
-    );
-    if resp.clicked() {
-        *action = Some(Action::Graph("open", i));
-    }
-    resp.context_menu(|ui| {
-        let can_paste = app.explorer_clipboard.0.is_some();
-        for (label, a, key, enabled) in [
-            ("Open", "open", "Return", true),
-            ("Copy", "copy", "", true),
-            ("Paste", "paste", "", can_paste),
-            ("Remove", "delete", "Del", true),
-            ("Rename", "rename", "F2", true),
-            ("View Outputs In 3D View", "view3d", "", true),
-            ("Compute Outputs", "compute", "", true),
-            ("Export outputs...", "export", "", true),
-        ] {
-            if crate::menus::menu_row(ui, tr(label), key, enabled).clicked() {
-                *action = Some(Action::Graph(a, i));
-                ui.close();
-            }
-        }
-    });
-}
-
-fn package_menu(app: &mut MaterialCraftApp, ui: &mut Ui, action: &mut Option<Action>) {
-    let mut pick = |ui: &mut Ui, label: &str, id: &'static str, key: &str, enabled: bool| {
-        if crate::menus::menu_row(ui, tr(label), key, enabled).clicked() {
-            *action = Some(Action::Menu(id));
-            ui.close();
-        }
-    };
-    ui.menu_button(tr("New"), |ui| {
-        pick(ui, "Graph...", "ui.newGraph", "Ctrl+N", true);
-        pick(ui, "Function graph...", "ui.newFunctionGraph", "", false);
-    });
-    ui.menu_button(tr("Import"), |ui| {
-        pick(ui, "Bitmap...", "file.importBitmap", "", true);
-        pick(ui, "Graph from a package...", "file.importGraph", "", true);
-    });
-    ui.menu_button(tr("Link"), |ui| {
-        pick(ui, "Bitmap...", "file.linkBitmap", "", true);
-    });
-    pick(ui, "Reload", "ui.reloadResources", "", true);
-    ui.separator();
-    pick(ui, "Save", "file.save", "Ctrl+S", true);
-    pick(ui, "Save as...", "file.saveAs", "Ctrl+Shift+S", true);
-    pick(ui, "Save a copy as...", "file.saveCopy", "", true);
-    pick(ui, "Export with dependencies...", "file.exportWithDependencies", "", true);
-    ui.menu_button(tr("Send to"), |ui| {
-        pick(ui, "TextureCraft", "file.sendToTextureCraft", "", true);
-    });
-    ui.separator();
-    pick(ui, "Copy", "explorer.copy", "", true);
-    pick(ui, "Paste", "explorer.paste", "", app.explorer_clipboard.0.is_some());
-    ui.separator();
-    pick(ui, "Close package", "ui.closeAll", "", true);
-    pick(ui, "Compute Outputs", "explorer.compute", "", true);
-    pick(ui, "Show in Explorer...", "explorer.reveal", "", app.session.path.is_some());
-    ui.separator();
-    pick(ui, "Dependency Manager", "ui.view.dependencies", "", true);
-}
-
-fn perform(app: &mut MaterialCraftApp, ctx: &egui::Context, action: Action) {
-    match action {
-        Action::Menu("explorer.copy") => copy_graph(app, ctx, app.session.graph),
-        Action::Menu("explorer.paste") => paste_graph(app),
-        Action::Menu("explorer.compute") => compute(app),
-        Action::Menu("explorer.reveal") => reveal(app),
-        Action::Menu(id) => crate::menus::invoke(app, ctx, id),
-        Action::Graph("open", i) => {
-            app.run("graph.open", json!({"graph": i}));
-        }
-        Action::Graph("copy", i) => copy_graph(app, ctx, i),
-        Action::Graph("paste", _) => paste_graph(app),
-        Action::Graph("delete", i) => {
-            app.run("graph.delete", json!({"graph": i}));
-        }
-        Action::Graph("rename", i) => {
-            if let Some(g) = app.session.pkg.graphs.get(i) {
-                app.explorer_rename.0 = Some((i, g.name.clone()));
-            }
-        }
-        Action::Graph("view3d", i) => {
-            if app.run("graph.open", json!({"graph": i})).is_some() {
-                app.ui.dock.focus(crate::docking::Panel::View3d);
-                compute(app);
-            }
-        }
-        Action::Graph("compute", i) => {
-            if app.run("graph.open", json!({"graph": i})).is_some() {
-                compute(app);
-            }
-        }
-        Action::Graph("export", i) => {
-            // The export window works on the open graph.
-            if app.run("graph.open", json!({"graph": i})).is_some() {
-                app.ui.windows.export = true;
-            }
-        }
-        Action::Resource("delete", i) => {
+    match resource_action {
+        Some(("delete", i)) => {
             if let Some(name) = app.session.pkg.resources.get(i).map(|r| r.name.clone()) {
                 app.run("file.deleteResource", json!({"name": name}));
             }
         }
-        Action::Resource("node", i) => {
+        Some(("node", i)) => {
             if let Some(name) = app.session.pkg.resources.get(i).map(|r| r.name.clone()) {
                 app.run("graph.node.add", json!({"def": "bitmap", "params": {"resource": name}}));
             }
         }
-        Action::Resource("relink", i) => relink(app, i),
-        Action::Graph(..) | Action::Resource(..) => {}
-    }
-}
-
-/// Copy a graph as JSON: to the explorer clipboard, and as text to the system clipboard.
-fn copy_graph(app: &mut MaterialCraftApp, ctx: &egui::Context, i: usize) {
-    let Some(g) = app.session.pkg.graphs.get(i) else { return };
-    match serde_json::to_value(g) {
-        Ok(v) => {
-            if let Ok(text) = serde_json::to_string(&v) {
-                ctx.copy_text(text);
-            }
-            app.explorer_clipboard.0 = Some(v);
-            app.toast(format!("{} {}", tr("Copied graph"), g.name), false);
-        }
-        Err(e) => app.toast(format!("{}: {e}", tr("Could not copy the graph")), true),
-    }
-}
-
-fn paste_graph(app: &mut MaterialCraftApp) {
-    let Some(v) = app.explorer_clipboard.0.clone() else { return };
-    if let Some(r) = app.run("graph.add", json!({"graph": v})) {
-        app.toast(format!("{} {}", tr("Pasted graph"), r["name"].as_str().unwrap_or_default()), false);
-    }
-}
-
-/// Compute the open graph's outputs now: the cache is kept, the cook restarts (also lifts a Cancel).
-fn compute(app: &mut MaterialCraftApp) {
-    app.cooker.hold = false;
-    app.session.dirty = true;
-}
-
-/// Show the package file in the system's file browser.
-fn reveal(app: &mut MaterialCraftApp) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let Some(path) = app.session.path.clone() else { return };
-        let folder = std::path::Path::new(&path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let result = if cfg!(target_os = "windows") {
-            std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn()
-        } else if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg("-R").arg(&path).spawn()
-        } else {
-            std::process::Command::new("xdg-open").arg(&folder).spawn()
-        };
-        if let Err(e) = result {
-            app.toast(format!("{} {} ({e})", tr("Package folder:"), folder.display()), true);
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    app.toast(tr("The browser keeps no package folder"), true);
-}
-
-fn relink(app: &mut MaterialCraftApp, i: usize) {
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(name) = app.session.pkg.resources.get(i).map(|r| r.name.clone())
-        && let Some(p) = rfd::FileDialog::new().add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file()
-    {
-        app.run("file.linkBitmap", json!({"path": p.display().to_string(), "name": name}));
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = i;
-        app.toast(tr("The browser has no files to link to"), true);
+        Some(("relink", i)) => actions::relink(app, i),
+        _ => {}
     }
 }

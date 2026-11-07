@@ -1,12 +1,20 @@
 # Gaps
 
+> The assessment below predates the 2026-11-05 primitive rewrite. Its old library counts and
+> compatibility claims are historical. See [atomic-workflow.md](atomic-workflow.md) and
+> [ROADMAP.md](../ROADMAP.md) for the current scope and remaining validation.
+
+Current integration also provides workspace-scoped `material_export`, real Height displacement
+from the assigned material, explicit normal-map convention, and linear bitmap/input previews.
+The native SBS and primitive-library limitations in [atomic-workflow.md](atomic-workflow.md) remain.
+
 > **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** major (lights, shaders, material common values and view-state files closed most of the 3D view gap; node shortcuts closed part of the keymap gap) · **Target:** the professional node-based material workflow
 
 Every known shortfall, most important first. Pick from the top.
 
 | # | Gap | Evidence | Impact | Estimate | Parity doc |
 |---:|---|---|---|---:|---|
-| 1 | Node library breadth | 227 nodes vs. ~400 in the reference library | Recipes that need scan processing, more grunges, splines or SDF shapes | 30 h | target-app-parity (Node library) |
+| 1 | Node library breadth | 227 nodes vs. ~400 in the reference library | Recipes that need scan processing, more grunges, splines or MCF (distance-field) functions | 30 h | target-app-parity (Node library) |
 | 2 | GPU 3D view | CPU ray caster with lights, shaders and displacement (a tessellation factor scales the triangle budget) | Large meshes and high sample counts are slow; no path tracing | 12 h | target-app-parity (3D view) |
 | 3 | Mesh-based generators and bakers | None | Workflows that start from a mesh | 15 h | target-app-parity (Node library) |
 | 4 | Portable materials over MCP | `.mcmat` export runs from the app and the CLI; the MCP workspace sandbox refuses `file.*` commands and has no `material_export` tool | Sandboxed agents can't hand a material to TextureCraft | 1 h | target-app-parity (Files) |

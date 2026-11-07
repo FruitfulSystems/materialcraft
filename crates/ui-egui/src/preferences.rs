@@ -279,7 +279,7 @@ fn general(app: &mut MaterialCraftApp, ui: &mut Ui) {
         number(ui, tr("Keep up to:"), &mut p.backup_versions, 1..=50, tr("versions"));
     });
     ui.label(
-        RichText::new(tr("Backups are written to the temporary folder above; open one with File ▸ Open and save it over the original."))
+        RichText::new(tr("Backups are written to the temporary folder above; open one with File > Open and save it over the original."))
             .small()
             .color(tk.text_dim),
     );
@@ -321,7 +321,7 @@ fn projects(app: &mut MaterialCraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(tr("Default State File:"));
         let has = app.ui.view3d_default.is_some();
-        ui.label(RichText::new(if has { tr("saved (Scene ▸ Save Current State As Default)") } else { tr("none: the built-in state") }).color(tk.text_dim));
+        ui.label(RichText::new(if has { tr("saved (Scene > Save Current State As Default)") } else { tr("none: the built-in state") }).color(tk.text_dim));
         if has && ui.small_button(tr("Clear")).clicked() {
             app.ui.view3d_default = None;
         }
@@ -368,7 +368,7 @@ fn graph(app: &mut MaterialCraftApp, ui: &mut Ui) {
     ui.checkbox(&mut p.auto_convert, tr("Automatically insert color/grayscale conversion node"));
     heading(ui, tr("Graph toolbar"));
     ui.checkbox(&mut p.show_grid, tr("Show the grid"));
-    ui.checkbox(&mut p.snap_grid, tr("Snap nodes to the grid"));
+    ui.checkbox(&mut p.snap_to_grid, tr("Snap nodes to the grid"));
     ui.checkbox(&mut p.straight_wires, tr("Straight wires"));
     ui.checkbox(&mut p.node_timings, tr("Show cook times on nodes"));
 }
@@ -506,7 +506,7 @@ fn shortcuts(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
-                ui.painter().rect_filled(r, 3.0, crate::graph_view::header_color(d.id));
+                ui.painter().rect_filled(r, 3.0, crate::graph::header_color(d.id));
                 ui.label(d.label);
             });
             let capturing = app.prefs_editor.capturing.as_deref() == Some(d.id);

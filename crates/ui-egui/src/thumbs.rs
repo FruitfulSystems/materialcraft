@@ -1,27 +1,23 @@
-//! Textures for node thumbnails (from cooked outputs) and the library's node previews (each node
-//! cooked at a small size on sample inputs: the library pictures are made by MaterialCraft itself,
-//! no icon files).
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::Receiver;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use materialcraft_engine::image::{Image, Kind};
-use materialcraft_engine::nodes::{Ctx, catalog, resolve_params};
+use materialcraft_engine::nodes::{CookContext, catalog, resolve_params};
 
-/// Rendered previews by id: (id, RGBA8 pixels).
+/// Rendered previews by id: (id, RGBA8 pixels)
 pub type Previews = Vec<(String, Vec<u8>)>;
 
-/// Side of node thumbnails and library previews, in pixels.
+/// Side of node thumbnails and library previews, in pixels
 pub const THUMB: u32 = 96;
-const LIB: u32 = 72;
+const LIBRARY_PREVIEW_SIZE: u32 = 72;
 
 #[derive(Default)]
 pub struct Thumbs {
-    /// (cook key, port) → texture and the frame it was last used.
+    /// (cook key, port) → texture and the frame it was last used
     nodes: HashMap<(u64, usize), (TextureHandle, u64)>,
     library: HashMap<String, TextureHandle>,
-    /// Environment previews by id (the equirectangular map, tone mapped).
+    /// Environment previews by id (the equirectangular map, tone mapped)
     environments: HashMap<String, TextureHandle>,
     library_rx: Option<Receiver<Previews>>,
     library_started: bool,
@@ -29,7 +25,7 @@ pub struct Thumbs {
 }
 
 impl Thumbs {
-    /// A small picture of a 3D view environment (rendered once per id).
+    /// A small picture of a 3D view environment (rendered once per id)
     pub fn environment(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureId> {
         if let Some(t) = self.environments.get(id) {
             return Some(t.id());
@@ -39,7 +35,7 @@ impl Thumbs {
         let mut rgba = Vec::with_capacity(w * h * 4);
         for px in &env.data {
             for c in px {
-                // Exposure down a stop and a gamma: bright skies stay readable.
+                // Exposure down a stop and a gamma: bright skies stay readable
                 let v = materialcraft_engine::image::linear_to_srgb((c * 0.5).min(1.0));
                 rgba.push((v * 255.0 + 0.5) as u8);
             }
@@ -51,16 +47,27 @@ impl Thumbs {
         self.environments.insert(id.to_string(), t);
         Some(tid)
     }
+
+    /// Drop the library previews and generate them again (Preferences ▸ Library ▸ Rebuild Thumbnails)
+    pub fn rebuild_library(&mut self) {
+        self.library.clear();
+        self.library_rx = None;
+        self.library_started = false;
+    }
 }
 
-/// An image as an egui texture image (sRGB display, `side` px).
+/// An image as an egui texture image (sRGB display, `side` px)
 pub fn color_image(img: &Image, side: u32) -> ColorImage {
     let small = img.resize(side, side, true);
     ColorImage::from_rgba_unmultiplied([side as usize, side as usize], &small.to_rgba8_display())
 }
 
 impl Thumbs {
-    /// The thumbnail of a node output, uploaded on first use.
+    pub fn clear_nodes(&mut self) {
+        self.nodes.clear();
+    }
+
+    /// The thumbnail of a node output, uploaded on first use
     pub fn node(&mut self, ctx: &egui::Context, key: u64, port: usize, img: &Image) -> egui::TextureId {
         let frame = self.frame;
         if let Some((t, f)) = self.nodes.get_mut(&(key, port)) {
@@ -73,7 +80,7 @@ impl Thumbs {
         id
     }
 
-    /// Once per frame: forget thumbnails unused for a few seconds; collect library previews.
+    /// Once per frame: forget thumbnails unused for a few seconds; collect library previews
     pub fn tick(&mut self, ctx: &egui::Context) {
         self.frame += 1;
         let f = self.frame;
@@ -84,21 +91,14 @@ impl Thumbs {
             && let Ok(list) = rx.try_recv()
         {
             for (id, rgba) in list {
-                let img = ColorImage::from_rgba_unmultiplied([LIB as usize, LIB as usize], &rgba);
-                self.library.insert(id.clone(), ctx.load_texture(format!("lib-{id}"), img, TextureOptions::LINEAR));
+                let img = ColorImage::from_rgba_unmultiplied([LIBRARY_PREVIEW_SIZE as usize, LIBRARY_PREVIEW_SIZE as usize], &rgba);
+                self.library.insert(id.clone(), ctx.load_texture(format!("library-{id}"), img, TextureOptions::LINEAR));
             }
             self.library_rx = None;
         }
     }
 
-    /// Drop the library previews and generate them again (Preferences ▸ Library ▸ Rebuild Thumbnails).
-    pub fn rebuild_library(&mut self) {
-        self.library.clear();
-        self.library_rx = None;
-        self.library_started = false;
-    }
-
-    /// The library preview of node `def` (generated in the background on first use).
+    /// The library preview of node `def` (generated in the background on first use)
     pub fn library(&mut self, ctx: &egui::Context, def: &str) -> Option<egui::TextureId> {
         if !self.library_started {
             self.library_started = true;
@@ -108,9 +108,11 @@ impl Thumbs {
     }
 }
 
-/// Sample inputs for previews: a cloud height, a colored version and its normal map.
+/// Sample inputs for previews: a wave height, a colored version and its normal map
 fn sample_inputs() -> (Image, Image, Image) {
-    let gray = Image::generate_uv(LIB, LIB, Kind::Gray, |u, v| [materialcraft_engine::nodes::noise::fbm(u, v, 3.0, 5, 0.5, 11), 0.0, 0.0, 0.0]);
+    let gray = Image::generate_uv(LIBRARY_PREVIEW_SIZE, LIBRARY_PREVIEW_SIZE, Kind::Gray, |u, v| {
+        [0.5 + 0.25 * (u * std::f32::consts::TAU).sin() + 0.25 * (v * std::f32::consts::TAU).cos(), 0.0, 0.0, 0.0]
+    });
     let color = gray.map(Kind::Color, |p| [0.15 + 0.7 * p[0], 0.35 + 0.3 * p[0], 0.8 - 0.5 * p[0], 1.0]);
     let normal = materialcraft_engine::nodes::atomic::height_to_normal(&gray, 4.0, false, true, false);
     (gray, color, normal)
@@ -130,7 +132,7 @@ fn previews() -> Previews {
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                // Masks and secondary inputs stay empty so the main effect shows.
+                // Masks and secondary inputs stay empty so the main effect shows
                 if i > 0 && !matches!(def.id, "blend" | "height_blend" | "normal_blend" | "rgba_merge") {
                     return None;
                 }
@@ -146,11 +148,20 @@ fn previews() -> Previews {
             })
             .collect();
         let params = resolve_params(def, &BTreeMap::new());
-        let ctx = Ctx { w: LIB, h: LIB, seed: 3, tile: true, inputs: &inputs, params: &params, resource: &no_res, vars: &vars };
+        let ctx = CookContext {
+            w: LIBRARY_PREVIEW_SIZE,
+            h: LIBRARY_PREVIEW_SIZE,
+            seed: 3,
+            tile: true,
+            inputs: &inputs,
+            params: &params,
+            resource: &no_res,
+            vars: &vars,
+        };
         if let Ok(imgs) = (def.cook)(&ctx)
             && let Some(img) = imgs.first()
         {
-            out.push((def.id.to_string(), img.resize(LIB, LIB, true).to_rgba8_display()));
+            out.push((def.id.to_string(), img.resize(LIBRARY_PREVIEW_SIZE, LIBRARY_PREVIEW_SIZE, true).to_rgba8_display()));
         }
     }
     out

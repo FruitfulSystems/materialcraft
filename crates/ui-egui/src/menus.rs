@@ -1,6 +1,4 @@
-//! The menu bar and global shortcuts. The menu catalog follows the menu layout of a standard
-//! node-based material authoring workflow, with stable ids; an item is live when the engine (or
-//! the shell, for `ui.*` ids) implements its id. The same catalog drives `docs/parity-checklist.md`.
+//! Menu actions and shortcuts share stable command ids
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use serde_json::Value;
@@ -9,51 +7,76 @@ use crate::MaterialCraftApp;
 use crate::i18n::tr;
 use crate::theme::Tokens;
 
-/// One menu entry. `label == "-"` is a separator; `sub` names a submenu group.
-#[derive(Clone, Copy, Debug)]
-pub struct Item {
-    pub menu: &'static str,
-    pub sub: Option<&'static str>,
-    pub label: &'static str,
-    pub id: &'static str,
-    pub shortcut: Option<&'static str>,
+pub use crate::menu_item::MenuItem;
+
+const fn it(menu: &'static str, label: &'static str, id: &'static str, shortcut: Option<&'static str>) -> MenuItem {
+    MenuItem { menu, sub: None, label, id, shortcut }
 }
 
-const fn it(menu: &'static str, label: &'static str, id: &'static str, shortcut: Option<&'static str>) -> Item {
-    Item { menu, sub: None, label, id, shortcut }
+const fn sub(menu: &'static str, sub: &'static str, label: &'static str, id: &'static str, shortcut: Option<&'static str>) -> MenuItem {
+    MenuItem { menu, sub: Some(sub), label, id, shortcut }
 }
-const fn sub(menu: &'static str, sub: &'static str, label: &'static str, id: &'static str, shortcut: Option<&'static str>) -> Item {
-    Item { menu, sub: Some(sub), label, id, shortcut }
-}
-const fn sep(menu: &'static str) -> Item {
-    Item { menu, sub: None, label: "-", id: "", shortcut: None }
+
+const fn sep(menu: &'static str) -> MenuItem {
+    MenuItem { menu, sub: None, label: "-", id: "", shortcut: None }
 }
 
 pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 
-/// The menu catalog (the target menu tree with our ids).
-pub const CATALOG: &[Item] = &[
-    sub("File", "New", "Material Graph...", "ui.newGraph", Some("Ctrl+N")),
-    sub("File", "New", "Function graph", "ui.newFunctionGraph", None),
+/// MaterialCraft's page on the ArtCraft site (downloads, requirements, documentation)
+pub const WEBSITE: &str = "https://getartcraft.com/apps/materialcraft";
+/// The ArtCraft community
+pub const DISCORD: &str = "https://discord.gg/artcraft";
+
+/// The menu catalog (the target menu tree with our ids)
+pub const CATALOG: &[MenuItem] = &[
+    sub("File", "New", "Graph...", "ui.newGraph", Some("Ctrl+N")),
+    sub("File", "New", "Function Graph...", "ui.newFunctionGraph", None),
     sub("File", "New", "Empty package", "file.newPackage", None),
     it("File", "Open...", "file.open", Some("Ctrl+O")),
-    // "Recent packages" follows Open (menu_item draws it from the recent list).
     sep("File"),
-    it("File", "Save all", "ui.saveAll", Some("Ctrl+Shift+S")),
+    it("File", "Save", "file.save", Some("Ctrl+S")),
+    it("File", "Save as...", "file.saveAs", Some("Ctrl+Shift+S")),
+    it("File", "Save a copy as...", "file.saveCopy", None),
+    it("File", "Save all", "ui.saveAll", None),
+    it("File", "Export with dependencies...", "file.exportWithDependencies", None),
     it("File", "Close all", "ui.closeAll", None),
+    sep("File"),
+    it("File", "Import bitmap...", "file.importBitmap", None),
+    it("File", "Link bitmap...", "file.linkBitmap", None),
+    it("File", "Import graph from a package...", "file.importGraph", None),
+    it("File", "Export outputs...", "ui.export", Some("Ctrl+Shift+E")),
+    it("File", "Export material...", "file.exportMaterial", None),
+    it("File", "Send to TextureCraft", "file.sendToTextureCraft", None),
     it("File", "Reload resources", "ui.reloadResources", None),
     sep("File"),
     it("File", "Exit", "ui.quit", Some("Ctrl+Q")),
     it("Edit", "Undo", "edit.undo", Some("Ctrl+Z")),
     it("Edit", "Redo", "edit.redo", Some("Ctrl+Y")),
     sep("Edit"),
+    it("Edit", "Copy", "edit.copy", Some("Ctrl+C")),
+    it("Edit", "Cut", "edit.cut", Some("Ctrl+X")),
+    it("Edit", "Paste", "edit.paste", Some("Ctrl+V")),
+    it("Edit", "Duplicate", "edit.duplicate", Some("Ctrl+D")),
+    it("Edit", "Delete", "edit.delete", Some("Delete")),
+    it("Edit", "Delete and relink", "edit.deleteRelink", Some("Backspace")),
+    it("Edit", "Select all", "edit.selectAll", Some("Ctrl+A")),
+    it("Edit", "Edit node graph", "graph.node.edit", Some("Ctrl+E")),
+    it("Edit", "Parent graph", "ui.graph.parent", Some("Alt+ArrowLeft")),
+    sep("Edit"),
     it("Edit", "Preferences...", "ui.preferences", None),
-    it("Tools", "Cancel rendering", "ui.cancelRender", Some("Escape")),
-    it("Tools", "Suspend engine", "ui.suspendEngine", Some("Shift+Escape")),
+    it("Tools", "Compute graph", "graph.cook", None),
+    it("Tools", "Snap to grid", "ui.graph.snapToGrid", None),
+    it("Tools", "Compute nodes thumbnails", "ui.graph.computeThumbnails", None),
+    it("Tools", "Clear nodes thumbnails", "ui.graph.clearThumbnails", Some("F5")),
+    it("Tools", "Previous pin", "ui.graph.previousPin", Some("Shift+F2")),
+    it("Tools", "Next pin", "ui.graph.nextPin", Some("F2")),
+    it("Tools", "View outputs in 3D view", "ui.graph.viewOutputs", None),
+    it("Tools", "Reset and view outputs in 3D view", "ui.graph.resetViewOutputs", None),
     sep("Tools"),
     it("Tools", "Switch engine...", "ui.switchEngine", Some("F9")),
-    sep("Tools"),
-    it("Tools", "Compute graph", "graph.cook", Some("F5")),
+    it("Tools", "Cancel rendering", "ui.cancelRender", Some("Escape")),
+    it("Tools", "Suspend engine", "ui.suspendEngine", None),
     it("Tools", "Clear cache", "ui.clearCache", None),
     sub("Tools", "Preview size", "256 px", "ui.preview.256", None),
     sub("Tools", "Preview size", "512 px", "ui.preview.512", None),
@@ -62,60 +85,63 @@ pub const CATALOG: &[Item] = &[
     sub("Tools", "Preview size", "Full size", "ui.preview.0", None),
     it("Tools", "Create graph from selection", "graph.createFromSelection", None),
     sep("Tools"),
-    it("Tools", "Import bitmap...", "file.importBitmap", None),
-    it("Tools", "Link bitmap...", "file.linkBitmap", None),
-    it("Tools", "Export outputs...", "ui.export", Some("Ctrl+Shift+E")),
-    it("Tools", "Export material...", "file.exportMaterial", None),
-    it("Tools", "Send to TextureCraft", "file.sendToTextureCraft", None),
-    sep("Tools"),
     it("Tools", "Plugin Manager...", "ui.pluginManager", None),
-    it("Windows", "New Explorer", "ui.new.explorer", None),
-    it("Windows", "New 3D View", "ui.new.3d", None),
-    it("Windows", "New Library View", "ui.new.library", None),
-    it("Windows", "Reset layout", "ui.resetLayout", None),
-    it("Windows", "Unmaximize window", "ui.unmaximize", Some("Shift+Space")),
-    sep("Windows"),
     it("Windows", "Explorer", "ui.view.explorer", None),
     it("Windows", "Graph", "ui.view.graph", None),
-    it("Windows", "Parameters", "ui.view.properties", None),
+    it("Windows", "Properties", "ui.view.properties", None),
     it("Windows", "Console", "ui.view.console", None),
     it("Windows", "3D View", "ui.view.3d", None),
-    it("Windows", "Dependency Manager", "ui.view.dependencies", None),
     it("Windows", "2D View", "ui.view.2d", None),
     it("Windows", "Library", "ui.view.library", None),
     it("Windows", "History", "ui.view.history", None),
+    it("Windows", "Dependency Manager", "ui.view.dependencies", None),
+    sep("Windows"),
     it("Windows", "Main toolbar", "ui.view.mainToolbar", None),
-    it("Help", "Tutorials...", "ui.help.tutorials", None),
-    it("Help", "Release notes...", "ui.help.releaseNotes", None),
-    it("Help", "Technical requirements...", "ui.help.requirements", None),
+    sub("Windows", "New", "Explorer", "ui.new.explorer", None),
+    sub("Windows", "New", "3D View", "ui.new.3d", None),
+    sub("Windows", "New", "Library", "ui.new.library", None),
+    sep("Windows"),
+    it("Windows", "Unmaximize panel", "ui.unmaximize", Some("Shift+Space")),
+    it("Windows", "Reset layout", "ui.resetLayout", None),
+    it("Help", "Home screen...", "ui.home", None),
     it("Help", "Documentation...", "ui.help.docs", None),
-    it("Help", "Automation documentation...", "ui.help.automation", None),
-    sep("Help"),
-    it("Help", "Forums...", "ui.help.discord", None),
-    it("Help", "Report a bug...", "ui.help.bug", None),
-    it("Help", "Export log...", "ui.help.exportLog", None),
-    it("Help", "Give feedback...", "ui.help.feedback", None),
-    sep("Help"),
-    it("Help", "Welcome screen...", "ui.home", None),
-    it("Help", "What's new...", "ui.help.whatsNew", None),
+    it("Help", "Tutorials...", "ui.help.tutorials", None),
     it("Help", "Shortcuts list...", "ui.help.shortcuts", None),
+    sep("Help"),
+    it("Help", "Release notes...", "ui.help.releaseNotes", None),
+    it("Help", "What's new (ArtCraft news)...", "ui.help.whatsNew", None),
+    it("Help", "System requirements (FAQ)...", "ui.help.requirements", None),
+    it("Help", "Automation (control protocol)...", "ui.help.automation", None),
+    sep("Help"),
+    it("Help", "Join the community (Discord)...", "ui.help.discord", None),
+    it("Help", "MaterialCraft on getartcraft.com...", "ui.help.website", None),
+    it("Help", "Support and feedback...", "ui.help.feedback", None),
+    it("Help", "Report a bug (GitHub)...", "ui.help.bug", None),
+    it("Help", "Export log...", "ui.help.exportLog", None),
     sep("Help"),
     it("Help", "About MaterialCraft...", "ui.about", None),
 ];
-
-/// Items that are not in a menu but keep a global shortcut (the reference keeps them on the
-/// graph's and the explorer's context menus).
-pub const HIDDEN_SHORTCUTS: &[(&str, &str)] = &[("file.save", "Ctrl+S")];
 
 fn is_ui(id: &str) -> bool {
     id.starts_with("ui.")
 }
 
-/// Whether an item can run now.
+/// Whether an item can run now
 pub fn enabled(app: &MaterialCraftApp, id: &str) -> bool {
+    if let Some(enabled) = crate::graph::editor_actions::enabled(app, id) {
+        return enabled;
+    }
+
+    if let Some(enabled) = crate::graph::actions::enabled(app, id) {
+        return enabled;
+    }
+
+    if matches!(id, "edit.paste" | "edit.pasteWithoutLinks") {
+        return app.session.graph().is_ok() && app.session.clipboard.as_ref().is_some_and(|clip| !clip.nodes.is_empty());
+    }
+
     if is_ui(id) {
         return match id {
-            "ui.newFunctionGraph" => false,
             "ui.cancelRender" => app.cooker.busy(),
             "ui.unmaximize" => app.ui.dock.maximized.is_some(),
             _ => true,
@@ -124,13 +150,21 @@ pub fn enabled(app: &MaterialCraftApp, id: &str) -> bool {
     materialcraft_engine::find(id).is_some_and(|c| (c.enabled)(&app.session).is_ok())
 }
 
-/// Whether an id is implemented at all (parity report).
+/// Whether an id is implemented at all (parity report)
 pub fn implemented(id: &str) -> bool {
-    (is_ui(id) && id != "ui.newFunctionGraph") || materialcraft_engine::find(id).is_some()
+    is_ui(id) || materialcraft_engine::find(id).is_some()
 }
 
-/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`).
+/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`)
 pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
+    if crate::graph::editor_actions::invoke(app, id) {
+        return;
+    }
+
+    if crate::graph::actions::invoke(app, id) {
+        return;
+    }
+
     if let Some(panel) = crate::docking::view_panel(id) {
         app.ui.dock.toggle(panel);
         return;
@@ -141,7 +175,11 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         return;
     }
     match id {
-        "ui.newGraph" => app.ui.windows.new_graph = true,
+        "ui.newGraph" | "ui.newFunctionGraph" => {
+            app.ui.new_graph_kind =
+                if id == "ui.newFunctionGraph" { materialcraft_engine::core::GraphKind::Function } else { materialcraft_engine::core::GraphKind::Material };
+            app.ui.windows.new_graph = true;
+        }
         "ui.export" => app.ui.windows.export = true,
         "ui.quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         "ui.preferences" => app.ui.windows.preferences = true,
@@ -192,16 +230,17 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         "ui.home" => app.ui.windows.home = true,
         "ui.help.shortcuts" => app.ui.windows.shortcuts = true,
         "ui.about" => app.ui.windows.about = true,
-        "ui.help.discord" => ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft")),
-        "ui.help.website" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/apps/materialcraft")),
-        "ui.help.docs" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft#readme")),
-        "ui.help.tutorials" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/tree/main/docs")),
-        "ui.help.releaseNotes" | "ui.help.whatsNew" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/releases")),
-        "ui.help.requirements" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/blob/main/docs/releasing.md")),
+        "ui.help.discord" => ctx.open_url(egui::OpenUrl::new_tab(DISCORD)),
+        "ui.help.website" => ctx.open_url(egui::OpenUrl::new_tab(WEBSITE)),
+        "ui.help.docs" => ctx.open_url(egui::OpenUrl::new_tab(WEBSITE)),
+        "ui.help.tutorials" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/tutorials")),
+        "ui.help.releaseNotes" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/releases")),
+        "ui.help.whatsNew" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/news")),
+        "ui.help.requirements" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/faq")),
         "ui.help.automation" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/blob/main/docs/control-protocol.md")),
-        "ui.help.feedback" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/discussions")),
+        "ui.help.feedback" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/support")),
         "ui.help.bug" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft/issues")),
-        "ui.help.exportLog" => crate::windows::export_log(app),
+        "ui.help.exportLog" => crate::tool_windows::export_log(app),
         _ => {
             if crate::windows::file_action(app, ctx, id) {
                 return;
@@ -211,7 +250,7 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
     }
 }
 
-/// Parse "Ctrl+Shift+E" style shortcuts.
+/// Parse "Ctrl+Shift+E" style shortcuts
 pub fn parse_shortcut(s: &str) -> Option<KeyboardShortcut> {
     let mut mods = Modifiers::NONE;
     let mut key = None;
@@ -226,14 +265,9 @@ pub fn parse_shortcut(s: &str) -> Option<KeyboardShortcut> {
     key.map(|k| KeyboardShortcut::new(mods, k))
 }
 
-/// The shortcut text shown for `id` (the catalog's, else the engine command's).
+/// The shortcut text shown for `id` (the catalog's, else the engine command's)
 pub fn shortcut_of(id: &str) -> Option<&'static str> {
-    CATALOG
-        .iter()
-        .find(|i| i.id == id)
-        .and_then(|i| i.shortcut)
-        .or_else(|| HIDDEN_SHORTCUTS.iter().find(|(h, _)| *h == id).map(|(_, sc)| *sc))
-        .or_else(|| materialcraft_engine::find(id).and_then(|c| c.shortcut))
+    CATALOG.iter().find(|i| i.id == id).and_then(|i| i.shortcut).or_else(|| materialcraft_engine::find(id).and_then(|c| c.shortcut))
 }
 
 pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
@@ -245,7 +279,7 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
                 ui.menu_button(tr(top), |ui| {
                     ui.set_min_width(220.0);
                     let mut current_sub: Option<&str> = None;
-                    let items: Vec<Item> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
+                    let items: Vec<MenuItem> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
                     for item in &items {
                         if let Some(s) = item.sub {
                             if current_sub == Some(s) {
@@ -271,16 +305,7 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
     });
 }
 
-/// A context-menu row with an optional shortcut hint on the right.
-pub fn menu_row(ui: &mut egui::Ui, label: &str, key: &str, enabled: bool) -> egui::Response {
-    let mut b = egui::Button::new(label);
-    if !key.is_empty() {
-        b = b.shortcut_text(key);
-    }
-    ui.add_enabled(enabled, b)
-}
-
-fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, item: &Item) {
+fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
     let on = enabled(app, item.id);
     let mut b = egui::Button::new(tr(item.label));
     if let Some(sc) = item.shortcut {
@@ -288,12 +313,14 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     }
     let checked = match item.id {
         "ui.view.graph" => Some(true),
+        "ui.graph.snapToGrid" => Some(app.ui.prefs.snap_to_grid),
         "ui.view.mainToolbar" => Some(app.ui.prefs.show_main_toolbar),
         "ui.view.dependencies" => Some(app.ui.windows.dependencies),
         "ui.suspendEngine" => Some(app.cooker.suspended),
         id if id.starts_with("ui.preview.") => id.strip_prefix("ui.preview.").and_then(|s| s.parse::<u32>().ok()).map(|s| s == app.ui.prefs.preview_size),
         id => crate::docking::view_panel(id).map(|p| app.ui.dock.is_open(p)),
     };
+
     if let Some(c) = checked {
         b = b.selected(c);
     }
@@ -321,26 +348,26 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     }
 }
 
-/// Global shortcuts from the catalog and the engine commands (skipped while a text field has
-/// the keyboard).
+/// Dispatch shortcuts unless a widget or popup owns the keyboard
 pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
     if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
         return;
     }
-    // Selected wires take Delete and Backspace before the node commands do, and X swaps them.
-    if !app.graph.selected_wires.is_empty() {
+
+    // Selected wires handle deletion and swapping before nodes
+    if crate::graph::editor_target::EditorTarget::resolve(app) == crate::graph::editor_target::EditorTarget::Material && !app.graph.selected_wires.is_empty() {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) | i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
-            crate::graph_view::delete_selected_wires(app);
+            crate::graph::delete_selected_wires(app);
         } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::X)) {
-            crate::graph_view::swap_selected_wires(app);
+            crate::graph::swap_selected_wires(app);
         }
     }
+
     let mut table: Vec<(&'static str, KeyboardShortcut)> = CATALOG.iter().filter_map(|i| Some((i.id, parse_shortcut(i.shortcut?)?))).collect();
-    table.extend(HIDDEN_SHORTCUTS.iter().filter_map(|(id, sc)| Some((*id, parse_shortcut(sc)?))));
-    // A disabled item leaves its key alone (Escape closes dialogs unless a cook is running).
+    // A disabled item leaves its key alone (Escape closes dialogs unless a cook is running)
     table.retain(|(id, _)| !is_ui(id) || enabled(app, id));
     for c in materialcraft_engine::command_specs() {
         if table.iter().any(|(id, _)| *id == c.id) {
@@ -350,7 +377,8 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             table.push((c.id, sc));
         }
     }
-    // Longer chords first, so Ctrl+Shift+S is not taken by Ctrl+S.
+
+    // Longer chords take priority
     table.sort_by_key(|(_, sc)| std::cmp::Reverse(sc.modifiers.ctrl as u8 + sc.modifiers.shift as u8 + sc.modifiers.alt as u8 + sc.modifiers.command as u8));
     let mut fire: Vec<&str> = Vec::new();
     ctx.input_mut(|i| {
@@ -363,7 +391,7 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     for id in fire {
         invoke(app, ctx, id);
     }
-    // Node creation shortcuts (Preferences ▸ Shortcuts): add the node next to the selection.
+    // Node creation shortcuts (Preferences ▸ Shortcuts): add the node next to the selection
     let node_keys: Vec<(String, KeyboardShortcut)> = app.ui.node_shortcuts.iter().filter_map(|(def, sc)| Some((def.clone(), parse_shortcut(sc)?))).collect();
     let mut add: Vec<String> = Vec::new();
     ctx.input_mut(|i| {
@@ -375,12 +403,21 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     });
     for def in add {
         if app.ui.dock.is_open(crate::docking::Panel::Graph) {
-            crate::graph_view::add_node_near_selection(app, &def);
+            crate::graph::add_node_near_selection(app, &def);
         }
     }
 }
 
-/// Menu items for `ui.menu.list`.
+/// A context-menu row with an optional shortcut hint on the right
+pub fn menu_row(ui: &mut egui::Ui, label: &str, key: &str, enabled: bool) -> egui::Response {
+    let mut b = egui::Button::new(label);
+    if !key.is_empty() {
+        b = b.shortcut_text(key);
+    }
+    ui.add_enabled(enabled, b)
+}
+
+/// Menu items for `ui.menu.list`
 pub fn list(app: &MaterialCraftApp) -> Value {
     Value::Array(
         CATALOG
@@ -407,7 +444,7 @@ mod tests {
                 assert!(parse_shortcut(sc).is_some(), "{sc}");
             }
         }
-        // Almost every item is live.
+        // Almost every item is live
         let live = CATALOG.iter().filter(|i| i.label != "-" && implemented(i.id)).count();
         assert!(live + 1 >= CATALOG.iter().filter(|i| i.label != "-").count());
     }

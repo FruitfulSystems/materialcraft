@@ -1,7 +1,8 @@
-//! The 3D view: the open graph's material on a built-in scene, rendered by
+//! The 3D view: assigned material channels on a built-in scene, rendered by
 //! `materialcraft-render` (one ray per pixel at half resolution while the camera moves, 2×2
 //! supersampled when it rests). Left-drag orbits, Alt+drag or middle-drag pans, the wheel zooms,
-//! Shift+drag turns the light and a double-click resets the camera.
+//! Shift+drag turns the light and a double-click resets the camera. Over the view, F frames the
+//! mesh, R resets the camera position and Alt+S saves a render.
 //!
 //! The full-quality frame waits until the view's size and the camera have rested for [`SETTLE`]
 //! (a panel, divider or window drag changes the size on every step), then renders on a worker
@@ -15,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
-use egui::{Color32, ColorImage, Rect, RichText, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2};
+use egui::{Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2};
 use egui_phosphor::regular as icon;
-use materialcraft_engine::view_cmds::{ENVIRONMENTS, SCENES};
+use materialcraft_engine::view_cmds::SCENES;
 use materialcraft_render::{Lighting, Maps, Relief, Scene, Settings};
 use serde_json::json;
 
@@ -55,7 +56,7 @@ pub struct View3dState {
     pub renders: u64,
     /// The last frame shown (RGBA8, for `view.screenshot`).
     pub shown: Option<(u32, u32, Vec<u8>)>,
-    /// Show the environment behind the mesh.
+    /// Paint the environment behind the mesh (Display ▸ Environment background)
     pub show_env: bool,
 }
 
@@ -89,12 +90,15 @@ impl Drop for Job {
     }
 }
 
-/// A displaced scene building on a worker thread (`None` arrives when nothing moves).
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-struct ReliefJob {
-    key: u64,
-    rx: Receiver<Option<Arc<Scene>>>,
-}
+mod actions;
+mod menus;
+mod overlays;
+mod relief_job;
+pub mod settings;
+mod side_strip;
+pub use actions::{Page3d, copy_render, edit_properties, frame, reset_all, save_render};
+use relief_job::ReliefJob;
+pub use settings::settings_of;
 
 pub fn scene_label(app: &MaterialCraftApp) -> String {
     let id = &app.session.view3d.scene;
@@ -106,440 +110,21 @@ pub fn scene_label(app: &MaterialCraftApp) -> String {
     SCENES.iter().find(|(s, _)| s == id).map_or(id.as_str(), |(_, l)| l).to_string()
 }
 
-/// Which 3D view property page the Properties panel shows (Edit properties).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Page3d {
-    Camera,
-    Lights,
-    Environment,
-    Renderer,
-    Material,
-}
-
-impl Page3d {
-    pub fn title(self) -> &'static str {
-        match self {
-            Page3d::Camera => "Camera",
-            Page3d::Lights => "Lights",
-            Page3d::Environment => "Environment",
-            Page3d::Renderer => "Renderer",
-            Page3d::Material => "Material",
-        }
-    }
-}
-
-/// Open a 3D view property page in the Properties panel.
-pub fn edit_properties(app: &mut MaterialCraftApp, page: Page3d) {
-    app.props3d = Some((page, app.session.selection.clone()));
-    app.ui.dock.focus(crate::docking::Panel::Properties);
-}
-
-fn menu_row(ui: &mut Ui, ic: &str, label: &str) -> bool {
-    ui.add(egui::Button::new(format!("{ic}  {label}"))).clicked()
-}
-
-fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
-    let tk = Tokens::get(ui.ctx());
-    egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(4, 1)).show(ui, |ui| {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(tr("Scene"), |ui| {
-                for (i, (id, label)) in SCENES.iter().enumerate() {
-                    if i == 5 {
-                        ui.separator();
-                    }
-                    if ui.selectable_label(app.session.view3d.scene == *id, tr(label)).clicked() {
-                        app.run("view.3d", json!({"scene": id}));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.button(tr("Load mesh...")).clicked() {
-                    crate::web_files::load_mesh(app, ui.ctx());
-                    ui.close();
-                }
-                if app.session.custom_mesh.is_some() && ui.selectable_label(app.session.view3d.scene == "custom", scene_label_custom(app)).clicked() {
-                    app.run("view.3d", json!({"scene": "custom"}));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr("Display UVs in 2D View")).clicked() {
-                    app.view2d.show_uvs = !app.view2d.show_uvs;
-                    app.ui.dock.focus(crate::docking::Panel::View2d);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr("Load State File...")).clicked() {
-                    load_state(app, false);
-                    ui.close();
-                }
-                if ui.button(tr("Load State File With Mesh...")).clicked() {
-                    load_state(app, true);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr("Save Current State...")).clicked() {
-                    save_state(app);
-                    ui.close();
-                }
-                if ui.button(tr("Save Current State As Default")).clicked() {
-                    app.ui.view3d_default = app.run("view.3d.state", json!({}));
-                    app.toast(tr("The 3D view opens with this state from now on (Reset Scene restores it)"), false);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr("Reset Scene")).clicked() {
-                    reset_all(app);
-                    ui.close();
-                }
-            });
-            ui.menu_button(tr("Materials"), |ui| {
-                ui.menu_button(tr("Default"), |ui| {
-                    if menu_row(ui, icon::GEAR, tr("Edit properties")) {
-                        edit_properties(app, Page3d::Material);
-                        ui.close();
-                    }
-                    ui.separator();
-                    let current = app.session.view3d.material.shader;
-                    for (shader, label) in [
-                        (materialcraft_render::Shader::Blinn, "Blinn"),
-                        (materialcraft_render::Shader::Lambert, "Lambert"),
-                        (materialcraft_render::Shader::MeshInfo, "Mesh Info"),
-                        (materialcraft_render::Shader::OpenPbr, "OpenPBR [Default]"),
-                        (materialcraft_render::Shader::MetallicRoughness, "Metallic Roughness"),
-                        (materialcraft_render::Shader::Coated, "Metallic Roughness - Coated"),
-                        (materialcraft_render::Shader::Subsurface, "Metallic Roughness - SSS"),
-                        (materialcraft_render::Shader::SpecularGlossiness, "Specular Glossiness"),
-                        (materialcraft_render::Shader::Unlit, "Unlit"),
-                    ] {
-                        if ui.selectable_label(current == shader, tr(label)).clicked() {
-                            app.run("view.3d", json!({"material": {"shader": shader.id()}}));
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui.button(tr("Reset Common Parameters")).clicked() {
-                        let d = materialcraft_render::Common::default();
-                        app.run("view.3d", json!({"material": {"common": d, "useMap": materialcraft_render::MapUse::default()}}));
-                        ui.close();
-                    }
-                    if menu_row(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset Material")) {
-                        app.run("view.3d.reset", json!({"what": "material"}));
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(tr("Create graph from texture inputs")).clicked() {
-                        crate::menus::invoke(app, ui.ctx(), "ui.newGraph");
-                        ui.close();
-                    }
-                });
-            });
-            ui.menu_button(tr("Lights"), |ui| {
-                if menu_row(ui, icon::GEAR, tr("Edit properties")) {
-                    edit_properties(app, Page3d::Lights);
-                    ui.close();
-                }
-                if menu_row(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset Lights")) {
-                    app.run("view.3d.reset", json!({"what": "lights"}));
-                    ui.close();
-                }
-            });
-            ui.menu_button(tr("Camera"), |ui| {
-                if menu_row(ui, icon::GEAR, tr("Edit properties")) {
-                    edit_properties(app, Page3d::Camera);
-                    ui.close();
-                }
-                if ui.add(egui::Button::new(tr("Frame")).shortcut_text("F")).clicked() {
-                    frame(app);
-                    ui.close();
-                }
-                ui.label(RichText::new(tr("Viewpoint")).italics().color(tk.text_dim));
-                for (label, yaw, pitch) in [
-                    ("Default", 35.0, 25.0),
-                    ("Front", 0.0, 0.0),
-                    ("Right", 90.0, 0.0),
-                    ("Back", 180.0, 0.0),
-                    ("Left", 270.0, 0.0),
-                    ("Top", 0.0, 89.0),
-                    ("Bottom", 0.0, -89.0),
-                ] {
-                    if ui.button(format!("    {}", tr(label))).clicked() {
-                        app.run("view.3d", json!({"yaw": yaw, "pitch": pitch, "distance": 3.2, "target": [0.0, 0.0, 0.0]}));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.add(egui::Button::new(format!("{}  {}", icon::FLOPPY_DISK, tr("Save Render..."))).shortcut_text("Alt+S")).clicked() {
-                    save_render(app, ui.ctx());
-                    ui.close();
-                }
-                if menu_row(ui, icon::CLIPBOARD, tr("Copy Render to Clipboard")) {
-                    copy_render(app, ui.ctx());
-                    ui.close();
-                }
-                ui.separator();
-                if ui.add(egui::Button::new(tr("Reset Position")).shortcut_text("R")).clicked() {
-                    app.run("view.3d", json!({"yaw": 35.0, "pitch": 25.0, "distance": 3.2, "target": [0.0, 0.0, 0.0]}));
-                    ui.close();
-                }
-                if menu_row(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset Camera")) {
-                    app.run("view.3d.reset", json!({"what": "camera"}));
-                    ui.close();
-                }
-            });
-            ui.menu_button(tr("Environment"), |ui| {
-                if menu_row(ui, icon::GEAR, tr("Edit properties")) {
-                    edit_properties(app, Page3d::Environment);
-                    ui.close();
-                }
-                if menu_row(ui, icon::ARROW_COUNTER_CLOCKWISE, tr("Reset Environment")) {
-                    app.run("view.3d.reset", json!({"what": "environment"}));
-                    ui.close();
-                }
-                ui.separator();
-                for (id, label) in ENVIRONMENTS {
-                    if ui.selectable_label(app.session.view3d.environment == *id, tr(label)).clicked() {
-                        app.run("view.3d", json!({"environment": id}));
-                        ui.close();
-                    }
-                }
-            });
-            ui.menu_button(tr("Display"), |ui| {
-                let d = app.session.view3d.display.clone();
-                let mut toggles: Vec<(&str, bool)> = Vec::new();
-                for (key, label, on) in [
-                    ("wireframe", "Wireframe", d.wireframe),
-                    ("axis", "Axis", app.session.view3d.show_axis),
-                    ("backfaceCulling", "Backface culling", d.backface_culling),
-                    ("boundingBox", "Bounding box", d.bounding_box),
-                    ("grid", "Grid", app.session.view3d.show_grid),
-                    ("lights", "Light", d.lights),
-                ] {
-                    if ui.selectable_label(on, tr(label)).clicked() {
-                        toggles.push((key, !on));
-                    }
-                }
-                ui.separator();
-                for (key, label, on) in [("resolution", "Resolution", d.resolution), ("stats", "Scene stats", d.stats), ("fps", "FPS", d.fps)] {
-                    if ui.selectable_label(on, tr(label)).clicked() {
-                        toggles.push((key, !on));
-                    }
-                }
-                ui.separator();
-                let mut flip = app.session.view3d.normal_y_flip;
-                if ui.checkbox(&mut flip, tr("Flip normal map Y (DirectX)")).changed() {
-                    app.run("view.3d", json!({"normalYFlip": flip}));
-                }
-                let mut t = app.session.view3d.transparency;
-                if ui.checkbox(&mut t, tr("Transparency (alpha)")).changed() {
-                    app.run("view.3d", json!({"transparency": t}));
-                }
-                let mut a = app.session.view3d.alpha_view;
-                if ui.checkbox(&mut a, tr("Show alpha channel")).changed() {
-                    app.run("view.3d", json!({"alphaView": a}));
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(tr("Preview size"));
-                    crate::view2d::resolution_menu(app, ui);
-                });
-                for (key, on) in toggles {
-                    match key {
-                        "axis" => {
-                            app.run("view.3d", json!({"axis": on}));
-                        }
-                        "grid" => {
-                            app.run("view.3d", json!({"grid": on}));
-                        }
-                        _ => {
-                            app.run("view.3d", json!({"display": {key: on}}));
-                        }
-                    }
-                }
-            });
-            ui.menu_button(tr("Renderer"), |ui| {
-                if menu_row(ui, icon::GEAR, tr("Edit settings")) {
-                    edit_properties(app, Page3d::Renderer);
-                    ui.close();
-                }
-                ui.separator();
-                let _ = ui.selectable_label(true, tr("MC Ray caster (CPU)"));
-                ui.add_enabled(false, egui::Button::new(tr("GPU path tracer (not supported yet)")));
-            });
-        });
-    });
-}
-
-/// Camera ▸ Frame (F): fit the mesh in the view.
-pub fn frame(app: &mut MaterialCraftApp) {
-    app.run("view.3d", json!({"distance": 3.2, "target": [0.0, 0.0, 0.0]}));
-}
-
-/// Scene ▸ Reset Scene: the saved default state, else the built-in one.
-pub fn reset_all(app: &mut MaterialCraftApp) {
-    match app.ui.view3d_default.clone() {
-        Some(state) => {
-            app.run("view.3d.loadState", json!({"state": state}));
-        }
-        None => {
-            app.run("view.3d.reset", json!({}));
-        }
-    }
-}
-
-/// Scene ▸ Save Current State: the 3D view's state as a JSON file.
-fn save_state(app: &mut MaterialCraftApp) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let Some(state) = app.run("view.3d.state", json!({})) else { return };
-        let Some(p) = rfd::FileDialog::new().set_file_name("3d-view-state.json").add_filter("3D view state", &["json"]).save_file() else { return };
-        match serde_json::to_string_pretty(&state).map_err(|e| e.to_string()).and_then(|t| std::fs::write(&p, t).map_err(|e| e.to_string())) {
-            Ok(()) => app.toast(format!("{} {}", tr("Saved"), p.display()), false),
-            Err(e) => app.toast(format!("{}: {e}", tr("Could not save the state")), true),
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    app.toast(tr("The desktop app saves state files"), true);
-}
-
-/// Scene ▸ Load State File: restore a saved state (`with_mesh` also switches the scene).
-fn load_state(app: &mut MaterialCraftApp, with_mesh: bool) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let Some(p) = rfd::FileDialog::new().add_filter("3D view state", &["json"]).pick_file() else { return };
-        const MAX: u64 = 4 << 20;
-        if std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > MAX {
-            app.toast(tr("That is not a 3D view state file"), true);
-            return;
-        }
-        match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())) {
-            Ok(state) => {
-                if app.run("view.3d.loadState", json!({"state": state, "keepScene": !with_mesh})).is_some() {
-                    app.toast(format!("{} {}", tr("Loaded"), p.display()), false);
-                }
-            }
-            Err(e) => app.toast(format!("{}: {e}", tr("Could not read the state file")), true),
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = with_mesh;
-        app.toast(tr("The desktop app loads state files"), true);
-    }
-}
-
-/// Camera ▸ Save Render (Alt+S): the view at the camera's render resolution, as a PNG.
-pub fn save_render(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = ctx;
-        let name = format!("{}_render.png", materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default()));
-        let Some(p) = rfd::FileDialog::new().set_file_name(name).add_filter("PNG", &["png"]).save_file() else { return };
-        let Some((w, h, px)) = render_offscreen(app) else { return };
-        match crate::control::encode_png(w, h, px)
-            .ok_or_else(|| tr("could not encode the image").to_string())
-            .and_then(|(_, _, png)| std::fs::write(&p, png).map_err(|e| e.to_string()))
-        {
-            Ok(()) => app.toast(format!("{} {}", tr("Render saved to"), p.display()), false),
-            Err(e) => app.toast(format!("{}: {e}", tr("Could not save the render")), true),
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = ctx;
-        let Some((w, h, px)) = render_offscreen(app) else { return };
-        if let Some((_, _, png)) = crate::control::encode_png(w, h, px) {
-            let _ = crate::web_files::download("render.png", &png);
-        }
-    }
-}
-
-/// Camera ▸ Copy Render to Clipboard.
-pub fn copy_render(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    let Some((w, h, px)) = render_offscreen(app) else { return };
-    let img = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
-    ctx.copy_image(img);
-    app.toast(tr("Render copied to the clipboard"), false);
-}
-
-/// Render the view at the camera's resolution (or the last shown size) with full quality.
-fn render_offscreen(app: &mut MaterialCraftApp) -> Option<(u32, u32, Vec<u8>)> {
-    let v = app.session.view3d.clone();
-    let (w, h) = if v.camera.override_resolution {
-        let k = v.camera.resolution_scale;
-        (((v.camera.resolution[0] as f32 * k) as u32).clamp(16, 4096), ((v.camera.resolution[1] as f32 * k) as u32).clamp(16, 4096))
-    } else {
-        app.view3d.shown.as_ref().map_or((1280, 720), |(w, h, _)| (*w, *h))
-    };
-    let (scene, light, maps, settings) = inputs(app, 2)?;
-    let px = materialcraft_render::render(&scene, &maps, &light, &settings, w, h);
-    Some((w, h, px))
-}
-
-/// The tool strip down the left of the viewport: property pages and display toggles.
-fn side_strip(app: &mut MaterialCraftApp, ui: &mut Ui, strip: Rect) {
-    let tk = Tokens::get(ui.ctx());
-    ui.painter().rect_filled(strip, 0.0, tk.panel);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(strip.shrink2(vec2(2.0, 4.0))), |ui| {
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            let b = |ui: &mut Ui, ic: &str, tip: &str, on: bool| crate::widgets::icon_button(ui, ic, tip, on, 22.0).clicked();
-            if b(ui, icon::CORNERS_OUT, tr("Frame (F)"), false) {
-                frame(app);
-            }
-            let page = app.props3d.as_ref().map(|(p, _)| *p);
-            for (ic, tip, pg) in [
-                (icon::VIDEO_CAMERA, "Camera properties", Page3d::Camera),
-                (icon::LIGHTBULB, "Light properties", Page3d::Lights),
-                (icon::SUN_HORIZON, "Environment properties", Page3d::Environment),
-                (icon::SPHERE, "Material properties", Page3d::Material),
-                (icon::GEAR, "Renderer settings", Page3d::Renderer),
-            ] {
-                if b(ui, ic, tr(tip), page == Some(pg)) {
-                    edit_properties(app, pg);
-                }
-            }
-            ui.add_space(6.0);
-            let v = app.session.view3d.clone();
-            let mut set: Option<serde_json::Value> = None;
-            if b(ui, icon::POLYGON, tr("Wireframe"), v.display.wireframe) {
-                set = Some(json!({"display": {"wireframe": !v.display.wireframe}}));
-            }
-            if b(ui, icon::GRID_FOUR, tr("Grid"), v.show_grid) {
-                set = Some(json!({"grid": !v.show_grid}));
-            }
-            if b(ui, icon::ARROWS_OUT_CARDINAL, tr("Axis"), v.show_axis) {
-                set = Some(json!({"axis": !v.show_axis}));
-            }
-            if b(ui, icon::BOUNDING_BOX, tr("Bounding box"), v.display.bounding_box) {
-                set = Some(json!({"display": {"boundingBox": !v.display.bounding_box}}));
-            }
-            if b(ui, icon::CUBE_TRANSPARENT, tr("Transparency (alpha)"), v.transparency) {
-                set = Some(json!({"transparency": !v.transparency}));
-            }
-            if b(ui, icon::CHECKERBOARD, tr("Show alpha channel"), v.alpha_view) {
-                set = Some(json!({"alphaView": !v.alpha_view}));
-            }
-            if b(ui, icon::IMAGE, tr("Environment background"), app.view3d.show_env) {
-                app.view3d.show_env = !app.view3d.show_env;
-            }
-            if let Some(p) = set {
-                app.run("view.3d", p);
-            }
-        });
-    });
-}
-
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
-    menus(app, ui);
+    menus::show(app, ui);
     let avail = ui.available_size();
-    let strip_w = 28.0;
     let (whole, _) = ui.allocate_exact_size(vec2(avail.x, (avail.y - 22.0).max(40.0)), Sense::hover());
-    let strip = Rect::from_min_size(whole.min, vec2(strip_w, whole.height()));
-    let rect = Rect::from_min_max(pos2(whole.left() + strip_w, whole.top()), whole.max);
+    let strip = Rect::from_min_size(whole.min, vec2(side_strip::WIDTH, whole.height()));
+    let rect = Rect::from_min_max(pos2(whole.left() + side_strip::WIDTH, whole.top()), whole.max);
     let resp = ui.interact(rect, ui.scope_id().with("view3d-canvas"), Sense::click_and_drag());
     crate::widgets::name(&resp, egui::Role::Image, "3D view");
-    // Camera gestures.
+    let graph_hover = resp.dnd_hover_payload::<crate::graph_drag_payload::GraphDragPayload>().is_some();
+    if let Some(graph) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(&resp) {
+        app.run("view.3d.outputs", json!({"graph": graph.name}));
+    }
+
+    // Camera gestures
     let mut moving = false;
     if resp.dragged() {
         let d = resp.drag_delta();
@@ -569,19 +154,18 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
     }
     if resp.double_clicked() {
-        app.run("view.3d", json!({"yaw": 35.0, "pitch": 25.0, "distance": 3.2, "target": [0.0, 0.0, 0.0]}));
+        actions::reset_position(app);
     }
-    // Keys while the pointer is over the view: F frames, R resets the position, Alt+S saves a render.
     if resp.hovered() && !ui.ctx().egui_wants_keyboard_input() {
         let (f, r, alt_s) = ui.input(|i| (i.key_pressed(egui::Key::F), i.key_pressed(egui::Key::R), i.modifiers.alt && i.key_pressed(egui::Key::S)));
         if f {
             frame(app);
         }
         if r {
-            app.run("view.3d", json!({"yaw": 35.0, "pitch": 25.0, "distance": 3.2, "target": [0.0, 0.0, 0.0]}));
+            actions::reset_position(app);
         }
         if alt_s {
-            save_render(app, ui.ctx());
+            save_render(app);
         }
     }
     render(app, ui.ctx(), rect, moving || resp.is_pointer_button_down_on());
@@ -597,12 +181,12 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         p.text(
             rect.center_top() + vec2(0.0, 18.0),
             egui::Align2::CENTER_TOP,
-            tr("Add Output nodes with usages (base color, normal, ...) to see the material"),
+            tr("Assign an image with View in 3D view, or connect Output nodes with material usages"),
             egui::FontId::proportional(11.0),
             tk.viewport_text,
         );
     }
-    overlays(app, &p, rect);
+    overlays::paint(app, &p, rect);
     p.text(
         rect.right_bottom() - vec2(8.0, 6.0),
         egui::Align2::RIGHT_BOTTOM,
@@ -610,8 +194,19 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         egui::FontId::proportional(10.5),
         tk.viewport_text,
     );
-    side_strip(app, ui, strip);
-    // Bottom bar.
+    if graph_hover {
+        p.rect_stroke(rect.shrink(2.0), 4.0, egui::Stroke::new(2.0, tk.accent), egui::StrokeKind::Inside);
+        p.text(
+            rect.center_top() + vec2(0.0, 38.0),
+            egui::Align2::CENTER_TOP,
+            tr("Drop to apply graph outputs"),
+            egui::FontId::proportional(13.0),
+            tk.viewport_text,
+        );
+    }
+
+    side_strip::show(app, ui, strip);
+    // Bottom bar
     let bar = Rect::from_min_size(pos2(whole.left(), whole.bottom()), vec2(whole.width(), 22.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
         ui.painter().rect_filled(bar, 0.0, tk.panel);
@@ -633,77 +228,6 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
         });
     });
-}
-
-/// Display menu overlays: bounding box, light gizmos, resolution, scene statistics and FPS.
-fn overlays(app: &mut MaterialCraftApp, p: &egui::Painter, rect: Rect) {
-    let tk = Tokens::get(p.ctx());
-    let v = app.session.view3d.clone();
-    let d = &v.display;
-    let (bbox, lights) = (d.bounding_box, d.lights);
-    if bbox || lights {
-        let (_, scene) = base_scene(app);
-        let settings = settings_of(&v, app.view3d.show_env, 1);
-        let cam = materialcraft_render::camera(&scene, &settings);
-        let aspect = rect.width() / rect.height().max(1.0);
-        let to_screen = |w: materialcraft_engine::geom::glam::Vec3| {
-            cam.project(w, aspect).map(|ndc| pos2(rect.left() + (ndc.x * 0.5 + 0.5) * rect.width(), rect.top() + (0.5 - ndc.y * 0.5) * rect.height()))
-        };
-        if bbox {
-            let (lo, hi) = scene.mesh.bounds();
-            let corners: Vec<_> = (0..8)
-                .map(|i| {
-                    materialcraft_engine::geom::glam::Vec3::new(
-                        if i & 1 == 0 { lo.x } else { hi.x },
-                        if i & 2 == 0 { lo.y } else { hi.y },
-                        if i & 4 == 0 { lo.z } else { hi.z },
-                    )
-                })
-                .collect();
-            let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xff, 0xc0, 0x40, 200));
-            for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
-                if let (Some(pa), Some(pb)) = (to_screen(corners[a]), to_screen(corners[b])) {
-                    p.line_segment([pa, pb], stroke);
-                }
-            }
-        }
-        if lights {
-            for (i, l) in v.lights.point.iter().enumerate() {
-                let w = scene.center + materialcraft_engine::geom::glam::Vec3::from(l.position) * scene.radius;
-                if let Some(q) = to_screen(w) {
-                    let c = if l.on { Color32::from_rgb(0xff, 0xe0, 0x60) } else { Color32::from_gray(0x80) };
-                    p.circle(q, 6.0, c, egui::Stroke::new(1.0, Color32::BLACK));
-                    p.text(q + vec2(9.0, 0.0), egui::Align2::LEFT_CENTER, format!("{} {}", tr("Light"), i + 1), egui::FontId::proportional(10.5), c);
-                    if let Some(center) = to_screen(scene.center) {
-                        p.line_segment([q, center], egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xff, 0xe0, 0x60, 90)));
-                    }
-                }
-            }
-        }
-    }
-    let mut lines: Vec<String> = Vec::new();
-    if d.resolution {
-        let (w, h) = app.view3d.shown.as_ref().map_or((0, 0), |(w, h, _)| (*w, *h));
-        lines.push(format!("{}: {w} x {h}", tr("Resolution")));
-    }
-    if d.stats {
-        let (_, scene) = base_scene(app);
-        let tris = app.view3d.displaced.as_ref().map_or(scene.mesh.triangle_count(), |(_, s)| s.mesh.triangle_count());
-        let maps = app.session.material_maps().len();
-        lines.push(format!("{}: {tris} {}, {maps} {}", tr("Scene"), tr("triangles"), tr("maps")));
-    }
-    if d.fps {
-        lines.push(format!("{:.0} FPS ({} {})", app.fps, app.view3d.renders, tr("frames")));
-    }
-    for (i, line) in lines.iter().enumerate() {
-        p.text(
-            rect.left_bottom() + vec2(8.0, -8.0 - 14.0 * (lines.len() - 1 - i) as f32),
-            egui::Align2::LEFT_BOTTOM,
-            line,
-            egui::FontId::proportional(10.5),
-            tk.viewport_text,
-        );
-    }
 }
 
 fn scene_label_custom(app: &MaterialCraftApp) -> String {
@@ -737,12 +261,22 @@ fn content_key(app: &MaterialCraftApp, w: u32, h: u32, show_env: bool, relief_sh
     }
     // Camera, lights, material, renderer and display settings: hashed through their JSON.
     serde_json::to_string(&(&v.camera, &v.lights, &v.material, &v.renderer, &v.display, v.env_enabled)).unwrap_or_default().hash(&mut hs);
-    if let Ok(g) = app.session.graph() {
-        for (id, usage, _, _) in materialcraft_engine::eval::outputs(g, &app.session.cooked) {
-            (usage, app.session.cooked.nodes.get(&id).map(|r| r.key)).hash(&mut hs);
-        }
-    }
+    app.session.material_key().hash(&mut hs);
     hs.finish()
+}
+
+/// A frame at the camera's render resolution (else the shown frame's size), for Save Render
+fn render_offscreen(app: &mut MaterialCraftApp) -> Option<(u32, u32, Vec<u8>)> {
+    let cam = app.session.view3d.camera.clone();
+    let (w, h) = if cam.override_resolution {
+        let k = cam.resolution_scale;
+        (((cam.resolution[0] as f32 * k) as u32).clamp(16, 4096), ((cam.resolution[1] as f32 * k) as u32).clamp(16, 4096))
+    } else {
+        app.view3d.shown.as_ref().map_or((1280, 720), |(w, h, _)| (*w, *h))
+    };
+    let (scene, light, maps, settings) = inputs(app, 2)?;
+    let px = materialcraft_render::render(&scene, &maps, &light, &settings, w, h);
+    Some((w, h, px))
 }
 
 /// Keep the 3D view's texture up to date: a quick frame right away while the camera moves, the
@@ -826,12 +360,12 @@ fn relief_key(app: &MaterialCraftApp, scene_key: &str, maps: &Maps) -> Option<u6
         return None;
     }
 
-    let graph = app.session.graph().ok()?;
-    let height_output = materialcraft_engine::eval::outputs(graph, &app.session.cooked).into_iter().find(|(_, usage, _, _)| *usage == "height");
-    let height_cook = height_output.and_then(|(id, _, _, _)| app.session.cooked.nodes.get(&id).map(|r| r.key));
+    let sources = app.session.material_preview.sources(&app.session.pkg);
+    let height_source = sources.get(&materialcraft_engine::core::MaterialChannel::Height)?;
+    let height_cook = app.session.material_source_key(height_source);
 
     let mut hasher = DefaultHasher::new();
-    (scene_key, height_cook, maps.normal.is_some() && v.material.use_map.normal, v.material.use_map.height).hash(&mut hasher);
+    (scene_key, height_cook, maps.normal.is_some() && v.material.use_map.normal).hash(&mut hasher);
     for f in [v.height_scale, v.height_level, v.tiling, v.material.tessellation, v.material.uv_scale[0]] {
         f.to_bits().hash(&mut hasher);
     }
@@ -869,7 +403,7 @@ fn update_relief(app: &mut MaterialCraftApp, ctx: &egui::Context) -> Option<u64>
     None
 }
 
-/// Build the displaced scene on a worker thread.
+/// Build the displaced scene on a worker thread, within `budget` triangles.
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 fn start_relief(app: &mut MaterialCraftApp, ctx: &egui::Context, key: u64, base: Arc<Scene>, maps: Maps, relief: Relief, tiling: f32, budget: usize) {
@@ -916,56 +450,6 @@ fn inputs(app: &mut MaterialCraftApp, supersample: u32) -> Option<(Arc<Scene>, A
     Some((scene, light, maps, settings))
 }
 
-/// The renderer's settings for the view state.
-pub fn settings_of(v: &materialcraft_engine::View3d, show_env: bool, supersample: u32) -> Settings {
-    let cam = &v.camera;
-    let bg = [cam.background_color[0], cam.background_color[1], cam.background_color[2]];
-    let background = match cam.background.as_str() {
-        "color" => materialcraft_render::Background::Color(bg),
-        "environment" => materialcraft_render::Background::Environment,
-        _ => materialcraft_render::Background::Backdrop,
-    };
-    let lights = &v.lights;
-    Settings {
-        yaw: v.yaw,
-        pitch: v.pitch,
-        distance: v.distance,
-        target: v.target,
-        tiling: v.tiling * v.material.uv_scale[0].max(0.01),
-        exposure: v.exposure,
-        env_rotation: v.env_rotation,
-        normal_y_flip: v.normal_y_flip,
-        show_env,
-        supersample: supersample.min(v.renderer.samples.max(1)),
-        ao_rays: v.renderer.ao_rays,
-        transparency: v.transparency,
-        alpha_view: v.alpha_view,
-        fov: cam.fov(),
-        ortho: cam.projection == "orthographic",
-        background,
-        clip: if cam.auto_clip { None } else { Some([cam.near, cam.far]) },
-        ambient: if lights.ambient_on { lights.ambient } else { [0.0; 3] },
-        lights: lights.point,
-        env_light: v.env_enabled,
-        shader: v.material.shader,
-        common: v.material.common,
-        use_map: v.material.use_map,
-        wireframe: v.display.wireframe,
-        backface_culling: v.display.backface_culling,
-        ..Settings::default()
-    }
-}
-
-/// The viewport render scale: the session's renderer setting, else the preference (0 = auto = 1).
-fn view_scale(app: &MaterialCraftApp) -> f32 {
-    let r = &app.session.view3d.renderer;
-    if !r.use_viewport_resolution {
-        return r.scale;
-    }
-    let p = app.ui.prefs.viewport_scale;
-    if p > 0.0 { p.clamp(0.25, 2.0) } else { r.scale.clamp(0.25, 2.0) }
-}
-
 /// Texture pixels for `rect` at `scale` pixels per point.
 fn pixels(rect: Rect, scale: f32) -> (u32, u32) {
     (((rect.width() * scale) as u32).clamp(16, 4096), ((rect.height() * scale) as u32).clamp(16, 4096))
@@ -983,9 +467,9 @@ fn render_now(app: &mut MaterialCraftApp, rect: Rect, scale: f32, supersample: u
 /// Start the full-quality frame (2×2 supersampled, full resolution) on a worker thread.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_full(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, key: u64, size: (u32, u32)) {
-    let samples = app.ui.prefs.sample_count.clamp(1, 4);
+    let samples = settings::samples(app);
     let Some((scene, light, maps, settings)) = inputs(app, samples) else { return };
-    let (w, h) = pixels(rect, ctx.pixels_per_point() * view_scale(app));
+    let (w, h) = pixels(rect, ctx.pixels_per_point() * settings::view_scale(app));
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel();
     let (stop, repaint, viewport) = (cancel.clone(), ctx.clone(), ctx.viewport_id());
@@ -999,7 +483,7 @@ fn start_full(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, key: 
         Ok(_) => app.view3d.job = Some(Job { key, size, cancel, rx }),
         Err(e) => {
             log::warn!("could not start a 3D view render thread ({e}); rendering here");
-            let scale = ctx.pixels_per_point() * view_scale(app);
+            let scale = ctx.pixels_per_point() * settings::view_scale(app);
             if let Some(frame) = render_now(app, rect, scale, samples) {
                 show_frame(app, ctx, frame, key, true, size);
             }
@@ -1010,9 +494,8 @@ fn start_full(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, key: 
 /// The browser has no threads: the full-quality frame renders here (the page pauses).
 #[cfg(target_arch = "wasm32")]
 fn start_full(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, key: u64, size: (u32, u32)) {
-    let samples = app.ui.prefs.sample_count.clamp(1, 4);
-    let scale = ctx.pixels_per_point() * view_scale(app);
-    if let Some(frame) = render_now(app, rect, scale, samples) {
+    let scale = ctx.pixels_per_point() * settings::view_scale(app);
+    if let Some(frame) = render_now(app, rect, scale, settings::samples(app)) {
         show_frame(app, ctx, frame, key, true, size);
     }
 }
@@ -1035,6 +518,22 @@ fn show_frame(app: &mut MaterialCraftApp, ctx: &egui::Context, frame: Frame, key
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relief_tracks_assigned_height_while_another_graph_is_open() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        app.session.preview_size = Some(16);
+        app.session.cook();
+        let (scene_key, _) = base_scene(&mut app);
+        let original = relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())).unwrap();
+        app.session.pkg.graphs.push(materialcraft_engine::core::Graph::new("Other"));
+        app.session.graph = 1;
+        app.session.cook();
+        assert_eq!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+        app.session.pkg.graphs[0].seed += 1;
+        app.session.cook();
+        assert_ne!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+    }
 
     #[test]
     fn changing_relief_keeps_one_worker_and_discards_stale_geometry() {
