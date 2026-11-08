@@ -181,7 +181,7 @@ fn supplied_functions_evaluate_before_and_after_save() {
     let bytes = materialcraft_engine::formats::sbs::write_sbs(&before.pkg).unwrap();
     let after = Session::new(materialcraft_engine::formats::sbs::read_sbs(&bytes, "saved.sbs", &|_| None).unwrap().pkg);
     let bundled = Session::new(
-        materialcraft_engine::formats::sbs::read_sbs(include_bytes!("../../../assets/sbs/functions.sbs"), "functions.sbs", &|_| None).unwrap().pkg,
+        materialcraft_engine::formats::sbs::read_sbs(include_bytes!("../../../../assets/sbs/functions.sbs"), "functions.sbs", &|_| None).unwrap().pkg,
     );
     let mut failures = Vec::new();
     let mut defaults = 0;

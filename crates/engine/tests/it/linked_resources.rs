@@ -38,7 +38,7 @@ fn library_resources_resolve_next_to_their_package() {
     std::fs::write(root.join("assets/sbs/nested/source.sbs"), &package).unwrap();
 
     let status = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "library_resources_resolve_next_to_their_package", "--nocapture"])
+        .args(["--exact", "linked_resources::library_resources_resolve_next_to_their_package", "--nocapture"])
         .env(CHILD_ROOT, &root)
         .env("MATERIALCRAFT_SBS_DIR", root.join("assets/sbs"))
         .status()
