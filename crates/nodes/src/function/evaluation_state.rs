@@ -10,6 +10,7 @@ pub struct EvaluationState {
     pub(crate) registers: Vec<Option<Value>>,
     pub(crate) variables: BTreeMap<String, Value>,
     pub(crate) random: u32,
+    pub(crate) calls: BTreeMap<usize, EvaluationState>,
 }
 
 impl EvaluationState {

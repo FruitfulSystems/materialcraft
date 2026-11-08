@@ -11,6 +11,8 @@ pub struct Node {
     pub id: NodeId,
     /// Catalog id, e.g. `blend`, `pixel_processor`, `output`, `input_color`, `graph_instance`
     pub def: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<crate::GraphInstance>,
     /// User label; empty = the definition's label
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
@@ -38,6 +40,7 @@ impl Node {
         Node {
             id,
             def: def.into(),
+            instance: None,
             label: String::new(),
             pos,
             params: BTreeMap::new(),

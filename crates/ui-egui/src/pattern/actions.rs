@@ -46,11 +46,25 @@ pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut PatternEdit
     if editor_enabled(app, editor, command) != Some(true) {
         return;
     }
+    if command.starts_with("graph.wire.") || (command == "edit.delete" && !editor.selected_wires.is_empty()) {
+        let command = if command == "edit.delete" { "graph.wire.delete" } else { command };
+        let target = Some(materialcraft_engine::SelectionTarget::Pattern(editor.node));
+        crate::graph::wire_actions::edit(app, &mut editor.selected_wires, target, command);
+        return;
+    }
+
     let parameters = editor.selection_parameters(command);
     crate::graph::selection_commands::invoke(app, &mut editor.selection, command, parameters);
+    if matches!(command, "edit.selectAll" | "edit.selectNone" | "edit.paste" | "edit.pasteWithoutLinks" | "edit.duplicate" | "edit.duplicateWithoutLinks") {
+        editor.selected_wires.clear();
+    }
 }
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &PatternEditor, command: &str) -> Option<bool> {
+    let target = materialcraft_engine::SelectionTarget::Pattern(editor.node);
+    if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, Some(&target)) {
+        return Some(enabled && editor.current(app).is_some());
+    }
     materialcraft_engine::selection_commands::enabled_for(
         &app.session,
         &materialcraft_engine::SelectionTarget::Pattern(editor.node),

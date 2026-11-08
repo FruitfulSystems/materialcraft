@@ -66,7 +66,7 @@ pub(crate) fn connection_input(session: &Session, from: NodeId, from_port: &str,
         .ok_or_else(|| bad("graph.connect", "the target has no compatible input"))
 }
 
-fn validate_connection(session: &Session, from: NodeId, from_port: &str, to: NodeId, to_port: &str) -> Result<()> {
+pub(crate) fn validate_connection(session: &Session, from: NodeId, from_port: &str, to: NodeId, to_port: &str) -> Result<()> {
     let outputs = session.output_ports(from);
     let inputs = session.input_ports(to);
     if !outputs.iter().any(|port| port == from_port) {
@@ -78,9 +78,18 @@ fn validate_connection(session: &Session, from: NodeId, from_port: &str, to: Nod
 
     let graph = session.graph()?;
     let target = graph.node(to)?;
-    let source_type = materialcraft_nodes::output_value_type(graph, from).map_err(|error| bad("graph.connect", error))?;
-    if let Some(expected) = target.input_values.get(to_port) {
-        if source_type != Some(*expected) {
+    let source_type = materialcraft_nodes::output_port_value_type(graph, from, from_port).map_err(|error| bad("graph.connect", error))?;
+    let expected = target.input_values.get(to_port).copied().or_else(|| {
+        target
+            .instance
+            .as_ref()?
+            .inputs
+            .iter()
+            .find(|port| port.identifier == to_port)
+            .and_then(|port| materialcraft_core::ValueType::from_code(port.type_code))
+    });
+    if let Some(expected) = expected {
+        if source_type != Some(expected) {
             return Err(bad("graph.connect", format!("input `{to_port}` requires {}", expected.label())));
         }
     } else if source_type.is_some() && !matches!(target.def.as_str(), "output" | "dot") {

@@ -28,6 +28,12 @@ pub struct GraphView {
 }
 
 impl GraphView {
+    pub(crate) fn cancel_gesture(&mut self) {
+        self.drag = None;
+        self.search = None;
+        self.menu_wire = None;
+        self.framed_graph = None;
+    }
     pub(crate) fn is_dragging(&self) -> bool {
         self.drag.is_some()
     }

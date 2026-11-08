@@ -1,12 +1,20 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod document_path;
+mod graph_instance_commands;
+mod linked_files;
+mod linked_packages;
 mod material_preview;
 mod material_preview_commands;
 mod material_source;
+mod node_info_commands;
+mod open_document;
+mod package_commands;
 mod preview_cook;
 pub use material_preview::MaterialPreview;
 pub use material_source::MaterialSource;
+pub use open_document::OpenDocument;
 pub use preview_cook::PreviewCook;
 
 mod alignment_commands;
@@ -30,6 +38,7 @@ pub mod session;
 mod value_input_commands;
 pub mod view_cmds;
 pub mod wire_cmds;
+pub mod wire_swap;
 
 pub use commands::{CommandSpec, command_specs, execute, find};
 pub use session::{CameraPrefs, Session, View2d, View3d, WARNING_PREFIX};
@@ -77,8 +86,12 @@ pub use annotation_selection::AnnotationSelection;
 pub use frame_contents::FrameContents;
 
 mod embedded_edit_commands;
+mod embedded_wire_commands;
 mod function_edit;
 mod function_graph_target;
+mod function_info_commands;
+pub mod function_inspection;
+pub mod function_output;
 mod pattern_edit;
 pub use function_edit::FunctionEdit;
 pub use function_graph_target::FunctionGraphTarget;

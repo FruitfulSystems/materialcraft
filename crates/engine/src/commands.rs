@@ -48,6 +48,9 @@ pub fn command_specs() -> &'static [CommandSpec] {
     SPECS.get_or_init(|| {
         let mut v = Vec::new();
         v.extend(crate::file_cmds::specs());
+        v.extend(crate::package_commands::specs());
+        v.extend(crate::graph_instance_commands::specs());
+        v.extend(crate::node_info_commands::specs());
         v.extend(crate::atomic_sample_commands::specs());
         v.extend(crate::material_cmds::specs());
         v.extend(crate::edit_cmds::specs());
@@ -57,6 +60,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::annotation_commands::specs());
         v.extend(crate::frame_commands::specs());
         v.extend(crate::function_commands::specs());
+        v.extend(crate::function_info_commands::specs());
         v.extend(crate::comment_commands::specs());
         v.extend(crate::node_cmds::specs());
         v.extend(crate::node_graph_commands::specs());

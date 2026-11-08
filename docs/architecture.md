@@ -19,7 +19,7 @@ L2  eval      cooking: topological order, output sizes (relative to input / pare
               content-addressed LRU cache, graph instances (sub-graphs, recursion-guarded)
 L2  formats   native .sbs packages, .mcmat portable materials, bitmap/SVG decode,
               texture encode (PNG/JPEG/TGA/TIFF/BMP/WEBP/EXR/HDR), atomic writes
-L3  engine    Session (package, open graph, selection, 2D/3D view state, snapshot undo, cache),
+L3  engine    Session (open packages, active graph, selection, 2D/3D view state, snapshot undo, cache),
               the command registry, inspect, sample materials and graph templates
 L3  render    the 3D view: BVH ray casts, the height output displacing a subdivided mesh, GGX PBR with
               prefiltered IBL + SH diffuse, alpha transparency (layered ray compositing) and an
@@ -66,6 +66,19 @@ The desktop UI cooks on a worker thread (`ui-egui/src/cook.rs`) from a snapshot 
 keeps drawing the last results; the browser cooks on the UI thread.
 
 ## Commands and automation
+
+`Session` exposes the active package and keeps inactive editing state in `OpenDocument`. Switching
+packages retains their undo histories, selections and previews and invalidates pending cook results.
+Linked main and Function graph instances store a source path, graph name and cached connector interface.
+`linked_packages` publishes source snapshots and refreshes dependent packages; `linked_files`
+resolves saved references on native open. Source snapshots share a flat registry of `Arc<Package>`
+values whose own registries are empty, so cross-file references cannot create ownership cycles.
+The registry is runtime state; SBS serializes the file references and connectors instead.
+Function instances resolve to bounded runtime call bodies before cooking. Each compiled call owns
+its program and reuses separate evaluation storage, so source lookup and compilation never happen
+per pixel. Calls share the execution-step budget and are capped at eight levels and 4096 nodes.
+SBS Function nodes store the source URI in their instance data; a `materialcraftInterface` cache
+preserves unconnected input pins when a source file is unavailable.
 
 Every user-visible action is a `CommandSpec` (`engine/src/*_cmds.rs`): id, label, menu, shortcut,
 params doc, `enabled`, `run`. The UI calls them through `MaterialCraftApp::run`; the CLI, the JSON

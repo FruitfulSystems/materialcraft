@@ -11,7 +11,7 @@ mod graph_camera;
 mod graph_drag;
 pub(crate) mod graph_parent;
 mod graph_view;
-pub(crate) mod input_visibility;
+mod instance_context_menu;
 #[cfg(test)]
 mod interaction_tests;
 mod library_drag;
@@ -44,8 +44,9 @@ mod node_style;
 mod search;
 pub(crate) mod selection_commands;
 pub(crate) mod toolbar;
-mod wire_actions;
+pub(crate) mod wire_actions;
 pub(crate) mod wire_geometry;
+pub(crate) mod wire_selection;
 
 #[cfg(test)]
 mod review_tests;

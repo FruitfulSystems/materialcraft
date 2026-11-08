@@ -96,9 +96,6 @@ fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
     };
     row(ui, format!("{}  {}", icon::SQUARES_FOUR, tr("All nodes")), "", 4.0);
-    if app.session.pkg.graphs.len() > 1 {
-        row(ui, format!("{}  {}", icon::TREE_STRUCTURE, tr("This package")), "@package", 4.0);
-    }
     for (top, subs) in tree() {
         row(ui, format!("{}  {}", category_icon(top), tr(top)), top, 4.0);
         for sub in subs {
@@ -108,21 +105,12 @@ fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui) {
     }
 }
 
-/// Library entries for the current filter: (id, label, category, is a package graph).
-fn entries(app: &MaterialCraftApp) -> Vec<(String, String, &'static str, bool)> {
+/// Atomic library entries matching the current filter
+fn entries(app: &MaterialCraftApp) -> Vec<(String, String, &'static str)> {
     let search = app.ui.library_search.to_ascii_lowercase();
-    let cat = &app.ui.library_category;
-    let mut out: Vec<(String, String, &'static str, bool)> = Vec::new();
-    if cat == "@package" || !search.is_empty() {
-        for (i, g) in app.session.pkg.graphs.iter().enumerate() {
-            if i != app.session.graph && (search.is_empty() || g.name.to_ascii_lowercase().contains(&search)) {
-                out.push((g.name.clone(), g.name.clone(), "This package", true));
-            }
-        }
-        if cat == "@package" {
-            return out;
-        }
-    }
+    let category = app.ui.library_category.as_str();
+    let cat = if category == "@package" { "" } else { category };
+    let mut out = Vec::new();
     for d in materialcraft_engine::nodes::catalog() {
         if d.id == "graph_instance" {
             continue;
@@ -133,7 +121,7 @@ fn entries(app: &MaterialCraftApp) -> Vec<(String, String, &'static str, bool)> 
         if !(search.is_empty() || d.label.to_ascii_lowercase().contains(&search) || d.id.contains(&search)) {
             continue;
         }
-        out.push((d.id.to_string(), d.label.to_string(), d.category, false));
+        out.push((d.id.to_string(), d.label.to_string(), d.category));
     }
     out
 }
@@ -149,19 +137,18 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let as_list = app.ui.prefs.library_list;
     let tile = vec2(78.0, 98.0);
     let cols = if as_list { 1 } else { ((ui.available_width() + 4.0) / (tile.x + 4.0)).floor().max(1.0) as usize };
-    let mut add: Option<(String, bool)> = None;
+    let mut add = None;
     for chunk in list.chunks(cols) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-            for (id, label, cat, is_graph) in chunk {
+            for (id, label, cat) in chunk {
                 let size = if as_list { vec2(ui.available_width(), 26.0) } else { tile };
                 let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 crate::widgets::name(&resp, egui::Role::ListItem, label);
-                let def_id = if *is_graph { "graph_instance" } else { id.as_str() };
                 if resp.hovered() {
                     ui.painter().rect_filled(r, 6.0, tk.row_hover);
                 }
-                let tex = if *is_graph { None } else { app.thumbs.library(&ctx, id) };
+                let tex = app.thumbs.library(&ctx, id);
                 let img_rect = if as_list {
                     Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2(22.0, 22.0))
                 } else {
@@ -172,11 +159,11 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui) {
                         ui.painter().image(t, img_rect, Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
                     }
                     None => {
-                        ui.painter().rect_filled(img_rect, 4.0, header_color(def_id).gamma_multiply(0.7));
+                        ui.painter().rect_filled(img_rect, 4.0, header_color(id).gamma_multiply(0.7));
                         ui.painter().text(
                             img_rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            if *is_graph { icon::TREE_STRUCTURE } else { icon::CUBE },
+                            icon::CUBE,
                             egui::FontId::proportional(img_rect.height() * 0.4),
                             Color32::WHITE,
                         );
@@ -184,7 +171,7 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
                 // The category color as a strip, like the node headers.
                 let strip = Rect::from_min_size(img_rect.left_bottom() - vec2(0.0, 3.0), vec2(img_rect.width(), 3.0));
-                ui.painter().rect_filled(strip, 0.0, header_color(def_id));
+                ui.painter().rect_filled(strip, 0.0, header_color(id));
                 if as_list {
                     let g = crate::widgets::elided(ui.painter(), label.clone(), 11.5, tk.text, r.width() - 34.0);
                     ui.painter().galley(r.left_center() + vec2(30.0, -g.size().y * 0.5), g, tk.text);
@@ -195,20 +182,33 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
                 let resp = resp.on_hover_text(format!("{label}\n{cat}"));
                 if resp.drag_started() {
-                    let payload = if *is_graph { format!("@{id}") } else { id.clone() };
-                    egui::DragAndDrop::set_payload(&ctx, LibraryDrag(payload));
+                    egui::DragAndDrop::set_payload(&ctx, LibraryDrag(id.clone()));
                 }
                 if resp.double_clicked() {
-                    add = Some((id.clone(), *is_graph));
+                    add = Some(id.clone());
                 }
             }
         });
     }
-    if let Some((id, is_graph)) = add {
-        if is_graph {
-            app.run("graph.node.add", serde_json::json!({"def": "graph_instance", "params": {"graph": id}}));
-        } else {
-            crate::graph::add_node_near_selection(app, &id);
-        }
+    if let Some(id) = add {
+        crate::graph::add_node_near_selection(app, &id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_package_graphs_are_explorer_resources_not_library_entries() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), crate::UiState::default());
+        let mut graph = materialcraft_engine::core::Graph::new("Reusable source");
+        graph.add_node("output", [0.0; 2]);
+        app.session.pkg.graphs.push(graph);
+        app.ui.library_search = "Reusable source".into();
+        assert!(entries(&app).is_empty());
+        app.ui.library_search.clear();
+        app.ui.library_category = "@package".into();
+        assert!(entries(&app).iter().any(|entry| entry.0 == "uniform"));
     }
 }

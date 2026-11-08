@@ -10,6 +10,7 @@ pub struct FunctionEditor {
     pub node: Option<NodeId>,
     pub graph: usize,
     pub(crate) selection: Vec<u32>,
+    pub(crate) selected_wires: Vec<crate::graph::WireRef>,
     pub(crate) inspected_node: Option<u32>,
     pub target: FunctionTarget,
     pub(super) pan: Vec2,
@@ -17,6 +18,7 @@ pub struct FunctionEditor {
     pub(super) drag: Option<FunctionDrag>,
     pub(super) menu_at: Pos2,
     pub(crate) framed: bool,
+    pub(super) open_reference: Option<u32>,
 }
 
 impl FunctionEditor {
@@ -39,12 +41,14 @@ impl FunctionEditor {
             node,
             target,
             selection: Vec::new(),
+            selected_wires: Vec::new(),
             inspected_node: None,
             pan: vec2(-40.0, -40.0),
             zoom: 1.0,
             drag: None,
             menu_at: Pos2::ZERO,
             framed: false,
+            open_reference: None,
         }
     }
 
@@ -76,6 +80,7 @@ impl FunctionEditor {
             && let Some(id) = result.get("id").and_then(serde_json::Value::as_u64).and_then(|id| u32::try_from(id).ok())
         {
             self.selection = vec![id];
+            self.selected_wires.clear();
             if self.target == FunctionTarget::Graph {
                 app.session.selection = vec![NodeId(u64::from(id))];
                 app.session.annotation_selection = None;

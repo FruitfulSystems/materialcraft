@@ -1,10 +1,9 @@
-use super::geometry::{category_color, in_port, node_rect, out_port, preview_rect, visible_inputs};
+use super::geometry::{in_port, node_rect, out_port, preview_rect};
 use super::{FunctionDrag, FunctionEditor, FunctionTarget, port_label::port_label};
 use super::{function_canvas::FunctionCanvas, function_port::FunctionPort};
 use crate::graph::canvas_geometry::CanvasGeometry;
 use crate::{MaterialCraftApp, graph::node_card, theme::Tokens};
-use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
-use egui_phosphor::regular as icon;
+use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mut Ui) -> Option<FunctionCanvas> {
@@ -14,6 +13,13 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
     let layouts: BTreeMap<_, _> =
         graph.nodes.iter().map(|node| (node.id, (node, preview_rect(app, editor, node, snap, selected.contains(&node.id))))).collect();
     editor.selection.retain(|id| layouts.contains_key(id));
+    editor.selected_wires.retain(|(id, port)| {
+        u32::try_from(id.0)
+            .ok()
+            .and_then(|id| layouts.get(&id))
+            .and_then(|(node, _)| port.parse::<usize>().ok().and_then(|slot| node.inputs.get(slot)))
+            .is_some_and(Option::is_some)
+    });
     editor.inspected_node = crate::graph::node_selection::inspected(&editor.selection, editor.inspected_node);
     let standalone = matches!(editor.target, FunctionTarget::Graph);
     let tokens = Tokens::get(ui.ctx());
@@ -67,18 +73,17 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
                 let destination = camera.to_screen(in_port(node, *bounds, input_index));
                 let points = crate::graph::wire_geometry::bezier_points(source_position, destination);
                 geometry.wires.push(((materialcraft_engine::core::NodeId(u64::from(node.id)), input_index.to_string()), points));
+                let selected = editor.selected_wires.contains(&(materialcraft_engine::core::NodeId(u64::from(node.id)), input_index.to_string()));
                 painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
                     points,
                     false,
                     Color32::TRANSPARENT,
-                    Stroke::new(2.0, Color32::from_gray(0xb4)),
+                    crate::graph::wire_selection::stroke(selected, 2.0, Color32::from_gray(0xb4), tokens.accent),
                 ));
             }
         }
     }
 
-    // Nodes
-    let font = FontId::proportional((11.0 * editor.zoom).min(16.0));
     let mut ports = Vec::new();
     for node in &graph.nodes {
         let id = node.id;
@@ -89,38 +94,15 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         geometry.rects.push((materialcraft_engine::core::NodeId(u64::from(id)), screen_rect));
 
         let definition = materialcraft_engine::nodes::function::definition(&node.op);
-        let label = definition.map_or("?", |definition| definition.label);
+        let label = materialcraft_engine::nodes::function::node_label(node);
         let dot = node.op == "passthrough";
         let show_labels = crate::graph::port_label::visible(ui, screen_rect);
-        let is_output = graph.output == Some(id);
-        let selected = selected.contains(&id);
-        let outline = if selected {
-            tokens.accent
-        } else if dot {
-            Color32::from_gray(0xb4)
-        } else {
-            Color32::from_gray(0x10)
-        };
-
-        if dot {
-            node_card::paint_dot(&painter, screen_rect, outline);
-        } else {
-            node_card::paint(&painter, screen_rect, editor.zoom, label, category_color(definition.map_or("", |definition| definition.category)));
-            node_card::outline(&painter, screen_rect, editor.zoom, Stroke::new(if selected { 2.0 } else { 1.0 }, outline));
-            let body = node_card::body(screen_rect, editor.zoom);
-            if node.value.is_none() {
-                painter.text(body.center(), Align2::CENTER_CENTER, icon::CODE, FontId::proportional(30.0 * editor.zoom), tokens.text_dim);
-            }
-            if is_output {
-                let header = node_card::header(screen_rect, editor.zoom);
-                painter.text(header.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER, icon::STAR, font.clone(), Color32::GOLD);
-            }
-        }
+        super::node_canvas::paint(&painter, screen_rect, editor.zoom, node, definition, selected.contains(&id), graph.output == Some(id), &tokens);
 
         let port_radius = (4.5 * editor.zoom).clamp(2.5, 7.0);
         let port_color = crate::graph::port_color(materialcraft_engine::nodes::PortKind::Value);
-        if let Some(definition) = definition {
-            for (input_index, identifier) in definition.inputs.iter().take(visible_inputs(node)).enumerate() {
+        {
+            for (input_index, identifier) in materialcraft_engine::nodes::function::input_identifiers(node).enumerate() {
                 let position = camera.to_screen(in_port(node, bounds, input_index));
                 painter.circle(position, port_radius, port_color, Stroke::new(1.0, Color32::from_gray(0x18)));
                 if show_labels {
@@ -138,7 +120,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
                     slot: Some(input_index),
                     position,
                     radius: if dot { (3.5 * editor.zoom).max(2.0) } else { 9.0 },
-                    label: port_label(identifier),
+                    label: port_label(identifier).into(),
                 });
             }
         }
@@ -160,7 +142,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             slot: None,
             position: output_position,
             radius: if dot { (3.5 * editor.zoom).max(2.0) } else { 9.0 },
-            label: port_label("output"),
+            label: port_label("output").into(),
         });
 
         let body = ui.interact(screen_rect, ui.scope_id().with(("fn-node", id)), Sense::click_and_drag());
@@ -179,8 +161,12 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
 
         if (body.contains_pointer() && ui.input(|input| input.pointer.primary_pressed() && !input.modifiers.alt)) || body.secondary_clicked() {
             let modifiers = if body.secondary_clicked() { egui::Modifiers::NONE } else { ui.input(|input| input.modifiers) };
+            let keep_wires = modifiers.ctrl || modifiers.command || modifiers.shift || (body.secondary_clicked() && editor.selection.contains(&id));
 
             crate::graph::node_selection::select(&mut editor.selection, Some(id), modifiers);
+            if !keep_wires {
+                editor.selected_wires.clear();
+            }
             if standalone && app.session.annotation_selection.is_some() {
                 clear_annotation = true;
             }
@@ -199,7 +185,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         .map(|port| crate::graph::PortHit {
             node: materialcraft_engine::core::NodeId(u64::from(port.node)),
             port: port.slot.map_or_else(|| "output".into(), |slot| slot.to_string()),
-            label: port.label.into(),
+            label: port.label.clone(),
             output: port.slot.is_none(),
             kind: materialcraft_engine::nodes::PortKind::Value,
             pos: port.position,

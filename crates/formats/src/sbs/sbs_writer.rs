@@ -40,6 +40,9 @@ impl SbsWriter {
         match node.def.as_str() {
             "output" => Vec::new(),
             "graph_instance" => {
+                if let Some(instance) = &node.instance {
+                    return instance.outputs.iter().map(|port| (port.identifier.clone(), port.type_code)).collect();
+                }
                 let sub_graph = match node.params.get("graph") {
                     Some(Value::Text(name)) => pkg.graph_by_name(name).map(|(_, g)| g),
                     _ => None,
@@ -244,13 +247,18 @@ impl SbsWriter {
                 let _ = write!(out, "<compInputBridge><entry v=\"{}\"/><parameters>{base}</parameters></compInputBridge>", ids.input_entry.unwrap_or(0));
             }
             "graph_instance" => {
-                let sub_graph = text_param(node, "graph", "");
+                let sub_graph = node.instance.as_ref().map(|instance| instance.graph.clone()).unwrap_or_else(|| text_param(node, "graph", ""));
+                let dependency = node
+                    .instance
+                    .as_ref()
+                    .filter(|instance| !instance.package.is_empty())
+                    .map_or(ids.self_uid, |instance| self.external_package_uid(&instance.package));
                 let params: String = node.params.iter().filter(|(k, _)| *k != "graph").filter_map(|(k, v)| param_xml(k, v)).collect();
                 let _ = write!(
                     out,
                     "<compInstance><path v=\"pkg:///{}?dependency={}\"/><parameters>{base}{params}</parameters>",
                     xml_escape(&sub_graph),
-                    ids.self_uid
+                    dependency
                 );
                 write_bridgings(out, outputs);
                 out.push_str("</compInstance>");

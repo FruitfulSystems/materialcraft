@@ -14,6 +14,23 @@ pub fn ports_with_connections<'a>(
     incoming: impl IntoIterator<Item = &'a materialcraft_core::Connection>,
 ) -> (Vec<Port>, Vec<Port>) {
     if node.def == "graph_instance" {
+        if let Some(instance) = &node.instance {
+            let ports = |ports: &[materialcraft_core::GraphPort]| {
+                ports
+                    .iter()
+                    .map(|port| Port {
+                        id: port.identifier.clone(),
+                        label: port.identifier.clone(),
+                        kind: match port.type_code {
+                            1 => PortKind::Color,
+                            2 => PortKind::Gray,
+                            _ => PortKind::Value,
+                        },
+                    })
+                    .collect()
+            };
+            return (ports(&instance.inputs), ports(&instance.outputs));
+        }
         let Some((_, graph)) = instance_graph(package, node) else {
             return (Vec::new(), Vec::new());
         };
@@ -80,10 +97,7 @@ pub fn ports_with_connections<'a>(
 
 /// The graph a graph-instance node refers to
 pub fn instance_graph<'a>(pkg: &'a Package, node: &Node) -> Option<(usize, &'a Graph)> {
-    match node.params.get("graph") {
-        Some(Value::Text(name)) => pkg.graph_by_name(name),
-        _ => None,
-    }
+    pkg.instance_graph(node)
 }
 
 /// An input or output node's identifier (its `identifier` parameter, default "input"/"output")

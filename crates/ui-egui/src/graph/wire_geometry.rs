@@ -41,7 +41,7 @@ pub(super) fn bezier_distance(c: &[Pos2; 4], p: Pos2) -> f32 {
 }
 
 /// The wire nearest `p` within [`WIRE_HIT`] points
-pub(super) fn wire_at(wires: &[(WireRef, [Pos2; 4])], p: Pos2) -> Option<&WireRef> {
+pub(crate) fn wire_at(wires: &[(WireRef, [Pos2; 4])], p: Pos2) -> Option<&WireRef> {
     wires
         .iter()
         .filter(|(_, c)| Rect::from_points(c).expand(WIRE_HIT).contains(p))

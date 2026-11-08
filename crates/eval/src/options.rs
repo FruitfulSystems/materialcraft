@@ -14,16 +14,30 @@ pub struct Options<'a> {
     /// Values for the graph's exposed parameters (graph instances), over the graph's own
     pub overrides: BTreeMap<String, Value>,
     /// Decodes a package resource (bitmap) by name
-    pub resource: &'a (dyn Fn(&str) -> Option<Image> + Sync),
+    pub resource: &'a crate::ResourceDecoder<'a>,
     /// Set from another thread to stop between nodes
     pub cancel: Option<&'a AtomicBool>,
     pub depth: u32,
-    /// Graphs being cooked around this one, outermost first (cycle detection)
+    /// Graph addresses being cooked around this one, outermost first (cycle detection)
     pub graph_stack: Vec<usize>,
+    /// Root package supplies the shared registry when evaluating an external graph
+    pub registry: Option<&'a materialcraft_core::Package>,
+    pub resource_root: Option<&'a crate::ResourceDecoder<'a>>,
 }
 
 impl<'a> Options<'a> {
-    pub fn new(resource: &'a (dyn Fn(&str) -> Option<Image> + Sync)) -> Options<'a> {
-        Options { max_size: None, only: None, inputs: BTreeMap::new(), overrides: BTreeMap::new(), resource, cancel: None, depth: 0, graph_stack: Vec::new() }
+    pub fn new(resource: &'a crate::ResourceDecoder<'a>) -> Options<'a> {
+        Options {
+            max_size: None,
+            only: None,
+            inputs: BTreeMap::new(),
+            overrides: BTreeMap::new(),
+            resource,
+            cancel: None,
+            depth: 0,
+            graph_stack: Vec::new(),
+            registry: None,
+            resource_root: None,
+        }
     }
 }

@@ -38,9 +38,12 @@ impl FunctionEdit {
                 if graph.nodes.len() >= 4096 {
                     return Err("the function exceeds the 4096-node limit".into());
                 }
+
                 let definition = materialcraft_nodes::function::definition(operation).ok_or("unknown function operation")?;
                 let id = graph.next_id();
                 graph.nodes.push(FunctionNode {
+                    instance: None,
+                    source: None,
                     id,
                     type_code: 0,
                     op: operation.clone(),
@@ -48,9 +51,6 @@ impl FunctionEdit {
                     value: materialcraft_nodes::function::default_value(operation),
                     pos: crate::graph_grid::snap_position(*at, *snap),
                 });
-                if graph.output.is_none() {
-                    graph.output = Some(id);
-                }
                 return Ok(json!({"id": id}));
             }
             Self::Move { ids, by, snap } => {
@@ -59,6 +59,7 @@ impl FunctionEdit {
                         return Err(format!("no function node {id}"));
                     }
                 }
+
                 for node in &mut graph.nodes {
                     if ids.contains(&node.id) {
                         node.pos = crate::graph_grid::translate(node.pos, *by, *snap);
@@ -69,11 +70,13 @@ impl FunctionEdit {
                 if from == to || graph.node(*from).is_none() {
                     return Err("invalid function source".into());
                 }
+
                 let node = graph.nodes.iter_mut().find(|node| node.id == *to).ok_or("missing function destination")?;
-                let count = materialcraft_nodes::function::definition(&node.op).map_or(0, |definition| definition.inputs.len());
+                let count = materialcraft_nodes::function::input_identifiers(node).count();
                 if *input >= count {
                     return Err("invalid function input".into());
                 }
+
                 node.inputs.resize(count, None);
                 if let Some(slot) = node.inputs.get_mut(*input) {
                     *slot = Some(*from);
@@ -84,15 +87,19 @@ impl FunctionEdit {
                 if node.value.is_none() {
                     return Err("the operation has no editable value".into());
                 }
+
                 node.value = Some(value.clone());
             }
             Self::Output { id } => {
-                if graph.node(*id).is_none() {
-                    return Err("missing output node".into());
+                let node = graph.node(*id).ok_or("missing output node")?;
+                if !materialcraft_nodes::function::can_be_output(&node.op) {
+                    return Err("Dot nodes cannot be function outputs".into());
                 }
+
                 graph.output = Some(*id);
             }
         }
+
         Ok(Json::Null)
     }
 

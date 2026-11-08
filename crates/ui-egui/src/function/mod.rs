@@ -16,8 +16,10 @@ pub(crate) use panel::show_graph;
 mod actions;
 mod geometry;
 mod input;
+mod node_canvas;
 mod panel;
 
 mod function_canvas;
 mod function_port;
 mod render;
+mod warning_banner;

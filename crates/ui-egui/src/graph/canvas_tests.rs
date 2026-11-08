@@ -131,6 +131,16 @@ fn clicked_wires_swap_with_x_and_delete_together() {
     // Still selected: X again swaps back
     frame(&mut app, vec![key(egui::Key::X)], egui::Modifiers::NONE);
     assert_eq!((src(&app, "foreground"), src(&app, "background")), (a, b));
+
+    app.run("graph.connect", json!({"from": a, "to": blend, "toPort": "background"})).unwrap();
+    let package = app.session.pkg.clone();
+    let history = app.session.history();
+    assert!(!crate::menus::enabled(&app, "graph.wire.swap"));
+    frame(&mut app, vec![key(egui::Key::X)], egui::Modifiers::NONE);
+    crate::menus::invoke(&mut app, &ctx, "graph.wire.swap");
+    assert_eq!(app.session.pkg, package);
+    assert_eq!(app.session.history(), history);
+
     frame(&mut app, vec![key(egui::Key::Delete)], egui::Modifiers::NONE);
     assert!(app.session.graph().unwrap().connections.is_empty());
     assert!(app.graph.selected_wires.is_empty());

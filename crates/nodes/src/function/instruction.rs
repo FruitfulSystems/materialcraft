@@ -8,4 +8,5 @@ pub(crate) struct Instruction {
     pub value: Option<Value>,
     pub type_code: u32,
     pub pure: bool,
+    pub call: Option<super::function_call::FunctionCall>,
 }

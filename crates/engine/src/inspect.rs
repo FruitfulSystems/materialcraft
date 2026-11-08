@@ -14,6 +14,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
             "name": g.name,
             "kind": g.kind(),
             "function": g.function,
+            "functionWarnings": crate::function_inspection::warnings(g).into_iter().map(|(target, messages)| json!({"target": target, "messages": messages})).collect::<Vec<_>>(),
             "size": g.size_px(),
             "format": g.format,
             "seed": g.seed,
@@ -29,6 +30,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
                 json!({
                     "id": n.id.0,
                     "def": n.def,
+                    "instance": n.instance,
                     "label": if n.label.is_empty() { materialcraft_nodes::find(&n.def).map_or(n.def.as_str(), |d| d.label).to_string() } else { n.label.clone() },
                     "pos": n.pos,
                     "params": n.params,
@@ -55,6 +57,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
         })
     });
     json!({
+        "documents": s.inspect_documents(),
         "package": {"name": s.pkg.name, "path": s.path, "modified": s.modified, "warnings": s.load_warnings, "resources": s.pkg.resources.iter().map(|r| json!({"name": r.name, "bytes": r.bytes.len()})).collect::<Vec<_>>()},
         "graphs": s.pkg.graphs.iter().enumerate().map(|(i, g)| json!({"index": i, "name": g.name, "nodes": g.nodes.len(), "kind": g.kind()})).collect::<Vec<_>>(),
         "openGraph": s.graph,

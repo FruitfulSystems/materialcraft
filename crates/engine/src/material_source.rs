@@ -30,6 +30,9 @@ impl MaterialSource {
                     port = connection.from_port.clone();
                 }
                 "graph_instance" => {
+                    if let Some(instance) = &node.instance {
+                        return instance.outputs.iter().any(|output| output.identifier == port && matches!(output.type_code, 1 | 2));
+                    }
                     let Some((index, graph)) = materialcraft_eval::instance_graph(package, node) else { return false };
                     let Some(output) = graph.nodes.iter().find(|node| node.def == "output" && materialcraft_eval::identifier(node) == port) else {
                         return false;

@@ -2,6 +2,10 @@ use materialcraft_core::{FunctionGraph, PatternGraph, Value};
 
 fn function_structure(graph: &FunctionGraph) -> Result<(), String> {
     materialcraft_nodes::function::node_types(graph)?;
+    if graph.output.is_some() && materialcraft_nodes::function::output_node(graph).is_none() {
+        return Err("Dot nodes cannot be function outputs".into());
+    }
+
     if graph.nodes.iter().any(|node| node.pos.iter().any(|coordinate| !coordinate.is_finite())) {
         return Err("function node positions must be finite".into());
     }

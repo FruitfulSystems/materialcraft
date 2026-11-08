@@ -6,6 +6,7 @@ mod constant;
 mod embedded;
 mod filter_map;
 mod function_graph;
+mod function_instance;
 mod image_input;
 mod input_bridge;
 mod node_identifiers;

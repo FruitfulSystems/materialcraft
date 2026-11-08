@@ -135,14 +135,15 @@ fn base_params(app: &mut MaterialCraftApp, ui: &mut Ui, node: &materialcraft_eng
 
 fn instance_params(app: &mut MaterialCraftApp, ui: &mut Ui, node: &materialcraft_engine::core::Node) {
     let tokens = Tokens::get(ui.ctx());
-    let Some((graph_index, subgraph)) = materialcraft_engine::eval::instance_graph(&app.session.pkg, node) else {
+    let Some((_, subgraph)) = materialcraft_engine::eval::instance_graph(&app.session.pkg, node) else {
         ui.label(RichText::new(tr("The instanced graph is missing")).color(tokens.danger));
         return;
     };
 
     let exposed = subgraph.exposed.clone();
     if ui.button(format!("{}  {}", icon::ARROW_SQUARE_OUT, tr("Open graph"))).clicked() {
-        crate::graph::subgraph_navigation::open_instance(app, graph_index);
+        app.run("graph.select", json!({"ids": [node.id.0]}));
+        crate::menus::invoke(app, ui.ctx(), "graph.node.edit");
         return;
     }
     if exposed.is_empty() {

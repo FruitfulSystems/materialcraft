@@ -75,10 +75,7 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
 
     let mut layouts: Vec<NodeLayout> = Vec::with_capacity(graph.nodes.len());
     for node in &graph.nodes {
-        let (mut ins, outs) = materialcraft_engine::eval::ports_with_connections(&app.session.pkg, node, index.incoming(node.id).iter().copied());
-        let visible =
-            super::input_visibility::count(ins.iter().map(|port| index.input_of(node.id, &port.id).is_some()), if node.def == "fx_map" { 2 } else { 1 });
-        ins.truncate(visible);
+        let (ins, outs) = materialcraft_engine::eval::ports_with_connections(&app.session.pkg, node, index.incoming(node.id).iter().copied());
         let mut r = node_rect(node, ins.len(), outs.len(), show_thumbnails);
         if selection.contains(&node.id) && node_delta.length() > 0.5 {
             let position = materialcraft_engine::graph_grid::translate(node.pos, node_delta.into(), app.ui.prefs.snap_to_grid);
@@ -164,13 +161,15 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
         let picked = app.graph.selected_wires.contains(w);
         let hovered = wire_hover.as_ref() == Some(w);
         let base = (2.0 * camera.zoom).clamp(1.0, 3.0);
-        let stroke = if picked {
-            Stroke::new(base + 2.0, theme.accent)
-        } else if hovered {
-            Stroke::new(base + 1.0, Color32::WHITE)
+        let width = if hovered && !picked { base + 1.0 } else { base };
+        let color = if hovered {
+            Color32::WHITE
+        } else if hot {
+            theme.accent
         } else {
-            Stroke::new(base, if hot { theme.accent } else { Color32::from_gray(0xb4) })
+            Color32::from_gray(0xb4)
         };
+        let stroke = super::wire_selection::stroke(picked, width, color, theme.accent);
 
         painter.add(egui::epaint::CubicBezierShape::from_points_stroke(*ctrl, false, Color32::TRANSPARENT, stroke));
     }

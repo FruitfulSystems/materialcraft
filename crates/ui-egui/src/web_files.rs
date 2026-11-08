@@ -65,8 +65,7 @@ pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool
     if app.ui.windows.unsaved.is_some() {
         return;
     }
-    app.pending_load = Some((name.to_string(), bytes));
-    crate::unsaved::guard(app, crate::unsaved::Guarded::LoadBytes { name: name.to_string() });
+    load_now(app, name, &bytes);
 }
 
 pub(crate) fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
@@ -247,14 +246,15 @@ mod tests {
     }
 
     #[test]
-    fn a_package_picked_over_unsaved_work_is_held_not_loaded() {
+    fn an_invalid_package_reports_an_error_without_discarding_unsaved_work() {
         let mut app = app(true);
         let before = app.session.pkg.name.clone();
         load(&mut app, "other.sbs", b"not a package".to_vec(), false);
-        assert_eq!(app.ui.windows.unsaved, Some(crate::unsaved::Guarded::LoadBytes { name: "other.sbs".into() }));
-        assert_eq!(app.pending_load.as_ref().map(|(n, _)| n.as_str()), Some("other.sbs"));
+        assert!(app.ui.windows.unsaved.is_none());
+        assert!(app.pending_load.is_none());
         assert_eq!(app.session.pkg.name, before);
-        assert!(app.toasts.is_empty());
+        assert!(app.session.modified);
+        assert!(!app.toasts.is_empty());
     }
 
     #[test]

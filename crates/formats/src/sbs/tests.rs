@@ -8,6 +8,22 @@ fn no_linked_files(_: &str) -> Option<Vec<u8>> {
     None
 }
 
+#[test]
+fn saved_dot_outputs_load_as_incomplete_functions() {
+    let xml = r#"<package><identifier v="Dots"/><content><function><identifier v="Incomplete"/>
+      <paramValue><dynamicValue><rootnode v="2"/><paramNodes>
+        <paramNode><uid v="1"/><function v="const_float1"/></paramNode>
+        <paramNode><uid v="2"/><function v="passthrough"/><connections>
+          <connection><identifier v="input"/><connRef v="1"/></connection>
+        </connections></paramNode>
+      </paramNodes></dynamicValue></paramValue></function></content></package>"#;
+    let loaded = read_sbs(xml.as_bytes(), "dots.sbs", &no_linked_files).unwrap();
+    let function = loaded.pkg.graphs.iter().find_map(|graph| graph.function.as_ref()).unwrap();
+    assert_eq!(function.output, None);
+    assert_eq!(function.nodes.len(), 2);
+    assert_eq!(function.nodes[1].inputs, [Some(function.nodes[0].id)]);
+}
+
 fn sample_package() -> Package {
     let mut pkg = Package::new("Primitives");
     let mut graph = Graph::new("Wall");
@@ -58,6 +74,20 @@ fn sniffs_sbs() {
     assert!(!is_sbs(b"PK\x03\x04zip"));
     assert!(!is_sbs(b"<?xml"));
     assert!(!is_sbs(b""));
+}
+
+#[test]
+fn saving_refreshes_the_writer_version_without_changing_the_schema_version() {
+    let old = br#"<package><identifier v="Older file"/><formatVersion v="1.1.0.202401"/><updaterVersion v="0.0.1"/><content/></package>"#;
+    let reopened = read_sbs(old, "older.sbs", &no_linked_files).unwrap();
+    for package in [Package::new("New file"), reopened.pkg] {
+        let text = String::from_utf8(write_sbs(&package).unwrap()).unwrap();
+        let document = roxmltree::Document::parse(&text).unwrap();
+        let root = document.root_element();
+        assert_eq!(super::xml::child_value(root, "updaterVersion"), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(super::xml::child_value(root, "formatVersion"), Some(super::constant::FORMAT_VERSION));
+        assert!(!text.contains("0.0.1"));
+    }
 }
 
 #[test]

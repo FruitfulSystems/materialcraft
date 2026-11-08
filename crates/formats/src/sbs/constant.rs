@@ -11,6 +11,7 @@ pub(super) const MAX_NODES: usize = 100_000;
 pub(super) const MAX_RESOURCES: usize = 4096;
 
 pub(super) const FORMAT_VERSION: &str = "1.1.0.202401";
+pub(super) const UPDATER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub const SBS_EXT: &str = "sbs";
 pub(super) const MAX_WARNINGS: usize = 600;

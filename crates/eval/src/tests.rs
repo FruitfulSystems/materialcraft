@@ -228,7 +228,16 @@ fn input_change_recooks_only_readers() {
     use materialcraft_core::{FunctionGraph, FunctionNode};
     let (mut p, noise, blur, out) = sample();
     let reader = p.graphs[0].add_node("pixel_processor", [0.0, 100.0]);
-    let get_a = FunctionNode { id: 1, type_code: 0, op: "get_float1".into(), inputs: vec![], value: Some(Value::Text("a".into())), pos: [0.0; 2] };
+    let get_a = FunctionNode {
+        instance: None,
+        source: None,
+        id: 1,
+        type_code: 0,
+        op: "get_float1".into(),
+        inputs: vec![],
+        value: Some(Value::Text("a".into())),
+        pos: [0.0; 2],
+    };
     p.graphs[0].node_mut(reader).unwrap().params.insert("function".into(), Value::Function(Box::new(FunctionGraph { nodes: vec![get_a], output: Some(1) })));
     let cache = &Mutex::new(Cache::default());
     let mut opts = Options::new(&no_res);

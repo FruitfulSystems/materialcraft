@@ -23,6 +23,9 @@ Agents drive MaterialCraft three ways, all dispatching the same engine commands:
    engine-command authority, including host file access.
    Set `MATERIALCRAFT_NO_PREFS=1` for scripted runs so the user's layout is left alone.
 
+Every SBS save writes MaterialCraft's workspace release version to `updaterVersion`, including
+when resaving a file from an older release. `formatVersion` identifies the SBS schema separately.
+
 ## Methods
 
 | Method | Where | What |
@@ -70,12 +73,16 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | Command | Params |
 |---|---|
 | `file.new` | `{template?, name?, size?}`; templates from `graph.templates` (`empty`, `pbr`, `bricks`, `stone_tiles`, `wood`, `rusty_metal`, `fabric`, `ground`) |
-| `graph.node.edit` | `{}` resolves the selected FX-Map, processor or local graph instance to `{kind, node, parameter?, graph?}`; use `ui.menu.invoke` to enter it in the graph panel |
+| `graph.node.edit` | `{}` resolves the selected FX-Map, processor or graph instance to `{kind, node, parameter?, graph?, document?, path?}`; use `ui.menu.invoke` to open its reference in the graph panel |
+| `graph.node.info` | `{id}` returns `{text}` describing a main-graph node without changing the document or node clipboard |
+| `graph.instance.add` | `{document, graph, function?: FunctionGraphTarget, at?, snapToGrid?}` adds a linked graph instance from an open package; requires a source output and rejects dependency cycles |
+| `package.activate` | `{document}` activates an open package while retaining each package's selection, views and undo history |
+| `package.close` / `package.closeAll` | `{document?, discard?}` / `{discard?}` closes one/all packages; modified packages require explicit discard |
 | `graph.pattern.set` | `{id, pattern}` replaces an FX-Map subgraph with cycle validation and undo |
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |
 | `graph.connect` / `graph.disconnect` | `{from, fromPort?, to, toPort?}` / `{to, toPort}` |
 | `graph.wire.insertDot` | `{to, toPort, at?}`: split the wire feeding `to.toPort` with a reroute Dot node at `at` (graph point, default midway), selected |
-| `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: swap (two) or reverse (more, in input order) where the wires come from / delete them, one undo step each |
+| `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: exchange the sources of exactly two wires / delete any listed wires, one undo step each |
 | `graph.node.param` | `{id?, param, value}`: numbers, `[x, y]`, `"#rrggbb"`, enum index, curve `[[x, y], …]`, gradient `[[pos, color], …]`, or a typed value `{"t": "function", "v": {...}}` |
 | `graph.node.base` | `{id?, sizeMode?, size?, format?, seed?, tiling?}` |
 | `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` (with `bind`, `id` may be omitted: the input is named after the parameter, `opacity`, `opacity_1`…) / `{id, value}` |
@@ -85,6 +92,36 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
+
+## Linked packages
+
+Opening an SBS file or creating a package retains the other open packages. `session.inspect`
+includes `documents` with each package's document id, path, active state, modified state and graphs.
+Explorer graph drags use that document id and graph name with `graph.instance.add`.
+
+Main graphs with outputs can be instanced in other main graphs. Cross-file sources must be saved
+first; the target stores a file reference and connector metadata, not a copy of the source nodes.
+Unsaved source edits update open instances and mark dependent packages modified, including
+transitive dependencies. Each package keeps its own undo history. Native reopening resolves saved
+file references even when the sources are not open in Explorer. Missing source files retain their
+cached connectors and wires and report a cook error.
+
+Function Graphs with designated outputs can be instanced in Function canvases, including Pixel
+Processor, Value Processor and parameter functions. Pass `function` for embedded canvases; the
+active standalone Function Graph is inferred when it is omitted. FX-Map canvases reject instances.
+The source's exposed inputs become typed connectors; missing connections warn when the instance
+feeds the designated output. An instance can itself be designated as the output. Function calls
+retain separate variable scopes and share the evaluator's execution budget.
+
+`graph.instance.reference {id, function?: FunctionGraphTarget}` resolves the source document, path
+and graph index without changing the package. The UI's Open reference action uses this command
+and retains the parent Function/processor canvas for return navigation. Double-clicking an instance
+has no additional action, and Ctrl+E does not open its source. Ctrl+E still opens the embedded canvas
+of a Pixel Processor, Value Processor or FX-Map node.
+
+Source-file watching and global Library SBS assets are not implemented yet.
+References currently identify graphs by name; renaming an external source graph requires recreating
+its instances. Save As creates a separate file and does not redirect references to the original.
 
 ## 3D material assignment
 
@@ -121,8 +158,35 @@ Both `graph.function.set` and `graph.function.edit` accept an optional `target`:
 `{"kind":"pattern","owner":12,"node":3,"parameter":"patternrotation"}`.
 
 `graph.function.edit` accepts `edit: {action: add|move|connect|value|output, ...}`.
+Explicit output selection rejects a type incompatible with the target parameter. Existing
+functions with mismatched output types remain editable and report the mismatch in
+`graph.functionWarnings`; this includes a Pixel Processor whose color mode has changed.
 For example, `{"edit":{"action":"add","operation":"mul","at":[256,0],"snap":true}}`
 creates and returns a node ID using the same defaults as library and context-menu insertion.
+Adding an operation leaves the function's output unchanged. Use
+`{"edit":{"action":"output","id":12}}` to designate its single output node; deleting that
+node clears the designation. These edits support undo for every Function target.
+Dot nodes cannot be designated as outputs, including through commands.
+`session.inspect` reports incomplete functions in `graph.functionWarnings`, with a `target` and
+`messages` for each affected function. It warns when no output is defined or no input path from
+the output reaches a value source such as a constant or variable input. One such path is enough;
+unused nodes and other unconnected pins do not warn. A constant output needs no input connection.
+Warnings do not prevent editing or saving, including inside Pixel Processor and Value Processor nodes.
+`graph.function.node.info {id, target?}` returns a `text` field with the node's operation, values,
+connections and output designation. The node context menu copies this text to the system clipboard;
+the document, undo history and node clipboard remain unchanged.
+`graph.wire.swap {function?, pattern?, wires: [{to, toPort}, {to, toPort}]}` exchanges the
+sources feeding any two selected links across all graph canvases. For functions, pass a
+`FunctionGraphTarget` in `function` and a zero-based input index string in `toPort`. For FX-Map,
+pass the owner node ID in `pattern`; `to` is the internal parent and `toPort` its child port
+(`output0`, `output1`, or `output` for a Dot). The command preserves other connections, rejects
+cycles atomically and supports undo. `graph.wire.delete` uses the same target and wire addresses.
+Click a link and Shift-click another, then use **Swap links** or **X**. The menu action appears
+only when exactly two links from different output pins are selected, independently of node selection.
+Two links from the same output pin are rejected without changing the document or undo history.
+Main-graph swaps also apply the normal input type checks to both replacement connections.
+Equal values from different output pins remain eligible. `ui.inspect` exposes
+embedded selections as `subgraph.selectedWires`.
 `graph.pattern.edit` accepts the FX-Map owner `id` and
 `edit: {action: add|move|connect|disconnect|root|value, ...}`.
 Use `command.list` for command descriptions and the serialized `FunctionEdit`/`PatternEdit` types
@@ -152,7 +216,8 @@ cycle, capacity, ID and position validation.
 
 
 A function has `nodes` and an optional `output` node id. Each node has `id`, native `op`,
-`inputs` (source ids or null for unwired ports), optional `value`, `type_code` and `pos`.
+`inputs` (source ids or null for unwired ports), optional `value`, `type_code` and `pos`. Function instances use `op: "instance"` and
+`instance: {package, graph, inputs, outputs}`; resolved call bodies are runtime-only.
 For example, `const_float1` supplies a scalar and `mul` multiplies its `a` and `b` inputs.
 The catalog in `crates/nodes/src/function/catalog.rs` defines all native operation and port ids.
 Processors and dynamic parameters use the same function representation. Graph validation and

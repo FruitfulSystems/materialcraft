@@ -3,10 +3,6 @@ use crate::{MaterialCraftApp, graph::node_card};
 use egui::{Color32, Pos2, Rect, vec2};
 use materialcraft_engine::core::FunctionNode;
 
-pub(super) fn arity(op: &str) -> usize {
-    materialcraft_engine::nodes::function::definition(op).map_or(0, |o| o.inputs.len())
-}
-
 pub(super) fn category_color(category: &str) -> Color32 {
     match category {
         "Constant" => Color32::from_rgb(0x5c, 0x62, 0x6e),
@@ -19,17 +15,16 @@ pub(super) fn category_color(category: &str) -> Color32 {
     }
 }
 
-pub(super) fn visible_inputs(node: &FunctionNode) -> usize {
-    let count = arity(&node.op);
-    crate::graph::input_visibility::count((0..count).map(|index| node.inputs.get(index).is_some_and(Option::is_some)), 1)
+fn input_count(node: &FunctionNode) -> usize {
+    materialcraft_engine::nodes::function::input_identifiers(node).count()
 }
 
 pub(super) fn node_rect(node: &FunctionNode, previews: bool) -> Rect {
-    node_card::bounds(node.pos, visible_inputs(node), 1, previews, node.op == "passthrough")
+    node_card::bounds(node.pos, input_count(node), 1, previews, node.op == "passthrough")
 }
 
 pub(super) fn in_port(node: &FunctionNode, bounds: Rect, index: usize) -> Pos2 {
-    node_card::port(bounds, index, visible_inputs(node), false, node.op == "passthrough")
+    node_card::port(bounds, index, input_count(node), false, node.op == "passthrough")
 }
 
 pub(super) fn out_port(node: &FunctionNode, bounds: Rect) -> Pos2 {

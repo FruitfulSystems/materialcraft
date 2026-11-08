@@ -31,6 +31,11 @@ pub(super) fn show(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui: &
     if let Some(command) = edit_menu::selection(ui, |command| super::actions::editor_enabled(app, editor, command).unwrap_or(false)) {
         super::actions::invoke_editor(app, editor, command);
     }
+    let target = Some(materialcraft_engine::SelectionTarget::Pattern(editor.node));
+    if crate::graph::wire_actions::swap_button(app, ui, &editor.selected_wires, target.as_ref()) {
+        crate::graph::wire_actions::edit(app, &mut editor.selected_wires, target, "graph.wire.swap");
+        ui.close();
+    }
     ui.separator();
     if ui.button(tr("Frame all")).clicked() {
         editor.framed = false;

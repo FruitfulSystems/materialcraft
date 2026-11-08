@@ -150,8 +150,10 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         "ui.preferences" => app.ui.windows.preferences = true,
         "ui.view.graph" => {}
         "ui.resetLayout" => app.ui.dock = crate::docking::Dock::default(),
-        // These replace the open package: ask first when it has unsaved changes.
-        "ui.closeAll" | "file.newPackage" => crate::unsaved::guard(app, crate::unsaved::Guarded::Menu { id: id.to_string() }),
+        "ui.closeAll" => crate::unsaved::guard(app, crate::unsaved::Guarded::Menu { id: id.to_string() }),
+        "file.newPackage" => {
+            app.run("file.newPackage", serde_json::json!({}));
+        }
         "ui.reloadResources" | "ui.clearCache" => {
             if let Ok(mut c) = app.session.cache.lock() {
                 c.clear();
@@ -278,14 +280,7 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         return;
     }
 
-    // Selected wires handle deletion and swapping before nodes
-    if crate::graph::editor_target::EditorTarget::resolve(app) == crate::graph::editor_target::EditorTarget::Material && !app.graph.selected_wires.is_empty() {
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) | i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
-            crate::graph::delete_selected_wires(app);
-        } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::X)) {
-            crate::graph::swap_selected_wires(app);
-        }
-    }
+    crate::graph::wire_actions::shortcuts(app, ctx);
 
     let mut table: Vec<(&'static str, KeyboardShortcut)> = CATALOG.iter().filter_map(|i| Some((i.id, parse_shortcut(i.shortcut?)?))).collect();
     for c in materialcraft_engine::command_specs() {
@@ -308,7 +303,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         }
     });
     for id in fire {
-        invoke(app, ctx, id);
+        if crate::graph::editor_actions::shortcut_enabled(app, id) {
+            invoke(app, ctx, id);
+        }
     }
 }
 

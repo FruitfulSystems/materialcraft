@@ -9,6 +9,11 @@ pub struct FunctionNode {
     #[serde(default)]
     pub type_code: u32,
     pub op: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<crate::GraphInstance>,
+    /// Resolved call body shared by cooks; SBS stores only the source reference
+    #[serde(skip)]
+    pub source: Option<Result<std::sync::Arc<crate::FunctionGraph>, String>>,
     // Slots follow the native operation's connector order
     #[serde(default)]
     pub inputs: Vec<Option<u32>>,

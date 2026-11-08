@@ -2,6 +2,16 @@ use super::{FunctionEditor, FunctionTarget};
 use crate::MaterialCraftApp;
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, command: &str) -> Option<bool> {
+    if command == "graph.node.edit" {
+        return Some(
+            editor.selection.len() == 1
+                && editor.current(app).zip(editor.selection.first()).and_then(|(graph, id)| graph.node(*id)).is_some_and(|node| node.instance.is_some()),
+        );
+    }
+    let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+    if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, target.as_ref()) {
+        return Some(enabled && editor.current(app).is_some());
+    }
     let standalone = matches!(editor.target, FunctionTarget::Graph);
     if standalone && app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
         return None;
@@ -35,8 +45,22 @@ pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut FunctionEdi
         return true;
     }
 
+    if command.starts_with("graph.wire.") || (command == "edit.delete" && !editor.selected_wires.is_empty()) {
+        let command = if command == "edit.delete" { "graph.wire.delete" } else { command };
+        let target = editor.command_target().map(materialcraft_engine::SelectionTarget::Function);
+        crate::graph::wire_actions::edit(app, &mut editor.selected_wires, target, command);
+        return true;
+    }
+
+    if command == "graph.node.edit" {
+        editor.open_reference = editor.selection.first().copied();
+        return true;
+    }
     let parameters = editor.selection_parameters(command);
     crate::graph::selection_commands::invoke(app, &mut editor.selection, command, parameters);
+    if matches!(command, "edit.selectAll" | "edit.selectNone" | "edit.paste" | "edit.pasteWithoutLinks" | "edit.duplicate" | "edit.duplicateWithoutLinks") {
+        editor.selected_wires.clear();
+    }
     true
 }
 
@@ -44,6 +68,17 @@ pub(crate) fn invoke(app: &mut MaterialCraftApp, command: &str) -> bool {
     let Some(mut editor) = app.function_editor.take() else { return false };
 
     let handled = invoke_editor(app, &mut editor, command);
-    app.function_editor = Some(editor);
+    finish_editor(app, editor);
     handled
+}
+
+pub(super) fn finish_editor(app: &mut MaterialCraftApp, mut editor: FunctionEditor) {
+    let reference =
+        editor.open_reference.take().and_then(|id| app.run("graph.instance.reference", serde_json::json!({"id": id, "function": editor.command_target()})));
+    app.function_editor = Some(editor);
+    if let Some(reference) = reference
+        && let Some(graph) = reference.get("graph").and_then(serde_json::Value::as_u64).and_then(|graph| usize::try_from(graph).ok())
+    {
+        crate::graph::subgraph_navigation::open_external_instance(app, &reference, graph);
+    }
 }

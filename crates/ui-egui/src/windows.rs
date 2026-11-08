@@ -591,7 +591,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
 /// Open a package from a path (recent list, command line)
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_path(app: &mut MaterialCraftApp, path: &str) {
-    crate::unsaved::guard(app, crate::unsaved::Guarded::OpenPath { path: path.to_string() });
+    open_path_now(app, path);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

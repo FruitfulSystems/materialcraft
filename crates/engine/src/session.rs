@@ -119,6 +119,10 @@ pub struct View2d {
 pub const WARNING_PREFIX: &str = "Warning: ";
 
 pub struct Session {
+    pub document_id: u64,
+    pub(crate) next_document_id: u64,
+    pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
+    pub(crate) linked_sources: std::collections::BTreeMap<String, Arc<Package>>,
     pub pkg: Package,
     /// Where the package was opened from or last saved to.
     pub path: Option<String>,
@@ -151,8 +155,8 @@ pub struct Session {
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    pub(crate) undo: Vec<Snapshot>,
+    pub(crate) redo: Vec<Snapshot>,
     /// Edits with the same key coalesce into one undo step (slider drags).
     merge_key: Option<String>,
     group: Option<(Snapshot, bool)>,
@@ -161,7 +165,11 @@ pub struct Session {
 
 impl Session {
     pub fn new(pkg: Package) -> Session {
-        Session {
+        let mut session = Session {
+            document_id: 0,
+            next_document_id: 1,
+            documents: std::collections::BTreeMap::new(),
+            linked_sources: pkg.dependencies.clone(),
             material_preview: crate::MaterialPreview::for_graph(&pkg, 0),
             cooked_graph: None,
             material_cooked: std::collections::BTreeMap::new(),
@@ -189,7 +197,9 @@ impl Session {
             merge_key: None,
             group: None,
             decoded: Arc::new(Mutex::new(HashMap::new())),
-        }
+        };
+        session.refresh_links();
+        session
     }
 
     /// The graph being edited.
@@ -261,6 +271,7 @@ impl Session {
             && edited
         {
             self.record_undo(snap);
+            self.refresh_links();
         }
     }
 
@@ -334,6 +345,10 @@ impl Session {
     pub fn changed(&mut self) {
         self.modified = true;
         self.dirty = true;
+        // Publish a grouped edit only after it succeeds, so rollback cannot dirty other packages
+        if self.group.is_none() {
+            self.refresh_links();
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -358,6 +373,7 @@ impl Session {
         self.restore(s);
         self.merge_key = None;
         self.dirty = true;
+        self.refresh_links();
         Some(label)
     }
 
@@ -370,6 +386,7 @@ impl Session {
         self.restore(s);
         self.merge_key = None;
         self.dirty = true;
+        self.refresh_links();
         Some(label)
     }
 
@@ -383,7 +400,13 @@ impl Session {
 
     /// A decoder for the package's bitmap resources (memoized, shareable with worker threads).
     pub fn resource_decoder(&self) -> impl Fn(&str) -> Option<Image> + Sync + Send + 'static {
-        let res: Vec<(String, ResourceBytes)> = self.pkg.resources.iter().map(|r| (r.name.clone(), r.bytes.clone())).collect();
+        let mut res: Vec<(String, ResourceBytes)> = self.pkg.resources.iter().map(|r| (r.name.clone(), r.bytes.clone())).collect();
+        res.extend(
+            self.pkg
+                .dependencies
+                .iter()
+                .flat_map(|(file, package)| package.resources.iter().map(move |resource| (format!("{file}\0{}", resource.name), resource.bytes.clone()))),
+        );
         let memo = self.decoded.clone();
         // Release decoded images of deleted or replaced resources
         memo.lock().unwrap_or_else(PoisonError::into_inner).retain(|(k, _), _| res.iter().any(|(_, b)| b.content_hash() == *k));

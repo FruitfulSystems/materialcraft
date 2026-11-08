@@ -65,7 +65,7 @@ fn function_delete_relinks_chains_and_clears_a_deleted_output() {
     let a = graph.add_constant(Value::Float(1.0));
     let b = graph.add("passthrough", &[a], None);
     let c = graph.add("passthrough", &[b], None);
-    let d = graph.add("passthrough", &[c], None);
+    let d = graph.add("neg", &[c], None);
     graph.output = Some(d);
     assert!(graph_edit::remove(&mut graph, &mut vec![b, c], true));
     assert_eq!(graph.node(d).unwrap().inputs, vec![Some(a)]);
@@ -97,6 +97,8 @@ fn connected_selection_performance() {
     let mut graph = FunctionGraph::default();
     for id in 1..=4096 {
         graph.nodes.push(materialcraft_engine::core::FunctionNode {
+            instance: None,
+            source: None,
             id,
             op: "passthrough".into(),
             type_code: 0,

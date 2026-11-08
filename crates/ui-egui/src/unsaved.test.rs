@@ -25,23 +25,39 @@ mod unsaved_tests {
 }
 
 #[test]
-fn a_second_package_cannot_replace_the_payload_waiting_for_confirmation() {
-    use crate::unsaved::{Choice, Guarded, Step};
+fn opening_packages_preserves_the_existing_unsaved_document() {
     let mut app = crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
     app.session.modified = true;
     let bytes = |name: &str| materialcraft_engine::formats::sbs::write_sbs(&materialcraft_engine::core::Package::new(name)).unwrap();
     crate::web_files::load(&mut app, "first.sbs", bytes("First"), false);
     crate::web_files::load(&mut app, "second.sbs", bytes("Second"), false);
-    assert_eq!(app.ui.windows.unsaved, Some(Guarded::LoadBytes { name: "first.sbs".into() }));
+    assert!(app.ui.windows.unsaved.is_none());
+    assert_eq!(app.session.open_packages().len(), 3);
     let result = crate::control::handle(&mut app, &egui::Context::default(), "ui.set", &serde_json::json!({"prefs": {"thumbnails": false}}));
     assert_eq!(result["ok"], true);
-    assert!(app.ui.windows.unsaved.is_some());
-    if let Step::Run(action) = crate::unsaved::answer(&mut app.ui.windows.unsaved, Choice::Discard) {
-        crate::unsaved::perform(&mut app, action);
-    } else {
-        panic!("missing held action");
-    }
-    assert_eq!(app.session.pkg.name, "First");
+    app.run("package.activate", serde_json::json!({"document": 0})).unwrap();
+    assert!(app.session.modified);
+    assert_ne!(app.session.pkg.name, "First");
+    assert_ne!(app.session.pkg.name, "Second");
+}
+
+#[test]
+fn quitting_asks_about_each_modified_package() {
+    use crate::unsaved::{Guarded, guard, perform};
+    let mut app = crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+    app.session.modified = true;
+    app.run("file.newPackage", serde_json::json!({"name": "Second"})).unwrap();
+    app.session.modified = true;
+    guard(&mut app, Guarded::Quit);
+    assert_eq!(app.session.document_id, 0);
+    app.ui.windows.unsaved = None;
+    perform(&mut app, Guarded::Quit);
+    assert!(!app.quit_confirmed);
+    assert_eq!(app.session.pkg.name, "Second");
+    assert_eq!(app.ui.windows.unsaved, Some(Guarded::Quit));
+    app.ui.windows.unsaved = None;
+    perform(&mut app, Guarded::Quit);
+    assert!(app.quit_confirmed);
 }
 
 #[test]

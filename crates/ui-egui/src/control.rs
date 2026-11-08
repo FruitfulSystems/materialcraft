@@ -296,9 +296,9 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 "inspectedNode": app.graph.inspected_node,
                 "subgraph": match target {
                     crate::graph::editor_target::EditorTarget::Function => app.function_editor.as_ref()
-                        .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                        .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "selectedWires": editor.selected_wires, "inspectedNode": editor.inspected_node})),
                     crate::graph::editor_target::EditorTarget::Pattern => app.pattern_editor.as_ref()
-                        .map(|editor| json!({"kind": "pattern", "graph": editor.graph, "node": editor.node.0, "selection": editor.selection, "inspectedNode": editor.inspected_node})),
+                        .map(|editor| json!({"kind": "pattern", "graph": editor.graph, "node": editor.node.0, "selection": editor.selection, "selectedWires": editor.selected_wires, "inspectedNode": editor.inspected_node})),
                     crate::graph::editor_target::EditorTarget::Material => None,
                 },
                 "annotationSelection": app.session.annotation_selection,

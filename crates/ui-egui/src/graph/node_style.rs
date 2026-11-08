@@ -14,7 +14,7 @@ pub fn header_color(def: &str) -> Color32 {
     match def {
         "output" => Color32::from_rgb(0x2c, 0x8f, 0x5e),
         "input_color" | "input_grayscale" | "input_value" => Color32::from_rgb(0x6d, 0x52, 0xb5),
-        "graph_instance" => Color32::from_rgb(0x1e, 0x8a, 0xa0),
+        "graph_instance" => Color32::from_rgb(0xa2, 0x3f, 0x4a),
         _ if cat.starts_with("Atomic") => Color32::from_rgb(0x5c, 0x62, 0x6e),
         _ if cat.contains("Noises") => Color32::from_rgb(0xa8, 0x3c, 0x34),
         _ if cat.contains("Patterns") => Color32::from_rgb(0xb3, 0x5a, 0x2c),
@@ -37,6 +37,9 @@ pub fn port_color(kind: PortKind) -> Color32 {
 pub fn node_label(n: &Node) -> String {
     if !n.label.is_empty() {
         return n.label.clone();
+    }
+    if let Some(instance) = &n.instance {
+        return instance.graph.clone();
     }
     let label = match n.def.as_str() {
         "graph_instance" => match n.params.get("graph") {
