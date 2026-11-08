@@ -1,7 +1,7 @@
 //! The 3D view: assigned material channels on a built-in scene, rendered by
-//! `materialcraft-render` (one ray per pixel at half resolution while the camera moves, 2×2
-//! supersampled when it rests). Left-drag orbits, Alt+drag or middle-drag pans, the wheel zooms,
-//! Shift+drag turns the light and a double-click resets the camera.
+//! `materialcraft-render` (2×2 rays per pixel at half resolution while the camera moves, 2×2
+//! supersampled at full resolution when it rests). Left-drag orbits, Alt+drag or middle-drag pans,
+//! the wheel zooms, Shift+drag turns the light and a double-click resets the camera.
 //!
 //! The full-quality frame waits until the view's size and the camera have rested for [`SETTLE`]
 //! (a panel, divider or window drag changes the size on every step), then renders on a worker
@@ -27,6 +27,28 @@ use crate::theme::Tokens;
 
 /// Seconds the view's size and the camera rest before the full-quality frame renders.
 pub const SETTLE: f64 = 0.15;
+
+/// What a moving frame is drawn with, smallest first: (fraction of the view's pixels, rays per
+/// pixel along each side). The first is the bare minimum a slow machine falls back to
+const MOVE_LEVELS: [(f32, u32); 4] = [(0.5, 1), (0.5, 2), (0.75, 2), (1.0, 2)];
+/// Milliseconds a moving frame may take before it is drawn smaller
+const MOVE_BUDGET_MS: f32 = 32.0;
+
+/// Rays per pixel times the pixel count, relative to the view: what a level costs
+fn move_cost(level: usize) -> f32 {
+    let (scale, rays) = MOVE_LEVELS[level.min(MOVE_LEVELS.len() - 1)];
+    (scale * rays as f32).powi(2)
+}
+
+/// The level (an index of [`MOVE_LEVELS`]) for the next moving frame, given the level of the last
+/// one and how long it took: lower when over budget, higher when the next level would fit
+fn next_move_level(level: usize, ms: f32) -> usize {
+    let level = level.min(MOVE_LEVELS.len() - 1);
+    if ms > MOVE_BUDGET_MS {
+        return level.saturating_sub(1);
+    }
+    if level + 1 < MOVE_LEVELS.len() && ms * move_cost(level + 1) / move_cost(level) < MOVE_BUDGET_MS * 0.9 { level + 1 } else { level }
+}
 
 /// Triangle budget of the displaced mesh; the browser builds it on the UI thread, so it gets a smaller one.
 const RELIEF_TRIANGLES: usize = if cfg!(target_arch = "wasm32") { 120_000 } else { materialcraft_render::VIEW_TRIANGLES };
@@ -56,6 +78,8 @@ pub struct View3dState {
     /// The last frame shown (RGBA8, for `view.screenshot`).
     pub shown: Option<(u32, u32, Vec<u8>)>,
     show_env: bool,
+    /// Index into [`MOVE_LEVELS`] of the last moving frame
+    move_level: usize,
 }
 
 impl View3dState {
@@ -363,8 +387,11 @@ fn render(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, moving: b
     }
     let ppp = ctx.pixels_per_point();
     if moving {
-        // One ray per pixel at half resolution, here: the camera follows the pointer.
-        if let Some(frame) = render_now(app, rect, ppp * 0.5, 1) {
+        // As large as keeps the camera following the pointer, with 2×2 rays so edges are not stair-stepped
+        let level = app.view3d.move_level.min(MOVE_LEVELS.len() - 1);
+        let (scale, rays) = MOVE_LEVELS[level];
+        if let Some(frame) = render_now(app, rect, ppp * scale, rays) {
+            app.view3d.move_level = next_move_level(level, frame.ms);
             show_frame(app, ctx, frame, key, false, size);
         }
         ctx.request_repaint_after(Duration::from_secs_f64(SETTLE));
@@ -645,5 +672,22 @@ mod tests {
         assert_eq!((r.width(), r.height(), r.center()), (300.0, 200.0, rect.center()));
         // A degenerate size never divides by zero.
         assert_eq!(frame_rect(rect, Some((300, 0))), rect);
+    }
+}
+
+#[cfg(test)]
+mod move_level_tests {
+    use super::*;
+
+    #[test]
+    fn the_moving_frame_grows_when_cheap_and_shrinks_when_slow() {
+        assert_eq!(next_move_level(0, 3.5), 1, "one ray at half size in 3.5 ms leaves room for 2×2 rays");
+        assert_eq!(next_move_level(1, 11.0), 2, "2×2 at half size in 11 ms leaves room for three quarters");
+        assert_eq!(next_move_level(2, 25.0), 2, "full size would take about 44 ms");
+        assert_eq!(next_move_level(2, 3.0), 3);
+        assert_eq!(next_move_level(3, 20.0), 3, "the largest level stays");
+        assert_eq!(next_move_level(3, 80.0), 2);
+        assert_eq!(next_move_level(0, 500.0), 0, "a very slow machine stays at one ray at half size");
+        assert_eq!(next_move_level(9, 5.0), 3, "a stale level is clamped");
     }
 }
