@@ -7,6 +7,12 @@ pub(crate) fn normalize(path: &str) -> String {
             return path.to_string_lossy().into_owned();
         }
         let absolute = if path.is_absolute() { path } else { std::env::current_dir().unwrap_or_default().join(path) };
+        // New files need a canonical parent so their identity stays the same after saving
+        if let (Some(parent), Some(filename)) = (absolute.parent(), absolute.file_name())
+            && let Ok(parent) = parent.canonicalize()
+        {
+            return parent.join(filename).to_string_lossy().into_owned();
+        }
         let mut normalized = PathBuf::new();
         for part in absolute.components() {
             match part {
