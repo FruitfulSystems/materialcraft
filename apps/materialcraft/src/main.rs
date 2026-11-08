@@ -135,15 +135,23 @@ mod tests {
 
     #[test]
     fn startup_opens_the_requested_package() {
-        let path = std::env::temp_dir().join(format!("mc-startup-{}.sbs", std::process::id()));
+        let directory = std::env::temp_dir();
+        let filename = format!("mc-startup-{}.sbs", std::process::id());
+        let path = directory.join(&filename);
         let original = materialcraft_engine::sample_session();
-        std::fs::write(&path, materialcraft_engine::file_cmds::save_bytes(&original).unwrap()).unwrap();
-        let s = initial_session(&Args { file: Some(path.to_string_lossy().into_owned()), control: None });
-        assert_eq!(s.pkg.graphs.len(), original.pkg.graphs.len());
-        assert_eq!(s.pkg.graphs[0].name, original.pkg.graphs[0].name);
-        assert_eq!(materialcraft_engine::file_cmds::save_bytes(&s).unwrap(), materialcraft_engine::file_cmds::save_bytes(&original).unwrap());
-        assert_eq!(s.path.as_deref(), path.to_str());
-        assert!(!s.modified);
+        let bytes = materialcraft_engine::file_cmds::save_bytes(&original).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let canonical = path.canonicalize().unwrap();
+
+        // Startup stores the canonical path, including expanded short names on Windows
+        for requested in [path.clone(), directory.join(".").join(&filename)] {
+            let session = initial_session(&Args { file: Some(requested.to_string_lossy().into_owned()), control: None });
+            assert_eq!(session.pkg.graphs.len(), original.pkg.graphs.len());
+            assert_eq!(session.pkg.graphs[0].name, original.pkg.graphs[0].name);
+            assert_eq!(materialcraft_engine::file_cmds::save_bytes(&session).unwrap(), bytes);
+            assert_eq!(session.path.as_deref(), canonical.to_str());
+            assert!(!session.modified);
+        }
         std::fs::remove_file(path).unwrap();
     }
 }
