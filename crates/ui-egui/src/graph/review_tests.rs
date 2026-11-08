@@ -13,11 +13,15 @@ use serde_json::json;
 fn embedded_function_commands_do_not_edit_the_parent_selection() {
     let mut app = MaterialCraftApp::headless(new_session(), UiState::default());
     let owner = NodeId(app.run("graph.node.add", json!({"def": "pixel_processor"})).unwrap()["id"].as_u64().unwrap());
+    let target = materialcraft_engine::FunctionGraphTarget::Parameter { node: owner, parameter: "function".into() };
+    app.run("graph.function.set", json!({"target": target, "function": FunctionGraph::constant(Value::Float(0.5))})).unwrap();
     app.function_editor = Some(FunctionEditor::new(app.session.graph, owner, FunctionTarget::Parameter("function".into())));
     app.session.selection = vec![owner];
     let context = egui::Context::default();
+
     menus::invoke(&mut app, &context, "edit.selectAll");
     menus::invoke(&mut app, &context, "edit.delete");
+
     let node = app.session.graph().unwrap().node(owner).expect("Delete must stay in the Function editor");
     let Value::Function(function) = &node.params["function"] else { panic!("missing function") };
     assert!(function.nodes.is_empty());
@@ -323,7 +327,7 @@ fn properties_and_library_follow_the_active_embedded_function() {
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("Search functions"))));
     menus::invoke(&mut frames.app, &frames.ctx, "ui.graph.parent");
     assert_eq!(EditorTarget::resolve(&frames.app), EditorTarget::Material);
-    assert!(crate::properties::title(&frames.app).starts_with("Pixel Processor"));
+    assert!(crate::properties::title(&frames.app).starts_with("Pixel processor"));
 }
 
 #[test]

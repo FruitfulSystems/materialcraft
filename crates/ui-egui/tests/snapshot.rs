@@ -1,5 +1,17 @@
+#[path = "snapshot/explorer.rs"]
+mod explorer;
+
 #[path = "snapshot/function_instances.rs"]
 mod function_instances;
+
+#[path = "snapshot/function_library.rs"]
+mod function_library;
+
+#[path = "snapshot/function_variables.rs"]
+mod function_variables;
+
+#[path = "snapshot/embedded_graphs.rs"]
+mod embedded_graphs;
 
 use std::time::Duration;
 
@@ -33,6 +45,22 @@ fn save(h: &mut Harness<'static, MaterialCraftApp>, dir: &std::path::Path, name:
     let img = h.render().expect("render");
     img.save(dir.join(format!("{name}.png"))).expect("save");
     println!("wrote {}", dir.join(format!("{name}.png")).display());
+}
+
+fn assert_node_menu_order(harness: &Harness<'static, MaterialCraftApp>, labels: &[&str]) {
+    let button = |label| By::new().role(egui::accesskit::Role::Button).label(label);
+    // Canvas cards share these labels; compare the buttons within the submenu's own parent
+    let menu = harness
+        .get_all(button(labels[0]))
+        .filter_map(|node| node.parent())
+        .find(|parent| {
+            let actual: Vec<_> = parent.query_all(By::new().role(egui::accesskit::Role::Button)).filter_map(|node| node.accesskit_node().label()).collect();
+            actual.len() == labels.len() && labels.iter().all(|label| actual.iter().any(|actual| actual == label))
+        })
+        .expect("the submenu must contain every available native operation exactly once");
+    let actual: Vec<_> = menu.query_all(By::new().role(egui::accesskit::Role::Button)).filter_map(|node| node.accesskit_node().label()).collect();
+
+    assert_eq!(actual, labels, "native node menu order must match the catalog");
 }
 
 fn double_click(harness: &mut Harness<'static, MaterialCraftApp>, position: egui::Pos2) {
@@ -94,12 +122,13 @@ fn explorer_drags_a_linked_graph_between_open_packages() {
     assert_eq!(harness.state().session.graph().unwrap().node(instance).unwrap().instance.as_ref().unwrap().graph, "Reusable tint");
     assert!(harness.state().session.cooked.nodes[&instance].error.is_none());
     save(&mut harness, &directory, "linked-instance-explorer-drop");
-    harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Reusable tint")).click();
-    settle(&mut harness, 3);
+    let position = harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Reusable tint")).rect().center();
+    double_click(&mut harness, position);
     assert_eq!(harness.state().session.document_id, 0);
     harness.state_mut().run("graph.select", json!({"ids": [color.0]})).unwrap();
     harness.state_mut().run("graph.node.param", json!({"id": color.0, "param": "color", "value": [0.9, 0.3, 0.1, 1.0]})).unwrap();
-    harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Target canvas")).click();
+    let position = harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Target canvas")).rect().center();
+    double_click(&mut harness, position);
     settle(&mut harness, 8);
     assert_eq!(harness.state().session.document_id, target_document);
     assert_eq!(harness.state().session.history(), ["Add graph instance"]);
@@ -162,7 +191,7 @@ fn function_output_highlight_follows_context_menu_and_undo() {
         assert_eq!(pixel == [255, 163, 26, 255], output, "{label}: {pixel:?}");
     };
 
-    harness.get(query("Multiply")).click_secondary();
+    harness.get(query("Multiplication")).click_secondary();
     settle(&mut harness, 3);
     let labels = [
         "Add Comment",
@@ -201,24 +230,24 @@ fn function_output_highlight_follows_context_menu_and_undo() {
     harness.get(query("Add")).click();
     settle(&mut harness, 3);
     assert_highlight(&mut harness, "Add", false);
-    assert_highlight(&mut harness, "Multiply", true);
+    assert_highlight(&mut harness, "Multiplication", true);
     save(&mut harness, &directory, "function-output-separate-selection");
 
     harness.state_mut().run("edit.undo", json!({})).unwrap();
     settle(&mut harness, 3);
     assert_eq!(harness.state().session.graph().unwrap().function.as_ref().unwrap().output, Some(add));
     assert_highlight(&mut harness, "Add", true);
-    assert_highlight(&mut harness, "Multiply", false);
+    assert_highlight(&mut harness, "Multiplication", false);
     harness.state_mut().run("edit.redo", json!({})).unwrap();
     settle(&mut harness, 3);
-    assert_highlight(&mut harness, "Multiply", true);
+    assert_highlight(&mut harness, "Multiplication", true);
 
     harness.get(query("Dot")).click_secondary();
     settle(&mut harness, 3);
     assert!(harness.query(query("Set as output node")).is_none());
     assert_eq!(harness.state().session.graph().unwrap().function.as_ref().unwrap().output, Some(multiply));
     assert_highlight(&mut harness, "Dot", false);
-    assert_highlight(&mut harness, "Multiply", true);
+    assert_highlight(&mut harness, "Multiplication", true);
     save(&mut harness, &directory, "function-dot-context-menu");
     let history = harness.state().session.history();
     harness.get(query("Copy info to clipboard")).click();
@@ -236,7 +265,7 @@ fn function_output_highlight_follows_context_menu_and_undo() {
 
     harness.state_mut().run("graph.select", json!({"ids": [add, multiply]})).unwrap();
     settle(&mut harness, 2);
-    harness.get(query("Multiply")).click_secondary();
+    harness.get(query("Multiplication")).click_secondary();
     settle(&mut harness, 3);
     assert!(harness.get(query("Set as output node")).accesskit_node().is_disabled());
     harness.get(query("Create graph from selection (2)"));
@@ -488,7 +517,7 @@ fn incomplete_functions_warn_in_standalone_and_processor_canvases() {
         std::fs::create_dir_all(&directory).unwrap();
         save(&mut harness, &directory, &format!("{definition}-warnings"));
 
-        harness.get(By::new().role(egui::accesskit::Role::Button).label("Multiply")).click_secondary();
+        harness.get(By::new().role(egui::accesskit::Role::Button).label("Multiplication")).click_secondary();
         settle(&mut harness, 2);
         harness.get(By::new().role(egui::accesskit::Role::Button).label_contains("Set as output node")).click();
         settle(&mut harness, 3);
@@ -609,7 +638,7 @@ fn explorer_disclosure_tracks_input_and_output_entries() {
 
 #[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
-fn explorer_export_opens_the_clicked_graph() {
+fn explorer_open_targets_the_clicked_graph() {
     let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
     app.run("graph.duplicate", json!({"graph": 0}));
     app.session.pkg.graphs[1].name = "Export target".into();
@@ -618,13 +647,13 @@ fn explorer_export_opens_the_clicked_graph() {
     settle(&mut h, 5);
     h.get_by_label("Export target").click_secondary();
     settle(&mut h, 3);
-    h.get_all(By::new().label("Export outputs...")).last().unwrap().click();
+    h.get(By::new().role(egui::accesskit::Role::Button).label("Open")).click();
     settle(&mut h, 3);
     assert_eq!(h.state().session.graph, 1);
-    assert!(h.state().ui.windows.export);
+    assert!(!h.state().ui.windows.export);
     if let Some(dir) = std::env::var_os("MC_SNAPSHOT_DIR").map(std::path::PathBuf::from) {
         std::fs::create_dir_all(&dir).unwrap();
-        save(&mut h, &dir, "explorer-export");
+        save(&mut h, &dir, "explorer-open");
     }
 }
 
@@ -816,12 +845,50 @@ fn graph_context_menu_has_flat_node_list() {
 
     harness.get_by_label("Add node").click();
     settle(&mut harness, 3);
+    let primitive_labels = [
+        "Bitmap",
+        "Blend",
+        "Blur",
+        "Channels shuffle",
+        "Curve",
+        "Directional blur",
+        "Directional warp",
+        "Distance",
+        "Emboss",
+        "FX-Map",
+        "Gradient (Dynamic)",
+        "Gradient map",
+        "Grayscale conversion",
+        "HSL",
+        "Levels",
+        "Normal",
+        "Pixel processor",
+        "SVG",
+        "Sharpen",
+        "Text",
+        "Transformation 2D",
+        "Uniform color",
+        "Value processor",
+        "Warp",
+        "Input color",
+        "Input grayscale",
+        "Input value",
+        "Output",
+    ];
+    if let Some(directory) = &directory {
+        save(&mut harness, directory, "unfiltered-add-node-menu");
+    }
+    assert_node_menu_order(&harness, &primitive_labels);
+    assert_eq!(
+        materialcraft_engine::nodes::catalog().iter().filter(|definition| definition.id != "dot").map(|definition| definition.label).collect::<Vec<_>>(),
+        primitive_labels
+    );
     harness.key_press(egui::Key::S);
     settle(&mut harness, 3);
     let button = |label| By::new().role(egui::accesskit::Role::Button).label(label);
     assert!(!harness.get_all(button("SVG")).last().unwrap().accesskit_node().is_disabled());
     assert!(!harness.get_all(button("Sharpen")).last().unwrap().accesskit_node().is_disabled());
-    assert!(harness.get_all(button("Grayscale Conversion")).last().unwrap().accesskit_node().is_disabled());
+    assert!(harness.get_all(button("Grayscale conversion")).last().unwrap().accesskit_node().is_disabled());
     if let Some(directory) = &directory {
         save(&mut harness, directory, "flat-add-node-menu");
     }
@@ -829,7 +896,7 @@ fn graph_context_menu_has_flat_node_list() {
     let before_clear = harness.state().session.pkg.clone();
     harness.key_press(egui::Key::Backspace);
     settle(&mut harness, 3);
-    assert!(!harness.get_all(button("Grayscale Conversion")).last().unwrap().accesskit_node().is_disabled());
+    assert!(!harness.get_all(button("Grayscale conversion")).last().unwrap().accesskit_node().is_disabled());
     assert_eq!(harness.state().session.pkg, before_clear);
 
     for _ in 0..2 {
@@ -939,6 +1006,7 @@ fn graph_context_menu_has_flat_node_list() {
     settle(&mut harness, 3);
     harness.get_by_label("Add node").click();
     settle(&mut harness, 3);
+    assert_node_menu_order(&harness, &["Quadrant", "Switch", "Iterate"]);
     harness.key_press(egui::Key::S);
     settle(&mut harness, 3);
     if let Some(directory) = &directory {
@@ -1042,10 +1110,18 @@ fn annotations_and_function_graph_creation() {
     save(&mut harness, &directory, "function-context-menu");
     harness.get_by_label("Add node").click();
     settle(&mut harness, 3);
-    for label in ["Float", "Float2", "Multiply", "While loop"] {
+    for label in ["Float", "Float2", "Multiplication", "Division", "Ceil", "Vector Float2", "Swizzle Integer1", "To Float", "If...Else", "While loop"] {
         assert!(harness.query_all(By::new().label(label)).next().is_some(), "missing {label}");
     }
+    let labels: Vec<_> = materialcraft_engine::nodes::function::FUNCTIONS
+        .iter()
+        .filter(|definition| definition.id != "passthrough")
+        .map(|definition| definition.label)
+        .collect();
+    assert_eq!(labels.len(), 84);
+    assert!(harness.query(By::new().role(egui::accesskit::Role::Button).label("Dot")).is_none());
     save(&mut harness, &directory, "flat-function-node-menu");
+    assert_node_menu_order(&harness, &labels);
 }
 
 #[test]
@@ -1070,7 +1146,7 @@ fn function_cards_and_dot_share_the_regular_graph_style() {
     let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
     std::fs::create_dir_all(&directory).unwrap();
     save(&mut harness, &directory, "function-cards-and-dot");
-    harness.get_all(By::new().role(egui::accesskit::Role::Button).label("Multiply")).last().unwrap().click();
+    harness.get_all(By::new().role(egui::accesskit::Role::Button).label("Multiplication")).last().unwrap().click();
     settle(&mut harness, 3);
     let blank = harness.state().graph.view.left_bottom() + vec2(12.0, -12.0);
     click_canvas(&mut harness, blank);
@@ -1111,7 +1187,7 @@ fn click_canvas(harness: &mut Harness<'static, MaterialCraftApp>, position: egui
 
 #[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
-fn named_outputs_open_properties_and_preview_only_on_double_click() {
+fn named_outputs_select_without_loading_and_open_on_double_click() {
     let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
     let source = app.run("graph.node.add", json!({"def": "uniform", "at": [0, 0]})).unwrap()["id"].as_u64().unwrap();
     let output = app
@@ -1125,6 +1201,7 @@ fn named_outputs_open_properties_and_preview_only_on_double_click() {
         .as_u64()
         .unwrap();
     app.run("view.2d", json!({"node": source})).unwrap();
+    app.run("graph.select", json!({"ids": [source]})).unwrap();
     app.session.cook();
     let material = app.session.material_maps().into_iter().map(|(name, image)| (name, image.data.clone())).collect::<Vec<_>>();
     let view3d = serde_json::to_value(&app.session.view3d).unwrap();
@@ -1133,14 +1210,13 @@ fn named_outputs_open_properties_and_preview_only_on_double_click() {
     let query = By::new().role(egui::accesskit::Role::TreeItem).label("Base Color");
     let position = harness.get(query.clone()).rect().center();
     click_canvas(&mut harness, position);
-    assert_eq!(harness.state().session.selection, vec![materialcraft_engine::core::NodeId(output)]);
+    assert_eq!(harness.state().session.selection, vec![materialcraft_engine::core::NodeId(source)]);
     assert_eq!(harness.state().session.view2d.node, Some(materialcraft_engine::core::NodeId(source)));
-    assert!(harness.query_all(By::new().label("Identifier")).next().is_some());
     assert!(!harness.state().graph.ports.iter().any(|port| port.node.0 == output && port.output));
 
     let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
     std::fs::create_dir_all(&directory).unwrap();
-    save(&mut harness, &directory, "named-output-properties");
+    save(&mut harness, &directory, "named-output-selection");
     let start = harness.ctx.input(|input| input.time) + 1.0;
     for (index, pressed) in [true, false, true, false].into_iter().enumerate() {
         harness.input_mut().time = Some(start + index as f64 * 0.05);
@@ -1149,6 +1225,8 @@ fn named_outputs_open_properties_and_preview_only_on_double_click() {
     }
     settle(&mut harness, 3);
     assert_eq!(harness.state().session.view2d.node, Some(materialcraft_engine::core::NodeId(output)));
+    assert_eq!(harness.state().session.selection, vec![materialcraft_engine::core::NodeId(output)]);
+    assert!(harness.query_all(By::new().label("Identifier")).next().is_some());
     assert_eq!(serde_json::to_value(&harness.state().session.view3d).unwrap(), view3d);
     let current = harness.state().session.material_maps().into_iter().map(|(name, image)| (name, image.data.clone())).collect::<Vec<_>>();
     assert_eq!(current, material);
@@ -1296,17 +1374,22 @@ fn embedded_function_toolbar_and_panels_share_the_active_target() {
         save(&mut harness, &directory, &format!("{definition}-inline-function"));
         harness.state_mut().ui.library_search = "Sample".into();
         settle(&mut harness, 2);
-        for label in ["Sample grayscale", "Sample color"] {
+        for label in ["Sample gray", "Sample color"] {
             assert_eq!(harness.query_all(By::new().label(label)).next().is_some(), definition == "pixel_processor");
         }
         harness.get(By::new().role(egui::accesskit::Role::Canvas).label("Function Graph")).click_secondary();
         settle(&mut harness, 2);
         harness.get_by_label("Add node").click();
         settle(&mut harness, 2);
-        for label in ["Sample grayscale", "Sample color"] {
+        for label in ["Sample gray", "Sample color"] {
             assert_eq!(harness.query_all(query(label)).next().is_some(), definition == "pixel_processor");
         }
+        let labels: Vec<_> =
+            target.available_operations(&harness.state().session).filter(|operation| operation.id != "passthrough").map(|operation| operation.label).collect();
+        assert_eq!(labels.len(), if definition == "pixel_processor" { 84 } else { 82 });
+        assert!(harness.query(query("Dot")).is_none());
         save(&mut harness, &directory, &format!("{definition}-node-menu"));
+        assert_node_menu_order(&harness, &labels);
         harness.key_press(egui::Key::Escape);
         harness.key_press(egui::Key::Escape);
         settle(&mut harness, 2);
@@ -1407,8 +1490,8 @@ fn explorer_inputs_and_graph_drop_share_labels_and_material_assignment() {
     for (id, label) in inputs {
         let row = harness.get(By::new().role(egui::accesskit::Role::TreeItem).label(label));
         assert!(row.rect().left() > graph_row.left());
-        row.click();
-        settle(&mut harness, 3);
+        let position = row.rect().center();
+        double_click(&mut harness, position);
         assert_eq!(harness.state().session.selection, vec![id]);
         assert_eq!(harness.get(By::new().role(egui::accesskit::Role::TextInput).label("Node label")).value().as_deref(), Some(label));
         assert!(harness.query_all(By::new().label("Identifier")).next().is_some());
@@ -1426,8 +1509,8 @@ fn explorer_inputs_and_graph_drop_share_labels_and_material_assignment() {
         harness.state_mut().run("edit.undo", json!({})).unwrap();
         assert_eq!(harness.state().session.graph().unwrap().node(id).unwrap(), &before);
     }
-    harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Base Color")).click();
-    settle(&mut harness, 3);
+    let position = harness.get(By::new().role(egui::accesskit::Role::TreeItem).label("Base Color")).rect().center();
+    double_click(&mut harness, position);
     harness.get(By::new().role(egui::accesskit::Role::ComboBox).label("Component Usage")).click();
     settle(&mut harness, 3);
     harness.get_by_label("Glossiness").scroll_to_me();

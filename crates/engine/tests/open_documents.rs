@@ -8,15 +8,19 @@ fn opening_another_package_preserves_edits_selection_and_undo() {
     let added = execute(&mut session, "graph.node.add", &json!({"def": "uniform"})).unwrap();
     let history = session.history();
     let selection = session.selection.clone();
-    let original = session.pkg.clone();
+    let original = file_cmds::save_bytes(&session).unwrap();
     let bytes = formats::sbs::write_sbs(&Package::new("Second")).unwrap();
+
     file_cmds::open_bytes(&mut session, &bytes, Some("second.sbs".into())).unwrap();
+
     assert_eq!(inspect::session(&session, None)["documents"].as_array().unwrap().len(), 2);
     execute(&mut session, "package.activate", &json!({"document": 0})).unwrap();
-    assert_eq!(session.pkg, original);
+    // Other open packages extend the runtime dependency registry without editing this document
+    assert_eq!(file_cmds::save_bytes(&session).unwrap(), original);
     assert_eq!(session.selection, selection);
     assert_eq!(session.history(), history);
     assert!(session.modified);
+
     execute(&mut session, "edit.undo", &json!({})).unwrap();
     assert!(session.graph().unwrap().nodes.iter().all(|node| node.id.0 != added["id"].as_u64().unwrap()));
 }

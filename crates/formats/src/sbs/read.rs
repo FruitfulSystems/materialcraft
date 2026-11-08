@@ -2,12 +2,12 @@ use super::{
     constant::{MAX_GRAPHS, MAX_SBS_BYTES, MAX_XML_NODES, SNIFF_BYTES},
     placeholder::report_placeholders,
     sbs_read::SbsRead,
-    sbs_reader::{SbsReader, unique_name},
+    sbs_reader::SbsReader,
     warnings::Warnings,
     xml::{child_element, child_value, children_named},
 };
 use crate::{FormatError, Result};
-use materialcraft_core::{Graph, Package};
+use materialcraft_core::Package;
 use roxmltree::Node as XmlNode;
 use std::collections::HashMap;
 
@@ -61,21 +61,18 @@ pub fn read_sbs(bytes: &[u8], name: &str, linked: &dyn Fn(&str) -> Option<Vec<u8
     let mut names: Vec<String> = Vec::new();
     for (path, graph) in graph_elements.iter().take(MAX_GRAPHS) {
         let identifier = child_value(*graph, "identifier").unwrap_or("").trim();
-        let unique = unique_name(&names, if identifier.is_empty() { "Graph" } else { identifier });
-        reader.graph_names.insert(path.clone(), unique.clone());
-        names.push(unique);
+        let name = if identifier.is_empty() { "Graph" } else { identifier }.to_string();
+        reader.graph_names.insert(path.clone(), path.clone());
+        names.push(name);
     }
     if graph_elements.len() > MAX_GRAPHS {
         reader.warnings.add(format!("only the first {MAX_GRAPHS} graphs were read"));
     }
 
-    for ((_, graph), name) in graph_elements.iter().zip(names) {
-        let graph = reader.read_graph(*graph, name);
+    for ((path, graph), name) in graph_elements.iter().zip(names) {
+        let mut graph = reader.read_graph(*graph, name);
+        graph.folder = path.rsplit_once('/').map_or("", |(folder, _)| folder).into();
         pkg.graphs.push(graph);
-    }
-    if pkg.graphs.is_empty() {
-        reader.warnings.add("the package has no graphs MaterialCraft can open; an empty graph was added");
-        pkg.graphs.push(Graph::new("Graph"));
     }
 
     report_placeholders(&pkg, reader.warnings);

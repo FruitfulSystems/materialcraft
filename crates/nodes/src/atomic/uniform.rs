@@ -3,7 +3,7 @@ use crate::{CookContext, CookResult, NodeDefinition, node};
 use materialcraft_image::{Image, Kind, luminance};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("uniform", "Uniform Color", ATOMIC)
+    node("uniform", "Uniform color", ATOMIC)
         .desc("A single color or gray value.")
         .atomic()
         .generator()

@@ -1,4 +1,5 @@
 pub use crate::Exported;
+pub use crate::linked_resource::reader as linked_files;
 
 use serde_json::{Value as J, json};
 
@@ -16,7 +17,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Graph...",
             ["File", "New"],
             Some("Ctrl+N"),
-            "{name?, kind? (material|function), template? (see graph.templates), size? (px, power of two)} adds a new graph to the package and opens it",
+            "{name?, folder?, kind? (material|function), template? (see graph.templates), size? (px, power of two)} adds a new graph to the package and opens it",
             always,
             new_graph
         ),
@@ -71,16 +72,20 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
     let size = u64p(parameters, "size").unwrap_or(1024).clamp(16, 8192);
     let log2 = 63 - size.leading_zeros();
     let base = strp(parameters, "name").map(str::to_string).unwrap_or_else(|| label.replace(' ', "_"));
+    let folder = strp(parameters, "folder").unwrap_or("");
+    crate::folder_path::require(&session.pkg, folder)?;
+    let base = crate::folder_path::name(&base)?;
 
     session.edit("New graph", |session| {
-        let name = session.pkg.unique_graph_name(&base);
-        let graph = if kind == materialcraft_core::GraphKind::Function {
+        let name = crate::folder_path::unique(&session.pkg, folder, base);
+        let mut graph = if kind == materialcraft_core::GraphKind::Function {
             let mut graph = materialcraft_core::Graph::new(&name);
             graph.function = Some(materialcraft_core::FunctionGraph::default());
             graph
         } else {
             template(template_id, &name, log2)?
         };
+        graph.folder = folder.into();
         session.pkg.graphs.push(graph);
         session.graph = session.pkg.graphs.len() - 1;
         session.open_material_preview();
@@ -149,10 +154,8 @@ pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<Strin
         crate::linked_files::normalize_references(&mut read.pkg, path);
     }
     read.pkg.dependencies = session.pkg.dependencies.clone();
-    #[cfg(not(target_arch = "wasm32"))]
     let link_warnings = crate::linked_files::load(&mut read.pkg);
     let path = if read.warnings.is_empty() { name } else { None };
-    #[cfg(not(target_arch = "wasm32"))]
     read.warnings.extend(link_warnings);
     session.open_package(read.pkg, path)?;
     for warning in &read.warnings {
@@ -166,9 +169,15 @@ pub fn save_bytes(session: &Session) -> Result<Vec<u8>> {
     save_bytes_at(session, session.path.as_deref())
 }
 
-fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
+pub(crate) fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
     let mut package = session.pkg.clone();
     if let Some(path) = path {
+        for resource in &mut package.resources {
+            if !resource.source.is_empty() {
+                resource.source = crate::document_path::relative(path, &resource.source);
+            }
+        }
+
         for instance in package.graphs.iter_mut().flat_map(|graph| graph.instances_mut()) {
             if !instance.package.is_empty() {
                 instance.package = crate::document_path::relative(path, &instance.package);
@@ -178,36 +187,14 @@ fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
     Ok(materialcraft_formats::sbs::write_sbs(&package)?)
 }
 
-/// Largest file an SBS package may link to
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_LINKED_FILE_BYTES: u64 = 256 << 20;
-
-/// Reads files an SBS package at `path` links to: plain relative paths that resolve inside its folder
-#[cfg(not(target_arch = "wasm32"))]
-pub fn linked_files(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
-    let parent = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
-    let folder = std::fs::canonicalize(parent).ok();
-
-    move |relative: &str| {
-        let relative = relative.trim().replace('\\', "/");
-        let plain = !relative.is_empty() && !relative.contains(':') && !relative.starts_with('/');
-        if !plain || std::path::Path::new(&relative).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
-            return None;
-        }
-
-        let folder = folder.as_ref()?;
-        let file = std::fs::canonicalize(folder.join(&relative)).ok()?;
-        let metadata = std::fs::metadata(&file).ok()?;
-        if !file.starts_with(folder) || !metadata.is_file() || metadata.len() > MAX_LINKED_FILE_BYTES {
-            return None;
-        }
-        std::fs::read(file).ok()
-    }
-}
-
 /// Open the package file at `path` (native), with the bitmaps an SBS package keeps next to it
 #[cfg(not(target_arch = "wasm32"))]
 pub fn open_file(s: &mut Session, path: &str) -> Result<()> {
+    if path.starts_with("sbs://") {
+        let bytes = materialcraft_formats::sbs::library::read(path).map_err(|error| bad("file.open", error))?;
+        return open_bytes_linked(s, &bytes, Some(path.into()), &linked_files(path));
+    }
+
     let bytes = std::fs::read(path).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
     open_bytes_linked(s, &bytes, Some(path.to_string()), &linked_files(path))
 }
@@ -221,8 +208,14 @@ fn open(s: &mut Session, p: &J) -> Result<J> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn open(_: &mut Session, _: &J) -> Result<J> {
-    Err(bad("file.open", "the browser opens files with the file picker"))
+fn open(session: &mut Session, parameters: &J) -> Result<J> {
+    let path = strp(parameters, "path")
+        .filter(|path| path.starts_with("sbs://"))
+        .ok_or_else(|| bad("file.open", "the browser opens local files with the file picker"))?;
+    let bytes = materialcraft_formats::sbs::library::read(path).map_err(|error| bad("file.open", error))?;
+    open_bytes_linked(session, &bytes, Some(path.into()), &linked_files(path))?;
+
+    Ok(json!({"name": session.pkg.name, "graphs": session.pkg.graphs.len(), "path": session.path, "warnings": session.load_warnings}))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -233,6 +226,10 @@ fn save(s: &mut Session, p: &J) -> Result<J> {
     };
 
     let path = crate::document_path::normalize(&path);
+    if path.contains("://") {
+        return Err(bad("file.save", "library aliases cannot be overwritten; save to a local .sbs path"));
+    }
+
     if s.open_packages().into_iter().any(|entry| entry.0 != s.document_id && entry.2 == Some(path.as_str())) {
         return Err(bad("file.save", "another open package already uses this file"));
     }
@@ -263,7 +260,9 @@ pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: O
     }
     let g = pkg.graph(gi)?;
     let dec = s.resource_decoder();
-    let cooked = materialcraft_eval::cook(&pkg, gi, &materialcraft_eval::Options::new(&dec), &s.cache);
+    let mut options = materialcraft_eval::Options::new(&dec);
+    options.environment = s.environment;
+    let cooked = materialcraft_eval::cook(&pkg, gi, &options, &s.cache);
     let mut out = Vec::new();
     let mut names = std::collections::HashSet::new();
     for (id, usage, ident, img) in materialcraft_eval::outputs(g, &cooked) {

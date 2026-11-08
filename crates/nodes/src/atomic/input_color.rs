@@ -4,7 +4,7 @@ use materialcraft_core::ComponentUsage;
 use materialcraft_image::{Image, Kind};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("input_color", "Input Color", GRAPH_ITEMS)
+    node("input_color", "Input color", GRAPH_ITEMS)
         .desc("A color image input of the graph.")
         .atomic()
         .generator()

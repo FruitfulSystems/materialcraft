@@ -17,7 +17,7 @@ pub(crate) fn evaluate_value(
     };
 
     let program = compile(graph, seed)?;
-    let context = EvaluationContext { position: [0.5; 2], size: size.map(|side| side as f32), images, tile, variables };
+    let context = EvaluationContext { scope: Default::default(), position: [0.5; 2], size: size.map(|side| side as f32), images, tile, variables };
 
     program.evaluate(&context, &mut EvaluationState::default())
 }

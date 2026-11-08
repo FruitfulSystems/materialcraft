@@ -26,7 +26,7 @@ pub fn node_types(graph: &FunctionGraph) -> Result<BTreeMap<u32, u32>, String> {
             if node.instance.is_some() && node.op != "instance" {
                 return Err("graph references require the instance operation".into());
             }
-            if node.instance.is_none() && catalog::definition(&node.op).is_none() {
+            if node.instance.is_none() && node.missing.is_none() && catalog::definition(&node.op).is_none() {
                 return Err(format!("unknown function `{}`", node.op));
             }
             if node.inputs.len() > super::input_identifiers(node).count() {

@@ -62,6 +62,6 @@ fn standalone_function_creation_wiring_frame_movement_and_native_round_trip() {
     let function = graph.function.as_ref().unwrap();
     assert_eq!(function.nodes[0].pos, [32.0, 64.0]);
     let variables = Default::default();
-    let context = EvaluationContext { position: [0.0; 2], size: [1.0; 2], images: &[], tile: true, variables: &variables };
+    let context = EvaluationContext { scope: Default::default(), position: [0.0; 2], size: [1.0; 2], images: &[], tile: true, variables: &variables };
     assert_eq!(compile(function, 0).unwrap().evaluate(&context, &mut EvaluationState::default()).unwrap(), Value::Float(6.0));
 }

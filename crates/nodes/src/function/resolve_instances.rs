@@ -18,8 +18,9 @@ fn resolve(function: &mut FunctionGraph, local: &Package, sources: &BTreeMap<Str
         let resolved = (|| {
             let source = source.ok_or_else(|| format!("Missing source file for `{}`", instance.graph))?;
             let (_, graph) = source.graph_by_name(&instance.graph).ok_or_else(|| format!("Missing Function Graph `{}`", instance.graph))?;
+            instance.label = graph.display_name().into();
             let body = graph.function.as_ref().ok_or("Only Function Graphs can be used in a function")?;
-            let key = (std::ptr::from_ref(source) as usize, graph.name.clone());
+            let key = (std::ptr::from_ref(source) as usize, graph.sbs_path());
             if stack.contains(&key) {
                 return Err("Function Graph dependency cycle".into());
             }
@@ -32,15 +33,22 @@ fn resolve(function: &mut FunctionGraph, local: &Package, sources: &BTreeMap<Str
                 return Err("Function inputs must have unique identifiers and at most 4096 entries".into());
             }
             let previous: BTreeMap<_, _> = instance.inputs.iter().zip(&node.inputs).map(|(port, value)| (port.identifier.clone(), *value)).collect();
+            instance.defaults = graph.exposed.iter().map(|parameter| (parameter.id.clone(), parameter.default.clone())).collect();
             instance.inputs = graph
                 .exposed
                 .iter()
                 .map(|parameter| GraphPort { identifier: parameter.id.clone(), type_code: super::value_type::type_code(&parameter.default) })
                 .collect();
+            let declared_sources: std::collections::BTreeSet<_> =
+                instance.inputs.iter().filter_map(|port| previous.get(&port.identifier).copied().flatten()).collect();
+            let mut conflicting_input = false;
+
             // Keep connected removed inputs visible so saving never discards a wire
             for (name, value) in &previous {
                 if value.is_some() && !instance.inputs.iter().any(|port| port.identifier == *name) {
                     instance.inputs.push(GraphPort { identifier: name.clone(), type_code: 0 });
+                    // A legacy connector may repeat a declared wire without supplying another argument
+                    conflicting_input |= value.is_some_and(|source| !declared_sources.contains(&source));
                 }
             }
             node.inputs = instance.inputs.iter().map(|port| previous.get(&port.identifier).copied().flatten()).collect();
@@ -53,7 +61,7 @@ fn resolve(function: &mut FunctionGraph, local: &Package, sources: &BTreeMap<Str
             let type_code = types.get(&output.id).copied().unwrap_or(256);
             instance.outputs = vec![GraphPort { identifier: "output".into(), type_code }];
             node.type_code = type_code;
-            if instance.inputs.iter().any(|port| port.type_code == 0) {
+            if conflicting_input {
                 return Err(format!("{}: a connected input no longer exists in the source", instance.graph));
             }
             Ok(Arc::new(body))

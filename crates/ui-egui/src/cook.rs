@@ -124,6 +124,7 @@ fn start(app: &mut MaterialCraftApp, now: f64) {
     s.dirty = false;
     let pkg = s.pkg.clone();
     let (gi, max) = (s.graph, s.preview_size);
+    let environment = s.environment;
     let materials = s.material_preview.graphs();
     let cache = s.cache.clone();
     let epoch = s.cook_epoch;
@@ -134,6 +135,7 @@ fn start(app: &mut MaterialCraftApp, now: f64) {
     use materialcraft_engine::eval::Options;
     let spawned = std::thread::Builder::new().name("materialcraft-cook".into()).spawn(move || {
         let mut opts = Options::new(&dec);
+        opts.environment = environment;
         opts.max_size = max;
         opts.cancel = Some(&thread_flag);
         let cooked = guard("cook", || Ok(PreviewCook::run(&pkg, gi, &materials, &opts, &cache)));

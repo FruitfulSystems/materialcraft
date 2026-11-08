@@ -4,7 +4,7 @@ use crate::{theme::Tokens, widgets};
 
 pub(super) fn show(ui: &mut Ui, name: &str, icon: &str, selected: bool, warning: Option<&str>) -> Response {
     let theme = Tokens::get(ui.ctx());
-    let (bounds, response) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+    let (bounds, response) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click_and_drag());
     widgets::name(&response, egui::Role::TreeItem, name);
     if selected {
         ui.painter().rect_filled(bounds, 4.0, theme.row_selected);

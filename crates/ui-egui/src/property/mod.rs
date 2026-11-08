@@ -1,6 +1,8 @@
 mod curve;
 mod gradient;
 mod graph;
+mod graph_attributes;
+mod graph_property_draft;
 mod input;
 mod node;
 mod parameter;
@@ -8,6 +10,7 @@ mod section;
 
 pub use curve::curve_editor;
 pub use gradient::gradient_editor;
+pub(crate) use graph_property_draft::GraphPropertyDraft;
 pub(crate) use section::section;
 
 use crate::{MaterialCraftApp, graph::editor_target::EditorTarget, i18n::tr};
@@ -15,10 +18,19 @@ use egui::Ui;
 
 /// The panel title: "<node> - Properties" or "<graph> - Properties"
 pub fn title(app: &MaterialCraftApp) -> String {
+    if let Some(target) = app.inspected_graph
+        && let Ok(graph) = target.get(&app.session)
+    {
+        return format!("{} - {}", graph.name, tr("Properties"));
+    }
+
     match EditorTarget::resolve(app) {
         EditorTarget::Pattern => return crate::pattern::properties::title(app),
         EditorTarget::Function if !EditorTarget::annotation_active(app) => {
-            return crate::function::properties::title(app).unwrap_or_else(|| format!("{} - {}", tr("Function Graph"), tr("Properties")));
+            return crate::function::properties::title(app).unwrap_or_else(|| {
+                let name = app.session.graph().ok().filter(|graph| graph.function.is_some()).map_or(tr("Function Graph"), |graph| graph.name.as_str());
+                format!("{name} - {}", tr("Properties"))
+            });
         }
         _ => {}
     }
@@ -40,6 +52,15 @@ pub fn title(app: &MaterialCraftApp) -> String {
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        if let Some(target) = app.inspected_graph {
+            if target.get(&app.session).is_ok() {
+                graph::show(app, ui, target);
+                return;
+            }
+
+            app.inspected_graph = None;
+        }
+
         match EditorTarget::resolve(app) {
             EditorTarget::Pattern => {
                 crate::pattern::properties::show(app, ui);
@@ -47,7 +68,11 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
             EditorTarget::Function if !EditorTarget::annotation_active(app) => {
                 if !crate::function::properties::show(app, ui) {
-                    ui.label(tr("Select a node"));
+                    if app.function_editor.as_ref().is_some_and(|editor| matches!(editor.target, crate::function::FunctionTarget::Graph)) {
+                        graph::show(app, ui, materialcraft_engine::GraphTarget::active(&app.session));
+                    } else {
+                        ui.label(tr("Select a node"));
+                    }
                 }
                 return;
             }
@@ -63,7 +88,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             .and_then(|id| app.session.graph().ok()?.node(id).ok().cloned());
         ui.push_id((app.session.graph, node.as_ref().map(|n| n.id)), |ui| match node {
             Some(n) => node::show(app, ui, &n),
-            None => graph::show(app, ui),
+            None => graph::show(app, ui, materialcraft_engine::GraphTarget::active(&app.session)),
         });
     });
 }

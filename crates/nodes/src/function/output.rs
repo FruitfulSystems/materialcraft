@@ -5,5 +5,5 @@ pub fn can_be_output(operation: &str) -> bool {
 }
 
 pub fn output_node(graph: &FunctionGraph) -> Option<&FunctionNode> {
-    graph.output.and_then(|id| graph.node(id)).filter(|node| can_be_output(&node.op))
+    graph.output.and_then(|id| graph.node(id)).filter(|node| node.missing.is_some() || can_be_output(&node.op))
 }

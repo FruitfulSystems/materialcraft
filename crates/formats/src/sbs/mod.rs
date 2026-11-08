@@ -7,8 +7,11 @@ mod embedded;
 mod filter_map;
 mod function_graph;
 mod function_instance;
+mod graph_attributes;
+mod group_layout;
 mod image_input;
 mod input_bridge;
+pub mod library;
 mod node_identifiers;
 mod node_parameter;
 mod output;
@@ -37,3 +40,5 @@ mod read;
 mod write;
 
 mod preview_binding;
+
+mod resource;

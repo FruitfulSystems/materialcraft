@@ -29,6 +29,7 @@ pub(crate) fn resolve_parameters(
         match materialcraft_nodes::function::compile(f, seed) {
             Ok(prog) => {
                 let context = materialcraft_nodes::function::EvaluationContext {
+                    scope: Default::default(),
                     position: [0.5; 2],
                     size: size.map(|side| side as f32),
                     images: &[],

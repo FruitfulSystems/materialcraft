@@ -1,6 +1,6 @@
 use materialcraft_engine::{
-    Session,
-    core::{NodeId, Value},
+    FunctionGraphTarget, Session,
+    core::{FunctionGraph, NodeId, Value},
     execute,
     formats::sbs::{read_sbs, write_sbs},
     new_session,
@@ -12,7 +12,7 @@ fn add(session: &mut Session, definition: &str) -> NodeId {
 }
 
 #[test]
-fn fresh_value_processors_accept_one_source_and_round_trip() {
+fn value_inputs_feed_authored_processors_and_round_trip() {
     let mut session = new_session();
     let input = add(&mut session, "input_value");
     execute(&mut session, "graph.node.param", &json!({"id": input.0, "param": "default", "value": 0.35})).unwrap();
@@ -20,12 +20,22 @@ fn fresh_value_processors_accept_one_source_and_round_trip() {
         NodeId(execute(&mut session, "graph.node.add", &json!({"def": "value_processor", "connectFrom": {"node": input.0}})).unwrap()["id"].as_u64().unwrap());
     let second = add(&mut session, "value_processor");
     execute(&mut session, "graph.connect", &json!({"from": input.0, "to": second.0, "toPort": "value1"})).unwrap();
+
     assert_eq!(session.graph().unwrap().connections.len(), 2);
 
     assert!(session.undo().is_some());
     assert_eq!(session.graph().unwrap().connections.len(), 1);
     assert_eq!(session.graph().unwrap().connections[0].to, first);
     assert!(session.redo().is_some());
+
+    for node in [first, second] {
+        let target = FunctionGraphTarget::Parameter { node, parameter: "function".into() };
+        assert_eq!(target.current(&session).unwrap(), &FunctionGraph::default());
+        let mut function = FunctionGraph::default();
+        function.output = Some(function.add("get_float1", &[], Some(Value::Text("value1".into()))));
+        execute(&mut session, "graph.function.set", &json!({"target": target, "function": function})).unwrap();
+    }
+
     session.cook();
     for node in [first, second] {
         assert_eq!(session.cooked.value(node, 0), Some(&Value::Float(0.35)));

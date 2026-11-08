@@ -8,6 +8,15 @@ Current integration also provides workspace-scoped `material_export`, real Heigh
 from the assigned material, explicit normal-map convention, and linear bitmap/input previews.
 The native SBS and primitive-library limitations in [atomic-workflow.md](atomic-workflow.md) remain.
 
+Reusable function instances now preserve SBS package paths and appear in the Library. The converted
+standard library contains all 171 supplied function bodies (2,334 nodes), with no empty placeholders.
+Local structural and evaluation comparisons do not establish external runtime interoperability,
+full numerical equivalence or redistribution rights for the retained source bodies.
+
+Explorer now preserves native SBS folder hierarchies and provides package, folder and graph context
+menus for creation, copying, pasting, renaming, removal and package file actions. Moving items within
+a package and removing folder subtrees support undo; empty folders survive saves.
+
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (Files 60% → 70%: portable materials for TextureCraft) · **Target:** the professional node-based material workflow (desktop app; the web app is assessed later)
 
 **Overall: ≈ 67%** of a material artist's daily workflow works end to end (engine + UI +

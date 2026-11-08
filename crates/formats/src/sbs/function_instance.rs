@@ -9,22 +9,8 @@ use std::fmt::Write;
 
 pub(super) fn read(element: XmlNode<'_, '_>, value: Option<&Value>, type_code: u32) -> Result<GraphInstance, String> {
     let Some(Value::Text(reference)) = value else { return Err("function instance has no source reference".into()) };
-    let reference = reference.strip_prefix("pkg:///").ok_or("invalid function source reference")?;
-    let (graph, query) = reference.split_once('?').unwrap_or((reference, ""));
-    let dependency = query.split('&').find_map(|part| part.strip_prefix("dependency="));
-    let package = if let Some(uid) = dependency {
-        child_element(element.document().root_element(), "dependencies")
-            .into_iter()
-            .flat_map(|dependencies| children_named(dependencies, "dependency"))
-            .find(|dependency| child_value(*dependency, "uid") == Some(uid))
-            .and_then(|dependency| child_value(dependency, "filename"))
-            .ok_or("function source dependency is missing")?
-    } else {
-        SELF_DEPENDENCY
-    };
-    if package != SELF_DEPENDENCY && (package.contains("://") || !package.to_ascii_lowercase().ends_with(".sbs")) {
-        return Err("function sources must be SBS files".into());
-    }
+    let (package, graph) = source_reference(element, reference)?;
+
     let inputs: Vec<_> = child_element(element, "materialcraftInterface")
         .into_iter()
         .flat_map(|interface| children_named(interface, "input"))
@@ -42,11 +28,39 @@ pub(super) fn read(element: XmlNode<'_, '_>, value: Option<&Value>, type_code: u
         return Err("Duplicate Function input identifiers".into());
     }
     Ok(GraphInstance {
-        package: if package == SELF_DEPENDENCY { String::new() } else { package.into() },
-        graph: graph.into(),
+        label: String::new(),
+        defaults: Default::default(),
+        package,
+        graph,
         inputs,
         outputs: vec![GraphPort { identifier: "output".into(), type_code }],
     })
+}
+
+fn source_reference(element: XmlNode<'_, '_>, reference: &str) -> Result<(String, String), String> {
+    if let Some(reference) = reference.strip_prefix("pkg:///") {
+        let (graph, query) = reference.split_once('?').unwrap_or((reference, ""));
+        let dependency = query.split('&').find_map(|part| part.strip_prefix("dependency="));
+        let package = dependency
+            .map(|uid| {
+                child_element(element.document().root_element(), "dependencies")
+                    .into_iter()
+                    .flat_map(|dependencies| children_named(dependencies, "dependency"))
+                    .find(|dependency| child_value(*dependency, "uid") == Some(uid))
+                    .and_then(|dependency| child_value(dependency, "filename"))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("missing://dependency/{uid}"))
+            })
+            .unwrap_or_default();
+
+        return Ok((if package == SELF_DEPENDENCY { String::new() } else { package }, graph.into()));
+    }
+
+    if let Some((package, graph)) = reference.split_once(".sbs/") {
+        return Ok((format!("{package}.sbs"), graph.into()));
+    }
+
+    Err("invalid function source reference".into())
 }
 
 pub(super) fn write(instance: &GraphInstance, writer: &mut SbsWriter) -> String {

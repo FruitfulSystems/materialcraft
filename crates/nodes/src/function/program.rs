@@ -85,6 +85,7 @@ impl Program {
                     let result = if let Some(call) = &instruction.call {
                         let storage = state.calls.entry(index).or_default();
                         storage.variables.clone_from(&state.variables);
+                        storage.variables.extend(call.defaults.clone());
                         for (name, value) in call.inputs.iter().zip(arguments) {
                             storage.variables.insert(name.clone(), value.clone());
                         }

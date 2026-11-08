@@ -14,6 +14,11 @@ use materialcraft_engine::core::NodeId;
 
 /// The graph panel: toolbar row and canvas
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+    if ui.rect_contains_pointer(ui.available_rect_before_wrap()) && ui.input(|input| input.pointer.primary_pressed() || input.pointer.secondary_pressed()) {
+        crate::properties::GraphPropertyDraft::commit(app);
+        app.inspected_graph = None;
+    }
+
     app.reconcile_editors();
     if !crate::pattern::active(app) {
         app.pattern_editor = None;

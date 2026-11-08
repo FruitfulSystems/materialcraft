@@ -134,6 +134,45 @@ fn standalone_function_canvas_wires_constants_and_marks_an_output() {
 }
 
 #[test]
+fn embedded_graphs_open_with_control_e_but_not_double_click() {
+    for definition in ["fx_map", "pixel_processor", "value_processor"] {
+        let mut frames = Frames::new(new_session());
+        let node = NodeId(frames.app.run("graph.node.add", json!({"def": definition})).unwrap()["id"].as_u64().unwrap());
+        frames.app.ui.frame_all = true;
+        frames.run(Vec::new(), Modifiers::NONE);
+        let original = frames.app.session.pkg.clone();
+        let history = frames.app.session.history();
+        let position = frames.center(node);
+
+        frames.time += 1.0;
+        frames.run(vec![Event::PointerMoved(position)], Modifiers::NONE);
+        for pressed in [true, false, true, false] {
+            frames.run(vec![Event::PointerButton { pos: position, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        }
+
+        assert!(frames.app.function_editor.is_none(), "{definition} double-click opened a function");
+        assert!(frames.app.pattern_editor.is_none(), "{definition} double-click opened a pattern");
+        assert_eq!(frames.app.session.selection, vec![node]);
+        assert_eq!(frames.app.session.view2d.node, Some(node));
+
+        let control = Modifiers::CTRL | Modifiers::COMMAND;
+        for pressed in [true, false] {
+            frames.run(vec![Event::Key { key: egui::Key::E, physical_key: Some(egui::Key::E), pressed, repeat: false, modifiers: control }], control);
+        }
+
+        if definition == "fx_map" {
+            assert_eq!(frames.app.pattern_editor.as_ref().map(|editor| editor.node), Some(node));
+            assert!(frames.app.function_editor.is_none());
+        } else {
+            assert_eq!(frames.app.function_editor.as_ref().and_then(|editor| editor.node), Some(node));
+            assert!(frames.app.pattern_editor.is_none());
+        }
+        assert_eq!(frames.app.session.pkg, original);
+        assert_eq!(frames.app.session.history(), history);
+    }
+}
+
+#[test]
 fn selected_pattern_subgraph_opens_with_control_e() {
     let mut frames = Frames::new(new_session());
     let node = NodeId(frames.app.run("graph.node.add", json!({"def": "fx_map"})).unwrap()["id"].as_u64().unwrap());
@@ -465,7 +504,7 @@ fn every_canvas_keeps_properties_after_deselection() {
                 graph.nodes[1].pos = [256.0, 0.0];
                 graph.output = Some(id);
                 frames.app.run("graph.function.set", json!({"function": graph})).unwrap();
-                (NodeId(u64::from(id)), "Multiply - Properties")
+                (NodeId(u64::from(id)), "Multiplication - Properties")
             }
             "pattern" => {
                 let owner = NodeId(frames.app.run("graph.node.add", json!({"def": "fx_map"})).unwrap()["id"].as_u64().unwrap());
@@ -478,7 +517,7 @@ fn every_canvas_keeps_properties_after_deselection() {
             }
             _ => {
                 let id = NodeId(frames.app.run("graph.node.add", json!({"def": "uniform"})).unwrap()["id"].as_u64().unwrap());
-                (id, "Uniform Color - Properties")
+                (id, "Uniform color - Properties")
             }
         };
         frames.app.ui.frame_all = true;

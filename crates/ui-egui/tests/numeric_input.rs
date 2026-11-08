@@ -62,7 +62,7 @@ fn graph_name_typed_across_frames_commits_on_focus_loss() {
     h.run_steps(8);
     h.state_mut().run("graph.select", json!({"ids": []})).unwrap();
     h.run_steps(3);
-    h.get_by_label("Graph name").click();
+    h.get(By::new().role(egui::Role::TextInput).label("Identifier")).click();
     h.step();
     h.key_press_modifiers(Modifiers::COMMAND, Key::A);
     h.step();

@@ -23,6 +23,21 @@ const fn sep(menu: &'static str) -> MenuItem {
 
 pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 
+pub(crate) const EXPLORER_NEW: &[(&str, &str)] = &[("Graph", "ui.newGraph"), ("Function Graph", "ui.newFunctionGraph"), ("Folder", "folder.create")];
+pub(crate) const EXPLORER_PACKAGE: &[(&str, &str)] = &[
+    ("Reload", "file.reload"),
+    ("Save", "file.save"),
+    ("Save As", "file.saveAs"),
+    ("Save A Copy As", "file.saveCopyAs"),
+    ("Copy", "explorer.copy"),
+    ("Paste", "explorer.paste"),
+    ("Close", "package.close"),
+];
+pub(crate) const EXPLORER_FOLDER: &[(&str, &str)] =
+    &[("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Rename", "folder.rename"), ("Remove", "folder.remove")];
+pub(crate) const EXPLORER_GRAPH: &[(&str, &str)] =
+    &[("Open", "graph.open"), ("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Remove", "graph.delete"), ("Rename", "graph.rename")];
+
 /// The menu catalog (the target menu tree with our ids)
 pub const CATALOG: &[MenuItem] = &[
     sub("File", "New", "Graph...", "ui.newGraph", Some("Ctrl+N")),

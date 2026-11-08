@@ -13,29 +13,38 @@ fn cook(def: &NodeDefinition, inputs: &[Option<Image>], size: u32) -> CookResult
     (def.cook)(&ctx)
 }
 
-/// Every node cooks with no inputs and with hostile-sized inputs, returns as many images as it has outputs, at the requested size, with finite values
+/// Image nodes cook finite outputs at the requested size; an empty processor reports its missing result
 #[test]
 fn every_node_cooks() {
-    let ids: Vec<&str> = catalog().iter().map(|d| d.id).collect();
+    let ids: Vec<&str> = catalog().iter().map(|definition| definition.id).collect();
     let mut seen = std::collections::BTreeSet::new();
     for id in &ids {
         assert!(seen.insert(*id), "duplicate node id {id}");
     }
-    let odd = Image::generate(5, 3, Kind::Color, |x, y| [x as f32 / 4.0, y as f32 / 2.0, 0.5, 1.0]);
-    for def in catalog() {
-        if matches!(def.id, "graph_instance" | "value_processor" | "input_value") {
+
+    let odd_size_image = Image::generate(5, 3, Kind::Color, |x, y| [x as f32 / 4.0, y as f32 / 2.0, 0.5, 1.0]);
+    for definition in catalog() {
+        if matches!(definition.id, "graph_instance" | "value_processor" | "input_value") {
             continue;
         }
-        for inputs in [vec![None; def.inputs.len()], vec![Some(odd.clone()); def.inputs.len()]] {
-            let out = cook(def, &inputs, 32).unwrap_or_else(|e| panic!("{}: {e}", def.id));
-            assert_eq!(out.len(), def.outputs.len().max(1), "{}", def.id);
-            for img in &out {
-                assert_eq!((img.w, img.h), (32, 32), "{}", def.id);
-                assert!(img.data.iter().all(|v| v.is_finite()), "{} produced a non-finite value", def.id);
+
+        for inputs in [vec![None; definition.inputs.len()], vec![Some(odd_size_image.clone()); definition.inputs.len()]] {
+            let result = cook(definition, &inputs, 32);
+            if definition.id == "pixel_processor" {
+                assert_eq!(result.unwrap_err(), "function has no result node");
+                continue;
+            }
+
+            let outputs = result.unwrap_or_else(|error| panic!("{}: {error}", definition.id));
+            assert_eq!(outputs.len(), definition.outputs.len().max(1), "{}", definition.id);
+            for image in &outputs {
+                assert_eq!((image.w, image.h), (32, 32), "{}", definition.id);
+                assert!(image.data.iter().all(|value| value.is_finite()), "{} produced a non-finite value", definition.id);
             }
         }
     }
-    assert_eq!(catalog().len(), 30);
+
+    assert_eq!(catalog().len(), 29);
 }
 
 /// Every node cooks with each numeric parameter at a hostile value (huge, negative huge, NaN): the hard limits keep the cook bounded, finite and the right size

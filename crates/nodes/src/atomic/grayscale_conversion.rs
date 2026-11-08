@@ -3,7 +3,7 @@ use crate::{CookContext, CookResult, NodeDefinition, node};
 use materialcraft_image::Kind;
 
 pub(super) fn definition() -> NodeDefinition {
-    node("grayscale_conversion", "Grayscale Conversion", ATOMIC)
+    node("grayscale_conversion", "Grayscale conversion", ATOMIC)
         .desc("Weighted sum of the RGBA channels.")
         .atomic()
         .color_in("input", "Input")

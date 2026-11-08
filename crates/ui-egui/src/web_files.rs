@@ -168,10 +168,20 @@ mod web {
 
     /// File ▸ Save: download the package as `<name>.sbs` (bitmaps embedded)
     pub fn save(app: &mut MaterialCraftApp) {
+        save_download(app, false);
+    }
+
+    pub fn save_copy(app: &mut MaterialCraftApp) {
+        save_download(app, true);
+    }
+
+    fn save_download(app: &mut MaterialCraftApp, copy: bool) {
         let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
         match materialcraft_engine::file_cmds::save_bytes(&app.session).map_err(|e| e.to_string()).and_then(|b| download(&name, &b)) {
             Ok(()) => {
-                app.session.modified = false;
+                if !copy {
+                    app.session.modified = false;
+                }
                 app.toast(format!("{} {name}", tr("Downloaded")), false);
             }
             Err(e) => app.toast(format!("{} {name}: {e}", tr("Couldn't save")), true),

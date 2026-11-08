@@ -1,16 +1,9 @@
 use super::{EvaluationContext, EvaluationState, compile};
 use crate::{CookContext, CookResult};
-use materialcraft_core::{FunctionGraph, Value};
+use materialcraft_core::Value;
 use materialcraft_image::{Image, Kind};
 use rayon::prelude::*;
 use std::sync::Arc;
-
-pub fn default_pixel_function() -> FunctionGraph {
-    let mut graph = FunctionGraph::default();
-    let position = graph.add("get_float2", &[], Some(Value::Text("$pos".into())));
-    graph.output = Some(graph.add("samplecol", &[position], Some(Value::Int2([0, 1]))));
-    graph
-}
 
 fn pixel(value: Value, gray: bool) -> Result<[f32; 4], String> {
     let values = super::value_type::floats(&value)?;
@@ -38,6 +31,7 @@ pub(crate) fn pixel_processor(context: &CookContext) -> CookResult {
     data.par_chunks_mut(width as usize * channels).enumerate().try_for_each_init(EvaluationState::default, |state, (y, row)| -> Result<(), String> {
         for (x, target) in row.chunks_exact_mut(channels).enumerate() {
             let evaluation = EvaluationContext {
+                scope: super::FunctionScope::PixelProcessor,
                 position: [(x as f32 + 0.5) / width as f32, (y as f32 + 0.5) / height as f32],
                 size: [width as f32, height as f32],
                 images: context.inputs,

@@ -22,6 +22,8 @@ pub struct MaterialCraftApp {
     /// Embedded graph editors in the main graph panel
     pub pattern_editor: Option<pattern::PatternEditor>,
     pub function_editor: Option<function::FunctionEditor>,
+    pub(crate) inspected_graph: Option<materialcraft_engine::GraphTarget>,
+    pub(crate) graph_property_draft: Option<crate::properties::GraphPropertyDraft>,
     pub(crate) graph_parents: Vec<graph::graph_parent::GraphParent>,
     /// Synthetic input from the control channel, fed to egui on the next frames
     pub input_queue: VecDeque<control::Scripted>,
@@ -72,6 +74,8 @@ impl MaterialCraftApp {
             view3d: view3d::View3dState::default(),
             view2d: view2d::View2dState::default(),
             function_editor: None,
+            inspected_graph: None,
+            graph_property_draft: None,
             graph_parents: Vec::new(),
             pattern_editor: None,
             input_queue: VecDeque::new(),
@@ -106,6 +110,13 @@ impl MaterialCraftApp {
 
     /// Run an engine command, reporting errors as toasts. Returns the result on success
     pub fn run(&mut self, id: &str, mut params: Value) -> Option<Value> {
+        if id.starts_with("file.")
+            || id.starts_with("package.")
+            || matches!(id, "graph.open" | "graph.delete" | "graph.duplicate" | "folder.remove" | "explorer.paste" | "edit.undo" | "edit.redo")
+        {
+            crate::properties::GraphPropertyDraft::commit(self);
+        }
+
         if matches!(
             id,
             "graph.node.add"
@@ -148,9 +159,11 @@ impl MaterialCraftApp {
     pub(crate) fn close_subgraph_after(&mut self, command: &str) {
         if command.starts_with("file.new")
             || command.starts_with("package.")
-            || matches!(command, "file.open" | "graph.open" | "graph.delete" | "graph.duplicate")
+            || matches!(command, "file.open" | "file.reload" | "graph.open" | "graph.delete" | "graph.duplicate" | "folder.remove" | "explorer.paste")
         {
             self.graph.inspected_node = None;
+            self.inspected_graph = None;
+            self.graph_property_draft = None;
             self.graph_parents.clear();
             self.pattern_editor = None;
             self.function_editor = None;
@@ -167,6 +180,9 @@ impl MaterialCraftApp {
     }
 
     pub(crate) fn reconcile_editors(&mut self) {
+        if self.inspected_graph.is_some_and(|target| target.get(&self.session).is_err()) {
+            self.inspected_graph = None;
+        }
         if self.function_editor.as_ref().is_some_and(|editor| editor.current(self).is_none()) {
             self.function_editor = None;
         }

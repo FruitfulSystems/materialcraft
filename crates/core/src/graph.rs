@@ -10,8 +10,14 @@ use crate::{Attributes, Comment, Connection, ExposedParameter, Frame, GraphKind,
 #[serde(rename_all = "camelCase")]
 pub struct Graph {
     pub name: String,
+    /// Package folder, retained so external SBS references keep their identity.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub folder: String,
     #[serde(default)]
     pub function: Option<crate::FunctionGraph>,
+    /// Declared SBS return type, including functions whose implementation is unavailable.
+    #[serde(default)]
+    pub function_type: u32,
     pub nodes: Vec<Node>,
     pub connections: Vec<Connection>,
     #[serde(default)]
@@ -26,6 +32,16 @@ pub struct Graph {
     pub format: OutputFormat,
     #[serde(default)]
     pub seed: i32,
+    #[serde(default)]
+    pub pixel_ratio: i32,
+    #[serde(default)]
+    pub pixel_ratio_mode: crate::ParameterInheritance,
+    #[serde(default = "default_tiling")]
+    pub tiling: [bool; 2],
+    #[serde(default)]
+    pub tiling_mode: crate::ParameterInheritance,
+    #[serde(default)]
+    pub physical_size: [f32; 3],
     #[serde(default)]
     pub exposed: Vec<ExposedParameter>,
     /// Current values of the exposed inputs (missing = default)
@@ -49,10 +65,17 @@ pub const MIN_SIZE_LOG2: u32 = 4;
 pub const MAX_SIZE_LOG2: u32 = 13;
 
 impl Graph {
+    /// Display text never changes the identifier used by SBS references
+    pub fn display_name(&self) -> &str {
+        if self.attributes.label.is_empty() { &self.name } else { &self.attributes.label }
+    }
+
     pub fn new(name: &str) -> Graph {
         Graph {
             name: name.into(),
+            folder: String::new(),
             function: None,
+            function_type: 0,
             nodes: Vec::new(),
             connections: Vec::new(),
             frames: Vec::new(),
@@ -61,6 +84,11 @@ impl Graph {
             size: [10, 10],
             format: OutputFormat::U16,
             seed: 0,
+            pixel_ratio: 0,
+            pixel_ratio_mode: crate::ParameterInheritance::default(),
+            tiling: [true, true],
+            tiling_mode: crate::ParameterInheritance::default(),
+            physical_size: [0.0; 3],
             exposed: Vec::new(),
             inputs: BTreeMap::new(),
             presets: Vec::new(),
@@ -69,6 +97,10 @@ impl Graph {
             attributes: Attributes::default(),
             next_id: 1,
         }
+    }
+
+    pub fn sbs_path(&self) -> String {
+        if self.folder.is_empty() { self.name.clone() } else { format!("{}/{}", self.folder, self.name) }
     }
 
     /// All editable Function canvases, including processor and parameter functions
@@ -194,6 +226,10 @@ impl Graph {
     pub fn size_px(&self) -> [u32; 2] {
         [1 << self.size[0].clamp(MIN_SIZE_LOG2, MAX_SIZE_LOG2), 1 << self.size[1].clamp(MIN_SIZE_LOG2, MAX_SIZE_LOG2)]
     }
+}
+
+fn default_tiling() -> [bool; 2] {
+    [true, true]
 }
 
 fn value_functions(value: &Value) -> impl Iterator<Item = &crate::FunctionGraph> {

@@ -67,3 +67,25 @@ fn a_pending_action_is_kept_even_if_the_package_was_saved_elsewhere() {
     assert!(crate::unsaved::request(&mut pending, false, crate::unsaved::Guarded::Menu { id: "ui.closeAll".into() }).is_none());
     assert_eq!(pending, Some(first));
 }
+
+#[test]
+fn closing_one_package_only_prompts_for_that_packages_edits() {
+    use crate::unsaved::{Guarded, guard, perform};
+    let mut app = crate::MaterialCraftApp::headless(materialcraft_engine::new_session(), crate::UiState::default());
+    app.session.modified = true;
+    app.run("file.newPackage", serde_json::json!({"name": "Second"})).unwrap();
+    let second = app.session.document_id;
+    guard(&mut app, Guarded::Package { document: second, reload: false });
+    assert!(app.ui.windows.unsaved.is_none());
+    assert_eq!(app.session.document_id, 0);
+    assert!(app.session.modified);
+
+    app.run("file.newPackage", serde_json::json!({"name": "Third"})).unwrap();
+    let third = app.session.document_id;
+    guard(&mut app, Guarded::Package { document: 0, reload: false });
+    assert_eq!(app.ui.windows.unsaved, Some(Guarded::Package { document: 0, reload: false }));
+    app.ui.windows.unsaved = None;
+    perform(&mut app, Guarded::Package { document: 0, reload: false });
+    assert_eq!(app.session.document_id, third);
+    assert_eq!(app.session.open_packages().len(), 1);
+}

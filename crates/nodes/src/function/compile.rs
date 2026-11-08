@@ -29,38 +29,60 @@ fn compile_nested(graph: &FunctionGraph, seed: u32, depth: usize, remaining: &mu
         }
 
         let node = nodes.get(&id).ok_or_else(|| format!("missing function node {id}"))?;
+        if node.missing.is_some() {
+            return Err(format!("Missing function operation `{}`", node.op));
+        }
         let definition = if node.instance.is_some() {
             &super::function_call::DEFINITION
         } else {
             catalog::definition(&node.op).ok_or_else(|| format!("unknown function `{}`", node.op))?
         };
         let names: Vec<_> = super::input_identifiers(node).collect();
-        if node.inputs.len() != names.len() || node.inputs.iter().any(Option::is_none) {
+        let missing_input = names
+            .iter()
+            .zip(&node.inputs)
+            .any(|(name, input)| input.is_none() && !node.instance.as_ref().is_some_and(|instance| instance.defaults.contains_key(*name)));
+        if node.inputs.len() != names.len() || missing_input {
             return Err(format!("{} ({id}) requires connected inputs: {}", super::node_label(node), names.join(", ")));
         }
 
+        // Preserved legacy connectors must not evaluate a duplicate random or stateful input twice
+        let ports: Vec<_> = names
+            .into_iter()
+            .zip(&node.inputs)
+            .filter(|(name, _)| node.instance.as_ref().is_none_or(|instance| instance.defaults.contains_key(*name)))
+            .collect();
+        let sources: Vec<_> = ports.iter().filter_map(|(_, input)| **input).collect();
         if !visited {
             if !active.insert(id) {
                 return Err(format!("function cycle at node {id}"));
             }
 
             pending.push((id, true));
-            pending.extend(node.inputs.iter().rev().flatten().map(|input| (*input, false)));
+            pending.extend(sources.iter().rev().map(|input| (*input, false)));
             continue;
         }
 
         active.remove(&id);
         let inputs: Vec<usize> =
-            node.inputs.iter().flatten().map(|input| indices.get(input).copied().ok_or("unresolved function input".to_string())).collect::<Result<_, _>>()?;
+            sources.iter().map(|input| indices.get(input).copied().ok_or("unresolved function input".to_string())).collect::<Result<_, _>>()?;
         let call = if let Some(instance) = &node.instance {
             let source = node.source.as_ref().ok_or_else(|| format!("unresolved Function Graph `{}`", instance.graph))?.as_ref().map_err(Clone::clone)?;
             let program = compile_nested(source, seed, depth + 1, remaining)?;
-            for (port, index) in instance.inputs.iter().zip(&inputs) {
+            for (port, index) in instance
+                .inputs
+                .iter()
+                .zip(&node.inputs)
+                .filter(|(port, input)| input.is_some() && instance.defaults.contains_key(&port.identifier))
+                .map(|(port, _)| port)
+                .zip(&inputs)
+            {
                 if instructions.get(*index).is_some_and(|instruction| instruction.type_code != port.type_code) {
                     return Err(format!("{}: input `{}` has the wrong type", instance.graph, port.identifier));
                 }
             }
-            Some(super::function_call::FunctionCall { program, inputs: names.iter().map(|name| (*name).to_string()).collect() })
+            let inputs = ports.iter().filter(|(_, input)| input.is_some()).map(|(name, _)| (*name).to_string()).collect();
+            Some(super::function_call::FunctionCall { program, inputs, defaults: instance.defaults.clone() })
         } else {
             None
         };

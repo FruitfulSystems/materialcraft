@@ -56,10 +56,8 @@ fn background_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, u
     let mut add = None;
     let standalone = matches!(editor.target, FunctionTarget::Graph);
     ui.menu_button(tr("Add node"), |ui| {
-        let entries = target
-            .available_operations(&app.session)
-            .filter(|operation| operation.id != "passthrough")
-            .map(|operation| (operation.id, operation.label, operation.category));
+        let entries =
+            target.available_operations(&app.session).filter(|operation| operation.id != "passthrough").map(|operation| (operation.id, operation.label, ""));
         add = crate::graph::add_node_menu::show(ui, entries);
     });
     annotations(app, editor, ui);

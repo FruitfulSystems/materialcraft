@@ -13,7 +13,7 @@ use crate::snapshot::Snapshot;
 use crate::{AnnotationSelection, Clip, EngineError, Result};
 
 /// Undo keeps this many steps.
-const MAX_UNDO: usize = 200;
+pub(crate) const MAX_UNDO: usize = 200;
 
 /// The 3D view's scene and look.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -119,6 +119,7 @@ pub struct View2d {
 pub const WARNING_PREFIX: &str = "Warning: ";
 
 pub struct Session {
+    pub environment: materialcraft_core::EvaluationEnvironment,
     pub document_id: u64,
     pub(crate) next_document_id: u64,
     pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
@@ -145,6 +146,7 @@ pub struct Session {
     pub load_warnings: Vec<String>,
     pub clipboard: Option<Clip>,
     pub embedded_clipboard: Option<crate::EmbeddedClipboard>,
+    pub explorer_clipboard: Option<crate::ExplorerClipboard>,
     /// The last cook of the open graph.
     pub cooked: Cooked,
     /// Set when the graph changed and needs cooking.
@@ -164,8 +166,15 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(pkg: Package) -> Session {
+    pub fn new(mut pkg: Package) -> Session {
+        let library = crate::function_library::load();
+        if let Ok(library) = &library {
+            for (path, package) in &library.packages {
+                pkg.dependencies.entry(path.clone()).or_insert_with(|| package.clone());
+            }
+        }
         let mut session = Session {
+            environment: Default::default(),
             document_id: 0,
             next_document_id: 1,
             documents: std::collections::BTreeMap::new(),
@@ -187,6 +196,7 @@ impl Session {
             load_warnings: Vec::new(),
             clipboard: None,
             embedded_clipboard: None,
+            explorer_clipboard: None,
             cooked: Cooked::default(),
             dirty: true,
             cook_epoch: 0,
@@ -199,6 +209,14 @@ impl Session {
             decoded: Arc::new(Mutex::new(HashMap::new())),
         };
         session.refresh_links();
+        match library {
+            Ok(library) => {
+                for warning in library.warnings {
+                    session.warn(warning);
+                }
+            }
+            Err(error) => session.warn(format!("Missing function library: {error}")),
+        }
         session
     }
 
@@ -432,6 +450,7 @@ impl Session {
     pub fn cook(&mut self) -> &Cooked {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         opts.max_size = self.preview_size;
         let cooked = crate::PreviewCook::run(&self.pkg, self.graph, &self.material_preview.graphs(), &opts, &self.cache);
         self.accept_preview(cooked);
@@ -453,7 +472,8 @@ impl Session {
     /// Cook graph `gi` at full size, without touching the preview results.
     pub fn cook_full(&self, gi: usize) -> Cooked {
         let dec = self.resource_decoder();
-        let opts = Options::new(&dec);
+        let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         materialcraft_eval::cook(&self.pkg, gi, &opts, &self.cache)
     }
 

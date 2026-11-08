@@ -3,11 +3,33 @@ use materialcraft_core::{FunctionGraph, PatternGraph, PatternNodeKind, Value};
 use std::collections::BTreeMap;
 
 fn cook(graph: PatternGraph) -> crate::CookResult {
+    cook_with_variables(graph, &BTreeMap::new())
+}
+
+fn cook_with_variables(graph: PatternGraph, variables: &BTreeMap<String, Value>) -> crate::CookResult {
     let definition = find("fx_map").unwrap();
     let parameters = resolve_params(definition, &BTreeMap::from([("pattern".into(), Value::PatternGraph(Box::new(graph)))]));
-    let variables = BTreeMap::new();
-    let context = CookContext { w: 16, h: 16, seed: 7, tile: true, inputs: &[], params: &parameters, resource: &|_| None, vars: &variables };
+    let context = CookContext { w: 16, h: 16, seed: 7, tile: true, inputs: &[], params: &parameters, resource: &|_| None, vars: variables };
     (definition.cook)(&context)
+}
+
+#[test]
+fn pattern_functions_keep_host_time_and_quadrant_depth() {
+    for (name, expected) in [("$time", 0.75), ("$depth", 1.0), ("$depthpow2", 0.5)] {
+        let mut graph = PatternGraph::with_root(PatternNodeKind::Quadrant);
+        let child = graph.add(PatternNodeKind::Quadrant).unwrap();
+        graph.nodes[0].parameters.insert("patterntype".into(), Value::Int(0));
+        graph.nodes[0].children[0] = Some(child);
+        graph.nodes[1].parameters.insert("patterntype".into(), Value::Int(2));
+        graph.nodes[1].parameters.insert("patternsize".into(), Value::Float2([2.0; 2]));
+        let mut function = FunctionGraph::default();
+        function.output = Some(function.add("get_float1", &[], Some(Value::Text(name.into()))));
+        graph.nodes[1].parameters.insert("opacity".into(), Value::Function(Box::new(function)));
+
+        let image = cook_with_variables(graph, &BTreeMap::from([("$time".into(), Value::Float(0.75))])).unwrap().remove(0);
+
+        assert!((image.mean()[0] - expected).abs() < 1e-6, "{name}: {}", image.mean()[0]);
+    }
 }
 
 #[test]

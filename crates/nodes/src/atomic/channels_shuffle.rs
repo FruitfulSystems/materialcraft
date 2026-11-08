@@ -3,7 +3,7 @@ use crate::{CookContext, CookResult, NodeDefinition, node};
 use materialcraft_image::{Image, Kind};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("channels_shuffle", "Channels Shuffle", ATOMIC)
+    node("channels_shuffle", "Channels shuffle", ATOMIC)
         .desc("Builds a color image from any channels of two inputs.")
         .atomic()
         .any_in("input1", "Input 1")

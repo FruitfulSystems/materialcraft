@@ -13,11 +13,17 @@ pub fn warnings(graph: &FunctionGraph) -> Vec<String> {
     let mut has_value_source = false;
     while let Some(id) = pending.pop() {
         let Some(node) = remaining.remove(&id) else { continue };
+        if node.missing.is_some() {
+            return vec![format!("Missing function operation `{}`", node.op)];
+        }
 
         if let Some(instance) = &node.instance {
-            if node.inputs.len() != instance.inputs.len() || node.inputs.iter().any(Option::is_none) {
+            if node.inputs.len() != instance.inputs.len()
+                || instance.inputs.iter().zip(&node.inputs).any(|(port, input)| input.is_none() && !instance.defaults.contains_key(&port.identifier))
+            {
                 return vec![format!("{}: missing input connection", instance.graph)];
             }
+            has_value_source |= !instance.defaults.is_empty();
             match &node.source {
                 Some(Err(error)) => return vec![error.clone()],
                 None => return vec![format!("{}: source is unavailable", instance.graph)],

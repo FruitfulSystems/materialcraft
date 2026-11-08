@@ -148,7 +148,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         let body = ui.interact(screen_rect, ui.scope_id().with(("fn-node", id)), Sense::click_and_drag());
         crate::widgets::name(&body, egui::Role::Button, label);
 
-        if !dot && node.value.is_some() {
+        if !dot && node.missing.is_none() && node.value.is_some() {
             let content = node_card::body(screen_rect, editor.zoom).shrink(6.0 * editor.zoom);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
             child.set_clip_rect(content.intersect(canvas_bounds));

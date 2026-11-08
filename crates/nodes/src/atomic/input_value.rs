@@ -3,7 +3,7 @@ use crate::{NodeDefinition, PortKind, node};
 use materialcraft_core::ComponentUsage;
 
 pub(super) fn definition() -> NodeDefinition {
-    node("input_value", "Input Value", GRAPH_ITEMS)
+    node("input_value", "Input value", GRAPH_ITEMS)
         .desc("A typed value input of the graph.")
         .atomic()
         .text("identifier", "Identifier", "value")

@@ -9,6 +9,12 @@ pub struct FunctionNode {
     #[serde(default)]
     pub type_code: u32,
     pub op: String,
+    /// Connector names for an unavailable operation; its wires remain editable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<Vec<String>>,
+    /// Uninterpreted function data, retained for unavailable operations on save.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub missing_data: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<crate::GraphInstance>,
     /// Resolved call body shared by cooks; SBS stores only the source reference

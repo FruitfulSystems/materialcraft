@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize};
 pub struct Resource {
     /// Unique name, referenced by nodes (`resource` parameter)
     pub name: String,
+    #[serde(default = "default_folder")]
+    pub folder: String,
     /// File name inside the package's `resources/` folder
     pub file: String,
+    /// Unavailable external asset retained for repair on a later load
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
     /// The file's bytes (stored in the zip, not in `package.json`)
     #[serde(skip)]
     pub bytes: ResourceBytes,
@@ -16,6 +21,14 @@ pub struct Resource {
 impl Resource {
     /// A resource named `name`, stored as `file` in the package
     pub fn new(name: impl Into<String>, file: impl Into<String>, bytes: ResourceBytes) -> Resource {
-        Resource { name: name.into(), file: file.into(), bytes }
+        Resource { name: name.into(), folder: default_folder(), file: file.into(), source: String::new(), bytes }
     }
+
+    pub fn sbs_path(&self) -> String {
+        if self.folder.is_empty() { self.name.clone() } else { format!("{}/{}", self.folder, self.name) }
+    }
+}
+
+fn default_folder() -> String {
+    "Resources".into()
 }

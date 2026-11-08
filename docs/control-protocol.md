@@ -72,12 +72,20 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 
 | Command | Params |
 |---|---|
+| `graph.function.variables` | `{id, target?: FunctionGraphTarget}` returns ordered suggestions matching a Get node's type and caller scope; typed custom names remain supported |
+| `session.environment` | `{timeSeconds?, uvTile?: [int, int], normalFormat?: int}` updates host evaluation values without modifying the package; `{}` reads them; defaults are zero and the normal-format code is passed through |
+| `graph.context` | `{physicalSize?: [x, y, z], pixelRatio?: 0\|1, tiling?: [horizontal, vertical]}` edits material-graph metadata with undo; `{}` reads it; reusable functions receive their caller's context |
 | `file.new` | `{template?, name?, size?}`; templates from `graph.templates` (`empty`, `pbr`, `bricks`, `stone_tiles`, `wood`, `rusty_metal`, `fabric`, `ground`) |
 | `graph.node.edit` | `{}` resolves the selected FX-Map, processor or graph instance to `{kind, node, parameter?, graph?, document?, path?}`; use `ui.menu.invoke` to open its reference in the graph panel |
 | `graph.node.info` | `{id}` returns `{text}` describing a main-graph node without changing the document or node clipboard |
 | `graph.instance.add` | `{document, graph, function?: FunctionGraphTarget, at?, snapToGrid?}` adds a linked graph instance from an open package; requires a source output and rejects dependency cycles |
 | `package.activate` | `{document}` activates an open package while retaining each package's selection, views and undo history |
 | `package.close` / `package.closeAll` | `{document?, discard?}` / `{discard?}` closes one/all packages; modified packages require explicit discard |
+| `folder.create` / `folder.rename` / `folder.remove` | `{parent?, name?}` / `{folder, name}` / `{folder}` edits SBS folders, including empty folders; removal includes descendants and supports undo |
+| `explorer.copy` / `explorer.paste` | `{graph? index, folder?}` / `{folder?}` copies a graph, folder subtree, or package contents and pastes into a folder or the package root; internal references follow the copies |
+| `explorer.move` | `{graph? index, folder?, parent?}` moves a graph or folder within the active package and updates local graph references |
+| `file.reload` | `{discard?}` reloads the active document in place; unsaved changes require explicit discard |
+| `file.saveCopyAs` | `{path}` writes a copy without changing the active document's path, modified flag, or history |
 | `graph.pattern.set` | `{id, pattern}` replaces an FX-Map subgraph with cycle validation and undo |
 | `graph.node.add` | `{def, at?, params?, connectFrom?: {node, port?}, label?}` |
 | `graph.connect` / `graph.disconnect` | `{from, fromPort?, to, toPort?}` / `{to, toPort}` |
@@ -99,6 +107,17 @@ Opening an SBS file or creating a package retains the other open packages. `sess
 includes `documents` with each package's document id, path, active state, modified state and graphs.
 Explorer graph drags use that document id and graph name with `graph.instance.add`.
 
+A single click on an Explorer graph inspects its properties without changing the open canvas.
+Regular graphs currently show Identifier and Label in Attributes; function graphs show the full
+attribute form.
+`graph.properties`, `graph.attributes`, and `graph.rename` accept optional `document` and `graph`
+targets, including graphs in inactive packages. Attribute edits use `label`, `description`,
+`category`, `author`, `authorUrl`, `tags`, `group`, and `userData`; the identifier uses
+`graph.rename` with `name`. Labels are display text, while identifiers remain the SBS reference
+names. Graph metadata is saved in native SBS attributes for both material and function graphs.
+Edits belong to the target package's undo history. Size, format, and seed commands accept the same
+optional targets.
+
 Main graphs with outputs can be instanced in other main graphs. Cross-file sources must be saved
 first; the target stores a file reference and connector metadata, not a copy of the source nodes.
 Unsaved source edits update open instances and mark dependent packages modified, including
@@ -119,7 +138,7 @@ and retains the parent Function/processor canvas for return navigation. Double-c
 has no additional action, and Ctrl+E does not open its source. Ctrl+E still opens the embedded canvas
 of a Pixel Processor, Value Processor or FX-Map node.
 
-Source-file watching and global Library SBS assets are not implemented yet.
+Source-file watching is not implemented yet. The global Function Library reads `sbs://functions.sbs`.
 References currently identify graphs by name; renaming an external source graph requires recreating
 its instances. Save As creates a separate file and does not redirect references to the original.
 
@@ -268,6 +287,8 @@ each has its own reader and writer (`crates/formats/src/material.rs` here), so k
 | `graph.input.bind` / `graph.input.unbind` | `{identifier, resource? \| path?, linear?}` / `{identifier}`: a preview image for an input node (a mesh map exported from TextureCraft), saved in the package |
 | `file.open` | opens native `.sbs` packages, and a `.mcmat`'s source package, on its graph, with no file name. Returns `warnings`: what an SBS file holds that MaterialCraft can't read yet (missing nodes are kept as placeholders); also in `session.inspect` as `package.warnings` |
 | `file.save` | `{path?}`: native SBS; `.sbs` is appended when the path does not end in `.sbs` |
+| `library.functions` | `{filter?}`: list reusable SBS functions with package URI, full graph path, typed ports and missing status |
+| `library.function.add` | `{graph, package? (default: sbs://functions.sbs), function?: FunctionGraphTarget, at?, snapToGrid?}`: insert a reference into the active Function or processor canvas |
 
 ## MCP tools
 

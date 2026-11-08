@@ -9,6 +9,8 @@ pub struct UiState {
     pub dock: Dock,
     pub prefs: Prefs,
     pub windows: Windows,
+    #[serde(skip)]
+    pub explorer: crate::explorer::ExplorerState,
     pub graph_camera: GraphCamera,
     pub image_camera: ImageCamera,
     /// Library: the selected category path ("" = all) and the search text
@@ -39,6 +41,7 @@ impl Default for UiState {
             dock: Dock::default(),
             prefs: Prefs::default(),
             windows: Windows::default(),
+            explorer: Default::default(),
             graph_camera: GraphCamera::default(),
             image_camera: ImageCamera::default(),
             library_category: String::new(),

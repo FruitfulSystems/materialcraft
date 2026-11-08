@@ -21,6 +21,30 @@ pub struct OpenDocument {
 }
 
 impl OpenDocument {
+    pub(crate) fn edit<T>(&mut self, label: &str, edit: impl FnOnce(&mut Package) -> crate::Result<T>) -> crate::Result<T> {
+        let mut package = self.pkg.clone();
+        let result = edit(&mut package)?;
+        let snapshot = Snapshot {
+            pkg: std::mem::replace(&mut self.pkg, package),
+            graph: self.graph,
+            selection: self.selection.clone(),
+            annotation_selection: self.annotation_selection,
+            material_preview: self.material_preview.clone(),
+            label: label.into(),
+            modified: self.modified,
+            // The active document's cook cache cannot be reused after activation
+            dirty: true,
+            cook_epoch: 0,
+        };
+        self.undo.push(snapshot);
+        if self.undo.len() > crate::session::MAX_UNDO {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.modified = true;
+        Ok(result)
+    }
+
     pub(crate) fn new(id: u64, pkg: Package, path: Option<String>) -> Self {
         Self {
             id,

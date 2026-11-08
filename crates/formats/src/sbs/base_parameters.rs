@@ -1,6 +1,6 @@
 use super::sbs_value::sbs_constant;
 use super::xml::{child_element, child_value, children_named};
-use materialcraft_core::{BaseParameters, MAX_SIZE_LOG2, OutputFormat, SizeMode};
+use materialcraft_core::{BaseParameters, MAX_SIZE_LOG2, OutputFormat, ParameterInheritance, SizeMode};
 use roxmltree::Node as XmlNode;
 use std::fmt::Write as _;
 
@@ -8,6 +8,17 @@ pub(super) fn read_base_params(params: Option<XmlNode>) -> BaseParameters {
     let mut base = BaseParameters::default();
     for param in params.into_iter().flat_map(|p| children_named(p, "parameter")) {
         let relative_to = child_value(param, "relativeTo").and_then(|r| r.trim().parse::<i32>().ok()).unwrap_or(1);
+        let inheritance = match relative_to {
+            0 => ParameterInheritance::Absolute,
+            2 => ParameterInheritance::RelativeToParent,
+            _ => ParameterInheritance::RelativeToInput,
+        };
+        match child_value(param, "name") {
+            Some("tiling") => base.tiling_mode = inheritance,
+            Some("pixelratio") => base.pixel_ratio_mode = inheritance,
+            _ => {}
+        }
+
         let Some(value) = child_element(param, "paramValue").and_then(sbs_constant) else { continue };
 
         match child_value(param, "name") {
@@ -31,7 +42,8 @@ pub(super) fn read_base_params(params: Option<XmlNode>) -> BaseParameters {
                 }
             }
             Some("randomseed") if relative_to == 0 => base.seed = value.int(0),
-            Some("tiling") if relative_to == 0 => base.tiling = [value.int(0) & 1 != 0, value.int(0) & 2 != 0],
+            Some("tiling") => base.tiling = [value.int(0) & 1 != 0, value.int(0) & 2 != 0],
+            Some("pixelratio") => base.pixel_ratio = value.int(0).clamp(0, 1),
             _ => {}
         }
     }
@@ -74,9 +86,21 @@ pub(super) fn base_params_xml(base: &BaseParameters) -> String {
             base.seed
         );
     }
-    if base.tiling != [true, true] {
-        let code = i32::from(base.tiling[0]) | (i32::from(base.tiling[1]) << 1);
-        out.push_str(&super::node_parameter::param_xml("tiling", &materialcraft_core::Value::Int(code)).unwrap_or_default());
+    let tiling = i32::from(base.tiling[0]) | (i32::from(base.tiling[1]) << 1);
+    for (name, value, inheritance, default) in [("tiling", tiling, base.tiling_mode, 3), ("pixelratio", base.pixel_ratio, base.pixel_ratio_mode, 0)] {
+        if inheritance == ParameterInheritance::RelativeToInput && value == default {
+            continue;
+        }
+
+        let relative_to = match inheritance {
+            ParameterInheritance::Absolute => 0,
+            ParameterInheritance::RelativeToInput => 1,
+            ParameterInheritance::RelativeToParent => 2,
+        };
+        let _ = write!(
+            out,
+            "<parameter><name v=\"{name}\"/><relativeTo v=\"{relative_to}\"/><paramValue><constantValueInt32 v=\"{value}\"/></paramValue></parameter>"
+        );
     }
     out
 }

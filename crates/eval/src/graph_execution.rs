@@ -29,7 +29,7 @@ pub fn cook(package: &Package, graph_index: usize, options: &Options, cache: &Mu
         options
     };
 
-    let prepared = PreparedGraph::new(package, graph, options.only.as_deref());
+    let prepared = PreparedGraph::new(package, graph, options);
 
     // Exposed parameter values: the graph's own, then the caller's overrides
     let mut variables: BTreeMap<String, Value> =
@@ -37,6 +37,11 @@ pub fn cook(package: &Package, graph_index: usize, options: &Options, cache: &Mu
     for (name, value) in &options.overrides {
         variables.insert(name.clone(), value.clone());
     }
+    variables.insert("$time".into(), Value::Float(options.environment.time_seconds));
+    variables.insert("$uvtile".into(), Value::Int2(options.environment.uv_tile));
+    variables.insert("$normalformat".into(), Value::Int(options.environment.normal_format));
+    variables.insert("$physicalsize".into(), Value::Float3(graph.physical_size));
+
     for &id in &prepared.order {
         if options.cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
             cooked.cancelled = true;

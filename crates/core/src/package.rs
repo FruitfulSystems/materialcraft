@@ -8,6 +8,9 @@ pub const PACKAGE_EXT: &str = "sbs";
 pub struct Package {
     pub name: String,
     pub graphs: Vec<Graph>,
+    /// Explicit SBS group paths, including folders without graphs
+    #[serde(default)]
+    pub folders: Vec<String>,
     #[serde(default)]
     pub resources: Vec<Resource>,
     /// Resolved source packages shared by cooks; SBS stores their file references instead
@@ -24,7 +27,25 @@ fn version() -> u32 {
 
 impl Package {
     pub fn new(name: &str) -> Package {
-        Package { name: name.into(), graphs: Vec::new(), resources: Vec::new(), version: 1, dependencies: Default::default() }
+        Package { name: name.into(), graphs: Vec::new(), folders: Vec::new(), resources: Vec::new(), version: 1, dependencies: Default::default() }
+    }
+
+    pub fn folder_paths(&self) -> std::collections::BTreeSet<String> {
+        let mut folders = std::collections::BTreeSet::new();
+        for path in self
+            .folders
+            .iter()
+            .map(String::as_str)
+            .chain(self.graphs.iter().map(|graph| graph.folder.as_str()))
+            .chain(self.resources.iter().map(|resource| resource.folder.as_str()))
+        {
+            let mut parent = path;
+            while !parent.is_empty() {
+                folders.insert(parent.to_string());
+                parent = parent.rsplit_once('/').map_or("", |(parent, _)| parent);
+            }
+        }
+        folders
     }
 
     pub fn graph(&self, i: usize) -> Result<&Graph> {
@@ -36,7 +57,11 @@ impl Package {
     }
 
     pub fn graph_by_name(&self, name: &str) -> Option<(usize, &Graph)> {
-        self.graphs.iter().enumerate().find(|(_, g)| g.name == name)
+        self.graphs.iter().enumerate().find(|(_, g)| g.sbs_path() == name).or_else(|| {
+            let mut matches = self.graphs.iter().enumerate().filter(|(_, g)| g.name == name);
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        })
     }
 
     pub fn resource(&self, name: &str) -> Option<&Resource> {
@@ -46,10 +71,10 @@ impl Package {
     /// A name not used by any graph: `base`, `base_1`, `base_2`…
     pub fn unique_graph_name(&self, base: &str) -> String {
         let base = if base.trim().is_empty() { "Graph" } else { base.trim() };
-        if self.graph_by_name(base).is_none() {
+        if !self.graphs.iter().any(|graph| graph.name == base) {
             return base.to_string();
         }
-        (1..).map(|i| format!("{base}_{i}")).find(|n| self.graph_by_name(n).is_none()).unwrap_or_else(|| base.to_string())
+        (1..).map(|index| format!("{base}_{index}")).find(|name| !self.graphs.iter().any(|graph| graph.name == *name)).unwrap_or_else(|| base.to_string())
     }
 
     pub fn instance_package(&self, node: &crate::Node) -> Option<&Package> {

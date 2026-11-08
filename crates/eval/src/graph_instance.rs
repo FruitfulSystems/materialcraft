@@ -45,6 +45,7 @@ pub(crate) fn cook_instance(
     inputs: &[Option<&NodeOutput>],
     params: &BTreeMap<String, Value>,
     size: (u32, u32),
+    base: crate::resolved_base_parameters::ResolvedBaseParameters,
     opts: &Options,
     cache: &Mutex<Cache>,
 ) -> Result<Vec<NodeOutput>, String> {
@@ -69,6 +70,9 @@ pub(crate) fn cook_instance(
         _ => (opts.resource)(name),
     };
     let mut o = Options::new(&resource);
+    o.environment = opts.environment;
+    o.parent_tiling = Some(base.tiling);
+    o.parent_pixel_ratio = Some(base.pixel_ratio);
     o.registry = Some(registry);
     o.resource_root = Some(root_resource);
     o.max_size = opts.max_size;

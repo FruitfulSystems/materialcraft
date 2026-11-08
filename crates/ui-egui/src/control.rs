@@ -294,6 +294,7 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 "graphView": rect(view),
                 "selection": app.session.selection,
                 "inspectedNode": app.graph.inspected_node,
+                "inspectedGraph": app.inspected_graph.map(|target| json!({"document": target.document, "graph": target.graph})),
                 "subgraph": match target {
                     crate::graph::editor_target::EditorTarget::Function => app.function_editor.as_ref()
                         .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "selectedWires": editor.selected_wires, "inspectedNode": editor.inspected_node})),
