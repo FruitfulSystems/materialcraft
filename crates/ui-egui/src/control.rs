@@ -259,6 +259,9 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                     if id == "view.previewSize" {
                         app.ui.prefs.preview_size = app.session.preview_size.unwrap_or(0);
                     }
+                    if id == "session.history" {
+                        app.ui.prefs.history = app.session.history_prefs;
+                    }
                     app.close_subgraph_after(id);
                     ok(v)
                 }

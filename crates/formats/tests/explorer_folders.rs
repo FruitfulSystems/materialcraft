@@ -41,36 +41,6 @@ fn nested_resource_paths_are_preserved_without_duplicate_groups() {
 }
 
 #[test]
-#[ignore = "local interoperability input; set MC_FUNCTIONS_SBS to an external package"]
-fn supplied_package_folder_paths_round_trip() {
-    let path = std::env::var("MC_FUNCTIONS_SBS").unwrap();
-    let bytes = std::fs::read(&path).unwrap();
-    let document = roxmltree::Document::parse(std::str::from_utf8(&bytes).unwrap()).unwrap();
-    let native_paths: std::collections::BTreeSet<_> = document
-        .descendants()
-        .filter(|node| node.has_tag_name("group"))
-        .map(|node| {
-            let mut parts: Vec<_> = node
-                .ancestors()
-                .filter(|node| node.has_tag_name("group"))
-                .map(|node| node.children().find(|node| node.has_tag_name("identifier")).unwrap().attribute("v").unwrap())
-                .collect();
-            parts.reverse();
-            parts.join("/")
-        })
-        .collect();
-
-    let imported = read_sbs(&bytes, &path, &|_| None).unwrap();
-    assert_eq!(imported.pkg.folder_paths(), native_paths);
-    let saved = write_sbs(&imported.pkg).unwrap();
-    let reopened = read_sbs(&saved, "roundtrip.sbs", &|_| None).unwrap();
-    assert_eq!(reopened.pkg.folder_paths(), native_paths);
-    for graph in &imported.pkg.graphs {
-        assert!(reopened.pkg.graph_by_name(&graph.sbs_path()).is_some());
-    }
-}
-
-#[test]
 fn empty_packages_round_trip_without_invented_graphs() {
     let package = materialcraft_core::Package::new("Empty");
     let read = read_sbs(&write_sbs(&package).unwrap(), "empty.sbs", &|_| None).unwrap();

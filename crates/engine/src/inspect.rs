@@ -86,6 +86,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
         "cookMs": s.cooked.ms,
         "dirty": s.dirty,
         "history": s.history(),
+        "historyPreferences": s.history_prefs,
         "canUndo": s.can_undo(),
         "canRedo": s.can_redo(),
         "log": s.log.iter().rev().take(20).collect::<Vec<_>>(),

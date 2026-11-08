@@ -44,6 +44,46 @@ fn numbered_explorer_names_increment_across_conflicts() {
 }
 
 #[test]
+fn graph_duplication_uses_the_destination_item_namespace() {
+    use materialcraft_engine::core::{Graph, Resource, ResourceBytes};
+    let mut package = Package::new("Names");
+    let mut graph = Graph::new("Surface");
+    graph.folder = "Tools".into();
+    package.graphs.push(graph);
+    package.folders.push("Tools/Surface_1".into());
+    let mut resource = Resource::new("Surface_2", "tile.png", ResourceBytes::new(vec![1]));
+    resource.folder = "Tools".into();
+    package.resources.push(resource);
+    package.graphs.push(Graph::new("Surface_3"));
+    let mut session = Session::new(package);
+
+    run(&mut session, "graph.duplicate", json!({"graph": 0}));
+
+    assert_eq!(session.graph().unwrap().sbs_path(), "Tools/Surface_3");
+    assert!(!session.pkg.folder_paths().contains(&session.graph().unwrap().sbs_path()));
+}
+
+#[test]
+fn graph_from_selection_avoids_folder_and_resource_names() {
+    use materialcraft_engine::core::{Graph, Resource, ResourceBytes};
+    let mut package = Package::new("Names");
+    let mut graph = Graph::new("Canvas");
+    let node = graph.add_node("output", [0.0, 0.0]);
+    package.graphs.push(graph);
+    package.folders.push("Sub_graph".into());
+    let mut resource = Resource::new("Sub_graph_1", "tile.png", ResourceBytes::new(vec![1]));
+    resource.folder.clear();
+    package.resources.push(resource);
+    let mut session = Session::new(package);
+    session.selection = vec![node];
+
+    run(&mut session, "graph.createFromSelection", json!({}));
+
+    assert!(session.pkg.graph_by_name("Sub_graph_2").is_some());
+    assert!(!session.pkg.graphs.iter().any(|graph| session.pkg.folder_paths().contains(&graph.sbs_path())));
+}
+
+#[test]
 fn explorer_moves_and_renames_cannot_collide_with_resources() {
     use materialcraft_engine::core::{Resource, ResourceBytes};
     let mut session = Session::new(Package::new("Names"));

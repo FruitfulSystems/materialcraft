@@ -13,7 +13,7 @@ pub fn main_toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
     egui::Panel::top("main_toolbar").exact_size(30.0).frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(6, 2))).show(ui, |ui| {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let (u, r) = (app.session.can_undo(), app.session.can_redo());
+            let (u, r) = (crate::menus::enabled(app, "edit.undo"), crate::menus::enabled(app, "edit.redo"));
             let mut b = |ui: &mut Ui, ic: &str, tip: &str, id: &str, on: bool| {
                 let r = ui.add_enabled_ui(on, |ui| crate::widgets::icon_button(ui, ic, tip, false, 24.0)).inner;
                 if r.clicked() {

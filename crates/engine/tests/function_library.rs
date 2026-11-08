@@ -57,10 +57,11 @@ fn every_bundled_function_has_a_resolved_executable_body() {
     assert_eq!(entries.len(), 171);
     assert!(missing.is_empty(), "missing bundled functions: {missing:?}");
     for entry in entries {
-        let mut caller = self::session();
-        let identifier = execute(&mut caller, "library.function.add", &json!({"graph": entry["graph"]})).unwrap()["id"].as_u64().unwrap();
-        execute(&mut caller, "graph.function.edit", &json!({"edit": {"action": "output", "id": identifier}})).unwrap();
-        let function = caller.graph().unwrap().function.as_ref().unwrap();
+        session.graph_mut().unwrap().function = Some(FunctionGraph::default());
+        session.reset_history();
+        let identifier = execute(&mut session, "library.function.add", &json!({"graph": entry["graph"]})).unwrap()["id"].as_u64().unwrap();
+        execute(&mut session, "graph.function.edit", &json!({"edit": {"action": "output", "id": identifier}})).unwrap();
+        let function = session.graph().unwrap().function.as_ref().unwrap();
 
         assert!(matches!(function.nodes[0].source, Some(Ok(_))), "{}", entry["graph"]);
         function::compile(function, 0).unwrap_or_else(|error| panic!("{}: {error}", entry["graph"]));
@@ -173,38 +174,6 @@ fn renaming_a_nested_source_updates_its_local_reference() {
 
 #[test]
 #[ignore = "local interoperability input; set MC_FUNCTIONS_SBS to an external package"]
-fn supplied_library_instances_resolve_all_function_paths() {
-    let path = std::env::var("MC_FUNCTIONS_SBS").unwrap();
-    let bytes = std::fs::read(&path).unwrap();
-    let read = materialcraft_engine::formats::sbs::read_sbs(&bytes, &path, &|_| None).unwrap();
-    let session = Session::new(read.pkg);
-    let mut references = 0;
-    let mut unresolved = 0;
-    let mut compiled = 0;
-
-    for graph in &session.pkg.graphs {
-        let function = graph.function.as_ref().unwrap();
-        for node in function.nodes.iter().filter(|node| node.instance.is_some()) {
-            let source = node.source.as_ref().expect("every instance must be resolved or diagnosed");
-            if let Err(error) = source {
-                unresolved += 1;
-                eprintln!("Unresolved instance in {}: {error}", graph.sbs_path());
-            }
-            references += 1;
-        }
-        match function::compile(function, 0) {
-            Ok(_) => compiled += 1,
-            Err(error) => eprintln!("Could not compile {}: {error}", graph.sbs_path()),
-        }
-    }
-
-    eprintln!("Resolved {} of {references} instances and compiled {compiled} functions", references - unresolved);
-    assert_eq!(unresolved, 0, "every supplied instance must resolve");
-    assert_eq!(compiled, session.pkg.graphs.len(), "every supplied function must compile");
-}
-
-#[test]
-#[ignore = "local interoperability input; set MC_FUNCTIONS_SBS to an external package"]
 fn supplied_functions_evaluate_before_and_after_save() {
     let path = std::env::var("MC_FUNCTIONS_SBS").unwrap();
     let read = materialcraft_engine::formats::sbs::read_sbs(&std::fs::read(&path).unwrap(), &path, &|_| None).unwrap();
@@ -218,7 +187,11 @@ fn supplied_functions_evaluate_before_and_after_save() {
     let mut defaults = 0;
 
     for graph in &before.pkg.graphs {
-        let source = function::compile(graph.function.as_ref().unwrap(), 0).unwrap();
+        let function = graph.function.as_ref().unwrap();
+        for node in function.nodes.iter().filter(|node| node.instance.is_some()) {
+            assert!(matches!(node.source, Some(Ok(_))), "{}: unresolved instance {}", graph.sbs_path(), node.id);
+        }
+        let source = function::compile(function, 0).unwrap();
         let saved = after.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
         let saved = function::compile(saved.function.as_ref().unwrap(), 0).unwrap();
         let converted = bundled.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;

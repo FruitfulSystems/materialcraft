@@ -5,18 +5,72 @@ use materialcraft_engine::{
 };
 use serde_json::json;
 
+#[path = "graph_property/history_preferences.rs"]
+mod history_preferences;
+
 #[test]
-fn attributes_target_an_unopened_graph_without_changing_the_canvas() {
+fn inactive_seed_gestures_merge_and_finish_independently() {
     let mut package = Package::new("Source");
-    package.graphs = vec![Graph::new("Canvas"), Graph::new("Inspected")];
+    package.graphs.push(Graph::new("Inspected"));
     let mut session = Session::new(package);
+    execute(&mut session, "file.newPackage", &json!({"name": "Canvas"})).unwrap();
+    let active = session.document_id;
+    let before = session.pkg.clone();
 
-    execute(&mut session, "graph.attributes", &json!({"graph": "Inspected", "description": "Edited elsewhere", "label": "Readable name"})).unwrap();
+    for seed in [1, 2, 3] {
+        execute(&mut session, "graph.seed", &json!({"document": 0, "graph": 0, "seed": seed})).unwrap();
+    }
+    session.finish_edit();
+    for seed in [4, 5] {
+        execute(&mut session, "graph.seed", &json!({"document": 0, "graph": 0, "seed": seed})).unwrap();
+    }
+    execute(&mut session, "edit.undo", &json!({"document": 0})).unwrap();
 
-    assert_eq!(session.graph, 0);
-    assert!(session.pkg.graphs[0].attributes.description.is_empty());
-    assert_eq!(session.pkg.graphs[1].attributes.description, "Edited elsewhere");
-    assert_eq!(serde_json::to_value(&session.pkg.graphs[1].attributes).unwrap()["label"], "Readable name");
+    let target = materialcraft_engine::GraphTarget { document: 0, graph: 0 };
+    assert_eq!(target.get(&session).unwrap().seed, 3);
+    execute(&mut session, "edit.undo", &json!({"document": 0})).unwrap();
+    assert_eq!(target.get(&session).unwrap().seed, 0);
+    execute(&mut session, "edit.redo", &json!({"document": 0})).unwrap();
+    assert_eq!(target.get(&session).unwrap().seed, 3);
+    execute(&mut session, "edit.redo", &json!({"document": 0})).unwrap();
+    assert_eq!(target.get(&session).unwrap().seed, 5);
+    assert_eq!(session.document_id, active);
+    assert_eq!(session.pkg, before);
+
+    execute(&mut session, "package.activate", &json!({"document": 0})).unwrap();
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert_eq!(session.graph().unwrap().seed, 3);
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert_eq!(session.graph().unwrap().seed, 0);
+}
+
+#[test]
+fn history_commands_default_to_the_canvas_and_reject_invalid_targets() {
+    let mut package = Package::new("Source");
+    package.graphs.push(Graph::new("Inspected"));
+    let mut session = Session::new(package);
+    execute(&mut session, "file.newPackage", &json!({"name": "Canvas"})).unwrap();
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    session.reset_history();
+    execute(&mut session, "graph.seed", &json!({"seed": 8})).unwrap();
+    execute(&mut session, "graph.attributes", &json!({"document": 0, "graph": 0, "label": "Source label"})).unwrap();
+    let source = materialcraft_engine::GraphTarget { document: 0, graph: 0 };
+    let canvas = session.pkg.clone();
+
+    for document in [json!(-1), json!("0"), json!(u64::MAX)] {
+        assert!(execute(&mut session, "edit.undo", &json!({"document": document})).is_err());
+    }
+    assert_eq!(session.pkg, canvas);
+    assert_eq!(source.get(&session).unwrap().attributes.label, "Source label");
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+
+    assert_eq!(session.graph().unwrap().seed, 0);
+    assert_eq!(source.get(&session).unwrap().attributes.label, "Source label");
+    assert!(session.can_undo_document(0));
+    assert!(!session.can_undo());
+    assert!(session.can_redo());
+    execute(&mut session, "edit.redo", &json!({})).unwrap();
+    assert_eq!(session.graph().unwrap().seed, 8);
 }
 
 #[test]

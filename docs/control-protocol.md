@@ -48,6 +48,19 @@ when resaving a file from an older release. `formatVersion` identifies the SBS s
 | `ui.screenshot` | app | PNG of the whole window |
 | `ui.resize {width, height}` | app | window size in points |
 
+### Undo preferences and document history
+
+`session.history {undoLimit?}` reads or sets the number of retained undo steps per package
+(1–10,000; default 200). This is an app preference, independent of SBS contents. The desktop and
+web app expose it under **Edit → Preferences → Undo history (steps)** and persist it with UI
+preferences (`prefs.history.undoLimit`). Changing it applies to every open package and future
+edits; lowering it drops the oldest excess states from the undo and redo stacks.
+
+`edit.undo {document?}` and `edit.redo {document?}` default to the active package. An explicit
+document id operates on that package without switching the canvas. UI Undo/Redo target the
+package whose graph is being inspected in Explorer, or the canvas package when no graph is
+being inspected.
+
 ### Synthetic input (`ui.input`)
 
 Events are applied one frame at a time, so egui sees real presses, drags and releases. Positions are

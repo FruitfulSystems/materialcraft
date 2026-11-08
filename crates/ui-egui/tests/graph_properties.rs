@@ -21,6 +21,10 @@ fn harness(render: bool) -> Harness<'static, MaterialCraftApp> {
     let mut app = MaterialCraftApp::headless(Session::new(package), UiState::default());
     app.run("file.newPackage", json!({"name": "Canvas"})).unwrap();
     app.run("file.new", json!({"template": "empty", "name": "Open_graph"})).unwrap();
+    app_harness(app, render)
+}
+
+fn app_harness(app: MaterialCraftApp, render: bool) -> Harness<'static, MaterialCraftApp> {
     let builder = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0);
     let builder = if render { builder.wgpu() } else { builder };
     let mut harness = builder.build_ui_state(
@@ -101,6 +105,111 @@ fn identifier_edit_commits_before_switching_the_inspector() {
 }
 
 #[test]
+fn inspector_undo_and_redo_leave_the_canvas_package_unchanged() {
+    let mut harness = harness(false);
+    harness.state_mut().session.reset_history();
+    let active = harness.state().session.document_id;
+    let canvas = harness.state().session.pkg.clone();
+    select(&mut harness, "Helper");
+    type_field(&mut harness, "Label", "Edited label");
+    harness.key_press(Key::Enter);
+    harness.run_steps(4);
+    let target = materialcraft_engine::GraphTarget { document: 0, graph: 1 };
+    assert_eq!(target.get(&harness.state().session).unwrap().attributes.label, "Edited label");
+
+    assert!(materialcraft_ui_egui::menus::enabled(harness.state(), "edit.undo"));
+    materialcraft_ui_egui::menus::invoke(harness.state_mut(), &egui::Context::default(), "edit.undo");
+
+    assert_eq!(target.get(&harness.state().session).unwrap().attributes.label, "Readable helper");
+    assert!(!materialcraft_ui_egui::menus::enabled(harness.state(), "edit.undo"));
+    assert!(materialcraft_ui_egui::menus::enabled(harness.state(), "edit.redo"));
+    materialcraft_ui_egui::menus::invoke(harness.state_mut(), &egui::Context::default(), "edit.redo");
+    assert_eq!(target.get(&harness.state().session).unwrap().attributes.label, "Edited label");
+    assert_eq!(harness.state().session.document_id, active);
+    assert_eq!(harness.state().session.pkg, canvas);
+}
+
+#[test]
+fn closing_with_focused_graph_text_prompts_to_save() {
+    close_with_focused_graph_text(false);
+}
+
+#[test]
+fn native_close_with_focused_graph_text_prompts_to_save() {
+    close_with_focused_graph_text(true);
+}
+
+fn close_with_focused_graph_text(native_close: bool) {
+    let mut package = Package::new("Saved");
+    let mut function = Graph::new("Helper");
+    function.function = Some(FunctionGraph::default());
+    package.graphs.push(function);
+    let app = MaterialCraftApp::headless(Session::new(package), UiState::default());
+    let mut harness = app_harness(app, false);
+    select(&mut harness, "Helper");
+    type_field(&mut harness, "Label", "Pending label");
+    assert!(!harness.state().session.modified);
+
+    if native_close {
+        let mut input = egui::RawInput::default();
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
+        let output = egui::Context::default().run_ui(input, |ui| materialcraft_ui_egui::unsaved::handle_close(harness.state_mut(), ui.ctx()));
+        assert!(output.viewport_output[&egui::ViewportId::ROOT].commands.contains(&egui::ViewportCommand::CancelClose));
+    } else {
+        materialcraft_ui_egui::unsaved::guard(harness.state_mut(), materialcraft_ui_egui::unsaved::Guarded::Quit);
+    }
+
+    assert!(harness.state().ui.windows.unsaved.is_some());
+    assert_eq!(harness.state().session.graph().unwrap().attributes.label, "Pending label");
+    assert!(harness.state().session.modified);
+}
+
+#[test]
+fn opening_package_bytes_preserves_focused_graph_text() {
+    let mut harness = harness(false);
+    select(&mut harness, "Helper");
+    type_field(&mut harness, "Label", "Pending label");
+    let bytes = materialcraft_engine::formats::sbs::write_sbs(&Package::new("Dropped")).unwrap();
+
+    materialcraft_ui_egui::web_files::load(harness.state_mut(), "dropped.sbs", bytes, false);
+
+    let target = materialcraft_engine::GraphTarget { document: 0, graph: 1 };
+    assert_eq!(target.get(&harness.state().session).unwrap().attributes.label, "Pending label");
+    assert_eq!(harness.state().session.pkg.name, "Dropped");
+}
+
+#[test]
+fn undo_limit_is_editable_in_preferences_and_through_commands() {
+    let mut harness = harness(false);
+    harness.state_mut().ui.windows.preferences = true;
+    harness.run_steps(5);
+
+    type_field(&mut harness, "Undo history (steps)", "500");
+    harness.key_press(Key::Enter);
+    harness.run_steps(4);
+
+    assert_eq!(harness.state().ui.prefs.history.undo_limit, 500);
+    assert_eq!(harness.state().session.history_prefs.undo_limit, 500);
+    let saved = serde_json::to_value(&harness.state().ui).unwrap();
+    let restored: UiState = serde_json::from_value(saved).unwrap();
+    let app = MaterialCraftApp::headless(Session::new(Package::new("Restored")), restored);
+    assert_eq!(app.session.history_prefs.undo_limit, 500);
+
+    let result = materialcraft_ui_egui::control::handle(
+        harness.state_mut(),
+        &egui::Context::default(),
+        "command.run",
+        &json!({
+            "id": "session.history", "params": {"undoLimit": 25}
+        }),
+    );
+    assert_eq!(result["ok"], true);
+    harness.run_steps(3);
+    assert_eq!(harness.state().ui.prefs.history.undo_limit, 25);
+    assert_eq!(harness.state().session.history_prefs.undo_limit, 25);
+}
+
+#[test]
 #[ignore = "requires an offscreen GPU"]
 fn graph_properties_screenshot() {
     let mut harness = harness(true);
@@ -111,4 +220,8 @@ fn graph_properties_screenshot() {
 
     select(&mut harness, "Material");
     harness.render().unwrap().save(directory.join("material-graph-properties.png")).unwrap();
+
+    harness.state_mut().ui.windows.preferences = true;
+    harness.run_steps(5);
+    harness.render().unwrap().save(directory.join("history-preferences.png")).unwrap();
 }

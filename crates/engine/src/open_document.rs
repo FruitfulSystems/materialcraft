@@ -16,16 +16,13 @@ pub struct OpenDocument {
     load_warnings: Vec<String>,
     clipboard: Option<Clip>,
     embedded_clipboard: Option<EmbeddedClipboard>,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    pub(crate) history: crate::document_history::DocumentHistory,
 }
 
 impl OpenDocument {
-    pub(crate) fn edit<T>(&mut self, label: &str, edit: impl FnOnce(&mut Package) -> crate::Result<T>) -> crate::Result<T> {
-        let mut package = self.pkg.clone();
-        let result = edit(&mut package)?;
-        let snapshot = Snapshot {
-            pkg: std::mem::replace(&mut self.pkg, package),
+    fn snapshot(&self, label: &str) -> Snapshot {
+        Snapshot {
+            pkg: self.pkg.clone(),
             graph: self.graph,
             selection: self.selection.clone(),
             annotation_selection: self.annotation_selection,
@@ -35,14 +32,52 @@ impl OpenDocument {
             // The active document's cook cache cannot be reused after activation
             dirty: true,
             cook_epoch: 0,
-        };
-        self.undo.push(snapshot);
-        if self.undo.len() > crate::session::MAX_UNDO {
-            self.undo.remove(0);
         }
-        self.redo.clear();
+    }
+
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.pkg = snapshot.pkg;
+        self.graph = snapshot.graph.min(self.pkg.graphs.len().saturating_sub(1));
+        self.selection = snapshot.selection;
+        self.annotation_selection = snapshot.annotation_selection;
+        self.material_preview = snapshot.material_preview;
+        self.modified = snapshot.modified;
+    }
+
+    pub(crate) fn edit<T>(&mut self, label: &str, key: Option<&str>, limit: usize, edit: impl FnOnce(&mut Package) -> crate::Result<T>) -> crate::Result<T> {
+        let snapshot = self.snapshot(label);
+        let result = match edit(&mut self.pkg) {
+            Ok(result) => result,
+            Err(error) => {
+                self.restore(snapshot);
+                return Err(error);
+            }
+        };
+        self.history.record(snapshot, key, limit);
         self.modified = true;
         Ok(result)
+    }
+
+    pub(crate) fn undo(&mut self, limit: usize) -> Option<String> {
+        if !self.history.can_undo() {
+            return None;
+        }
+
+        let snapshot = self.history.undo(self.snapshot(""), limit)?;
+        let label = snapshot.label.clone();
+        self.restore(snapshot);
+        Some(label)
+    }
+
+    pub(crate) fn redo(&mut self, limit: usize) -> Option<String> {
+        if !self.history.can_redo() {
+            return None;
+        }
+
+        let snapshot = self.history.redo(self.snapshot(""), limit)?;
+        let label = snapshot.label.clone();
+        self.restore(snapshot);
+        Some(label)
     }
 
     pub(crate) fn new(id: u64, pkg: Package, path: Option<String>) -> Self {
@@ -60,14 +95,14 @@ impl OpenDocument {
             load_warnings: Vec::new(),
             clipboard: None,
             embedded_clipboard: None,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            history: Default::default(),
         }
     }
 
     pub(crate) fn exchange(&mut self, session: &mut Session) {
         session.end_group();
         session.finish_edit();
+        self.history.finish_edit();
         std::mem::swap(&mut self.id, &mut session.document_id);
         macro_rules! exchange {
             ($($field:ident),+ $(,)?) => { $(std::mem::swap(&mut self.$field, &mut session.$field);)+ };
@@ -85,8 +120,7 @@ impl OpenDocument {
             load_warnings,
             clipboard,
             embedded_clipboard,
-            undo,
-            redo
+            history
         );
         // A worker from the previous document must never publish into this one
         session.cook_epoch = session.cook_epoch.wrapping_add(1);

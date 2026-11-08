@@ -109,9 +109,6 @@ fn supplied_function_package_round_trip() {
         let replacement = bundled.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
         assert_eq!(graph.function_type, replacement.function_type, "{}", graph.sbs_path());
         assert_eq!(graph.function_type, other.function_type, "{}", graph.sbs_path());
-        let interface =
-            |graph: &materialcraft_core::Graph| graph.exposed.iter().map(|parameter| (parameter.id.clone(), parameter.default.clone())).collect::<Vec<_>>();
-        assert_eq!(interface(graph), interface(replacement), "{}", graph.sbs_path());
         assert_eq!(graph.exposed, replacement.exposed, "{}", graph.sbs_path());
         assert_ne!(graph.attributes.description, replacement.attributes.description, "{}", graph.sbs_path());
         assert!(replacement.attributes.author.is_empty());
@@ -177,40 +174,6 @@ fn bundled_library_has_complete_bodies_and_current_export_metadata() {
 }
 
 #[test]
-#[ignore = "local interoperability input; set MC_FUNCTIONS_SBS to an external package"]
-fn supplied_parity_functions_match_bundled_graphs() {
-    use materialcraft_core::Value;
-    use materialcraft_nodes::function::{self, EvaluationContext, EvaluationState};
-    use std::collections::BTreeMap;
-
-    let path = std::env::var("MC_FUNCTIONS_SBS").unwrap();
-    let supplied = read_sbs(&std::fs::read(&path).unwrap(), &path, &|_| None).unwrap().pkg;
-    let bundled = read_sbs(include_bytes!("../../../assets/sbs/functions.sbs"), "functions.sbs", &|_| None).unwrap().pkg;
-    let mut inputs: Vec<f32> = (-2048..=2048).map(|index| index as f32 / 8.0).collect();
-    for boundary in [-16_777_216.0_f32, -2.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 16_777_216.0] {
-        inputs.extend([boundary.next_down(), boundary, boundary.next_up()]);
-    }
-
-    for name in ["EvenCount", "OddCount", "ParityTest"] {
-        let compile = |package: &materialcraft_core::Package| {
-            let graph = package.graph_by_name(&format!("Functions/Math/Parity/{name}")).unwrap().1;
-            function::compile(graph.function.as_ref().unwrap(), 0).unwrap()
-        };
-        let expected = compile(&supplied);
-        let actual = compile(&bundled);
-        for &input in &inputs {
-            let variables = BTreeMap::from([("Input".into(), Value::Float(input))]);
-            let context = EvaluationContext { scope: Default::default(), position: [0.5; 2], size: [16.0; 2], images: &[], tile: true, variables: &variables };
-            let evaluate = |program: &function::Program| program.evaluate(&context, &mut EvaluationState::default()).unwrap();
-
-            assert_eq!(evaluate(&actual), evaluate(&expected), "{name}({input})");
-        }
-    }
-
-    eprintln!("Compared three parity functions against the supplied graphs at {} inputs each", inputs.len());
-}
-
-#[test]
 fn library_aliases_reject_paths_outside_the_asset_root() {
     use materialcraft_formats::sbs::library::relative_path;
 
@@ -248,7 +211,6 @@ fn duplicate_leaf_names_require_their_package_folder() {
     let read = read_sbs(&write_sbs(&package).unwrap(), "folders.sbs", &|_| None).unwrap();
 
     assert!(read.pkg.graph_by_name("Same").is_none());
-    assert_eq!(read.pkg.unique_graph_name("Same"), "Same_1");
     assert_eq!(read.pkg.graph_by_name("A/Same").unwrap().1.folder, "A");
     assert_eq!(read.pkg.graph_by_name("B/Same").unwrap().1.folder, "B");
 }

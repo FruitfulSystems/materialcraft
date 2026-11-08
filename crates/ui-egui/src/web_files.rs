@@ -69,6 +69,7 @@ pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool
 }
 
 pub(crate) fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
+    crate::properties::GraphPropertyDraft::commit(app);
     match materialcraft_engine::file_cmds::open_bytes(&mut app.session, bytes, Some(name.to_string())) {
         Ok(()) => {
             app.close_subgraph_after("file.open");
@@ -176,6 +177,7 @@ mod web {
     }
 
     fn save_download(app: &mut MaterialCraftApp, copy: bool) {
+        crate::properties::GraphPropertyDraft::commit(app);
         let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
         match materialcraft_engine::file_cmds::save_bytes(&app.session).map_err(|e| e.to_string()).and_then(|b| download(&name, &b)) {
             Ok(()) => {

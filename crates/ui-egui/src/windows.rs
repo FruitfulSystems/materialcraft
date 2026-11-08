@@ -284,6 +284,10 @@ fn preferences(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         if crate::widgets::slider(ui, tr("Autosave every (minutes, 0 = off)"), &mut auto, 0.0..=60.0, 0).changed() {
             p.autosave_minutes = auto.round() as u32;
         }
+        let mut undo_limit = p.history.undo_limit as f32;
+        if crate::widgets::slider(ui, tr("Undo history (steps)"), &mut undo_limit, 1.0..=10_000.0, 0).changed() {
+            p.history.undo_limit = undo_limit.round() as u32;
+        }
         crate::widgets::combo(ui, tr("Preview size while editing"), crate::preview_resolution::label(p.preview_size), |ui| {
             crate::preview_resolution::choices(ui, &mut p.preview_size);
         });
@@ -460,14 +464,14 @@ pub fn console(app: &mut MaterialCraftApp, ui: &mut Ui) {
 pub fn history(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for (i, h) in app.session.history().iter().enumerate() {
+        for (i, h) in app.session.document_history_labels(crate::history::document(app)).iter().enumerate() {
             ui.label(RichText::new(format!("{:>3}  {h}", i + 1)).size(11.5).color(tk.text));
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(app.session.can_undo(), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_LEFT, tr("Undo")))).clicked() {
+            if ui.add_enabled(crate::menus::enabled(app, "edit.undo"), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_LEFT, tr("Undo")))).clicked() {
                 app.run("edit.undo", json!({}));
             }
-            if ui.add_enabled(app.session.can_redo(), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_RIGHT, tr("Redo")))).clicked() {
+            if ui.add_enabled(crate::menus::enabled(app, "edit.redo"), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_RIGHT, tr("Redo")))).clicked() {
                 app.run("edit.redo", json!({}));
             }
         });

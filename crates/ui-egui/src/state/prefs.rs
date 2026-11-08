@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::theme::{Accent, Brightness};
-use materialcraft_engine::CameraPrefs;
+use materialcraft_engine::{CameraPrefs, HistoryPrefs};
 
 /// Preferences (Edit ▸ Preferences)
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -16,6 +16,7 @@ pub struct Prefs {
     pub preview_size: u32,
     /// Minutes between autosaves of a modified package (0 = off)
     pub autosave_minutes: u32,
+    pub history: HistoryPrefs,
     /// Show node thumbnails in the graph
     pub thumbnails: bool,
     pub snap_to_grid: bool,
@@ -36,6 +37,7 @@ impl Default for Prefs {
             ui_scale: 1.0,
             preview_size: 512,
             autosave_minutes: 5,
+            history: HistoryPrefs::default(),
             thumbnails: true,
             snap_to_grid: true,
             library_list: false,
@@ -50,15 +52,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn camera_prefs_persist_and_default_when_missing() {
+    fn preferences_persist_and_default_when_missing() {
         // Missing preferences use their defaults
         let old: Prefs = serde_json::from_value(serde_json::json!({"uiScale": 1.25})).unwrap();
         assert_eq!(old.camera, CameraPrefs::default());
         assert_eq!(old.ui_scale, 1.25);
         assert!(old.snap_to_grid);
-        let p = Prefs { camera: CameraPrefs { pan_limit: 8.0, pan_speed: 0.5 }, ..Prefs::default() };
+        assert_eq!(old.history, HistoryPrefs::default());
+        let p = Prefs { camera: CameraPrefs { pan_limit: 8.0, pan_speed: 0.5 }, history: HistoryPrefs { undo_limit: 500 }, ..Prefs::default() };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["camera"], serde_json::json!({"panLimit": 8.0, "panSpeed": 0.5}));
+        assert_eq!(v["history"]["undoLimit"], 500);
         assert_eq!(serde_json::from_value::<Prefs>(v).unwrap(), p);
     }
 }

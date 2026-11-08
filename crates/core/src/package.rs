@@ -68,15 +68,6 @@ impl Package {
         self.resources.iter().find(|r| r.name == name)
     }
 
-    /// A name not used by any graph: `base`, `base_1`, `base_2`…
-    pub fn unique_graph_name(&self, base: &str) -> String {
-        let base = if base.trim().is_empty() { "Graph" } else { base.trim() };
-        if !self.graphs.iter().any(|graph| graph.name == base) {
-            return base.to_string();
-        }
-        (1..).map(|index| format!("{base}_{index}")).find(|name| !self.graphs.iter().any(|graph| graph.name == *name)).unwrap_or_else(|| base.to_string())
-    }
-
     pub fn instance_package(&self, node: &crate::Node) -> Option<&Package> {
         match node.instance.as_ref().map(|instance| instance.package.as_str()) {
             Some(file) if !file.is_empty() => self.dependencies.get(file).map(AsRef::as_ref),

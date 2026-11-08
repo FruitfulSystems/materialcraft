@@ -58,6 +58,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::atomic_sample_commands::specs());
         v.extend(crate::material_cmds::specs());
         v.extend(crate::edit_cmds::specs());
+        v.extend(crate::document_history_commands::specs());
         v.extend(crate::embedded_edit_commands::specs());
         v.extend(crate::graph_cmds::specs());
         v.extend(crate::graph_property_commands::specs());

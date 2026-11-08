@@ -44,12 +44,24 @@ impl GraphTarget {
     }
 
     pub(crate) fn edit<T>(self, session: &mut Session, label: &str, edit: impl FnOnce(&mut Package) -> Result<T>) -> Result<T> {
+        session.finish_edit();
+        self.edit_with_key(session, label, None, edit)
+    }
+
+    pub(crate) fn edit_merged<T>(self, session: &mut Session, key: &str, label: &str, edit: impl FnOnce(&mut Package) -> Result<T>) -> Result<T> {
+        self.edit_with_key(session, label, Some(key), edit)
+    }
+
+    fn edit_with_key<T>(self, session: &mut Session, label: &str, key: Option<&str>, edit: impl FnOnce(&mut Package) -> Result<T>) -> Result<T> {
         if self.document == session.document_id {
-            return session.edit(label, |session| edit(&mut session.pkg));
+            return match key {
+                Some(key) => session.edit_merged(key, label, |session| edit(&mut session.pkg)),
+                None => session.edit(label, |session| edit(&mut session.pkg)),
+            };
         }
 
         let document = session.documents.get_mut(&self.document).ok_or_else(|| bad("graph", "the inspected package is no longer open"))?;
-        let result = document.edit(label, edit)?;
+        let result = document.edit(label, key, session.history_prefs.undo_limit as usize, edit)?;
         session.refresh_links();
         Ok(result)
     }

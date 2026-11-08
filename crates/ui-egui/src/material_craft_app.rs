@@ -97,8 +97,13 @@ impl MaterialCraftApp {
         app
     }
 
-    /// Push the preferences that live in the session (preview size, 3D camera)
+    /// Push application preferences into the session
     pub fn apply_prefs(&mut self) {
+        self.ui.prefs.history = self.ui.prefs.history.sanitized();
+        if self.session.history_prefs != self.ui.prefs.history {
+            let _ = materialcraft_engine::execute(&mut self.session, "session.history", &serde_json::json!(self.ui.prefs.history));
+        }
+
         if self.session.camera != self.ui.prefs.camera.sanitized() {
             self.session.set_camera_prefs(self.ui.prefs.camera);
         }
@@ -115,6 +120,15 @@ impl MaterialCraftApp {
             || matches!(id, "graph.open" | "graph.delete" | "graph.duplicate" | "folder.remove" | "explorer.paste" | "edit.undo" | "edit.redo")
         {
             crate::properties::GraphPropertyDraft::commit(self);
+        }
+
+        if matches!(id, "edit.undo" | "edit.redo") {
+            if params.is_null() {
+                params = serde_json::json!({});
+            }
+            if let Some(parameters) = params.as_object_mut() {
+                parameters.entry("document").or_insert_with(|| Value::from(crate::history::document(self)));
+            }
         }
 
         if matches!(
@@ -142,6 +156,9 @@ impl MaterialCraftApp {
             Ok(v) => {
                 if id == "view.previewSize" {
                     self.ui.prefs.preview_size = self.session.preview_size.unwrap_or(0);
+                }
+                if id == "session.history" {
+                    self.ui.prefs.history = self.session.history_prefs;
                 }
                 self.close_subgraph_after(id);
                 if matches!(id, "view.3d.assign" | "view.3d.outputs") {

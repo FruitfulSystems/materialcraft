@@ -16,15 +16,8 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         cmd!("graph.seed", "Random seed", [], None, "{seed, graph?, document?}", always, |s, p| {
             let seed = i64p(p, "seed").ok_or_else(|| bad("graph.seed", "`seed` is required"))?.clamp(0, i32::MAX as i64) as i32;
             let target = crate::GraphTarget::resolve(s, p)?;
-            if target.document != s.document_id {
-                return target.edit(s, "Random seed", |package| {
-                    package.graph_mut(target.graph)?.seed = seed;
-                    Ok(J::Null)
-                });
-            }
-
-            s.edit_merged(&format!("graph.seed:{}:{}", target.document, target.graph), "Random seed", |s| {
-                s.pkg.graph_mut(target.graph)?.seed = seed;
+            target.edit_merged(s, &format!("graph.seed:{}:{}", target.document, target.graph), "Random seed", |package| {
+                package.graph_mut(target.graph)?.seed = seed;
                 Ok(J::Null)
             })
         }),
@@ -116,7 +109,7 @@ fn duplicate(s: &mut Session, p: &J) -> Result<J> {
     let i = graph_index(s, p)?;
     s.edit("Duplicate graph", |s| {
         let mut g = s.pkg.graph(i)?.clone();
-        g.name = s.pkg.unique_graph_name(&g.name);
+        g.name = crate::folder_path::unique(&s.pkg, &g.folder, &g.name);
         s.pkg.graphs.push(g);
         s.graph = s.pkg.graphs.len() - 1;
         s.open_material_preview();
@@ -354,9 +347,9 @@ fn select_stream(s: &mut Session, p: &J, up: bool) -> Result<J> {
 
 fn from_selection(s: &mut Session, p: &J) -> Result<J> {
     let ids = ids_param(s, "graph.createFromSelection", p)?;
-    let base = strp(p, "name").unwrap_or("Sub_graph").to_string();
+    let base = crate::folder_path::name(strp(p, "name").unwrap_or("Sub_graph"))?;
     s.edit("Create graph from selection", |s| {
-        let name = s.pkg.unique_graph_name(&base);
+        let name = crate::folder_path::unique(&s.pkg, "", base);
         let src = s.graph()?.clone();
         let mut sub = materialcraft_core::Graph::new(&name);
         sub.size = src.size;

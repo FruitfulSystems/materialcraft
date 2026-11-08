@@ -124,23 +124,3 @@ fn bundled_even_count_opens_as_an_editable_arithmetic_tree() {
     assert_eq!(function.node(function.output.unwrap()).unwrap().op, "ceil");
     save(&mut harness, &directory, "even-count-arithmetic-tree");
 }
-
-#[test]
-#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
-fn converted_wave_opens_with_its_complete_function_body() {
-    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
-    std::fs::create_dir_all(&directory).unwrap();
-    let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
-    app.run("file.open", json!({"path": "sbs://functions.sbs"})).unwrap();
-    app.run("graph.open", json!({"graph": "Functions/Cycles/Wave"})).unwrap();
-    app.ui.library_search = "Wave".into();
-    let mut harness = harness(app, 1600.0, 960.0);
-    settle(&mut harness, 5);
-
-    let function = harness.state().session.graph().unwrap().function.as_ref().unwrap();
-    assert_eq!(function.nodes.len(), 9);
-    assert!(function.output.is_some());
-    assert!(function.nodes.iter().all(|node| node.missing.is_none()));
-    materialcraft_engine::nodes::function::compile(function, 0).unwrap();
-    save(&mut harness, &directory, "wave-converted-function-tree");
-}

@@ -112,6 +112,10 @@ fn is_ui(id: &str) -> bool {
 
 /// Whether an item can run now
 pub fn enabled(app: &MaterialCraftApp, id: &str) -> bool {
+    if let Some(enabled) = crate::history::enabled(app, id) {
+        return enabled;
+    }
+
     if let Some(enabled) = crate::graph::editor_actions::enabled(app, id) {
         return enabled;
     }
