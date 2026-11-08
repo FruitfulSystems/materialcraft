@@ -12,6 +12,9 @@ Run a feature module with a test-name filter, for example:
 cargo test -p materialcraft-engine --test it graph_edit::
 ```
 
+The language-switching test stays in its own executable because it changes the
+process-global locale, which UI constructors also set.
+
 The standalone engine `session` target and UI `snapshot` target remain
 available for the commands in `AGENTS.md`. Existing ignore attributes are
 unchanged. Tests in the shared executable can run concurrently across modules;

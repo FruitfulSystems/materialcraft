@@ -1,9 +1,8 @@
 //! One integration-test executable avoids linking the same dependencies for every feature.
-//! Keep feature tests in their own modules; the standalone snapshot.rs target remains available.
+//! Keep snapshot.rs standalone; language_switching.rs needs process isolation for global locale state.
 
 mod dialogs;
 mod interface_scale;
-mod language_switching;
 mod normal_maps;
 mod numeric_input;
 mod preview_resolution;
