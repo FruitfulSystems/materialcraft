@@ -1,6 +1,6 @@
 use crate::{
     ExplorerClipboard, Result, Session, cmd,
-    commands::{CommandSpec, always, bad, strp},
+    commands::{CommandSpec, bad, has_package, strp},
     folder_path,
 };
 use materialcraft_core::{Package, Value as GraphValue};
@@ -9,14 +9,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("explorer.copy", "Copy Explorer item", [], None, "{graph? index, folder?} copies a graph, folder subtree, or package contents", always, copy),
+        cmd!("explorer.copy", "Copy Explorer item", [], None, "{graph? index, folder?} copies a graph, folder subtree, or package contents", has_package, copy),
         cmd!(
             "explorer.paste",
             "Paste Explorer item",
             [],
             None,
             "{folder?} pastes into a folder or the package root, with unique names",
-            |session| { if session.explorer_clipboard.is_some() { Ok(()) } else { Err("the Explorer clipboard is empty".into()) } },
+            |session| {
+                has_package(session)?;
+                if session.explorer_clipboard.is_some() { Ok(()) } else { Err("the Explorer clipboard is empty".into()) }
+            },
             paste
         ),
     ]

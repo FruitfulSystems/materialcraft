@@ -1,6 +1,6 @@
 use crate::{
     Result, Session, cmd,
-    commands::{CommandSpec, always, bad},
+    commands::{CommandSpec, bad, has_package},
 };
 use serde_json::{Value, json};
 
@@ -21,7 +21,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             [],
             None,
             "{path} writes an SBS or MaterialCraft copy without changing the current path or saved state",
-            always,
+            has_package,
             save_copy
         ),
     ]

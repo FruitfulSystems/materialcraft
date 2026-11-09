@@ -118,6 +118,8 @@ pub const WARNING_PREFIX: &str = "Warning: ";
 pub struct Session {
     pub environment: materialcraft_core::EvaluationEnvironment,
     pub document_id: u64,
+    /// False after closing the last document; `pkg` then holds only cleared storage.
+    pub(crate) document_open: bool,
     pub(crate) next_document_id: u64,
     pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
     pub(crate) linked_sources: std::collections::BTreeMap<String, Arc<Package>>,
@@ -171,6 +173,7 @@ impl Session {
         let mut session = Session {
             environment: Default::default(),
             document_id: 0,
+            document_open: true,
             next_document_id: 1,
             documents: std::collections::BTreeMap::new(),
             linked_sources: pkg.dependencies.clone(),
@@ -300,6 +303,9 @@ impl Session {
     }
 
     fn edit_inner<T>(&mut self, label: &str, key: Option<&str>, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+        if !self.has_package() {
+            return Err(crate::commands::bad("edit", "no package is open"));
+        }
         let snapshot = self.snapshot(label);
         match f(self) {
             Ok(value) => {

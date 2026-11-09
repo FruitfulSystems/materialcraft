@@ -33,17 +33,27 @@ impl ExplorerTree<'_> {
         let target = ExplorerTarget::Package { document };
         let name = path.and_then(|path| path.rsplit(['/', '\\']).next()).unwrap_or(&package.name);
         let name = format!("{name}{}", if modified { "*" } else { "" });
-        let id = ui.make_persistent_id((document, "package"));
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-            .show_header(ui, |ui| {
-                let response = self.row(ui, &target, package, &name, icon::PACKAGE, &package_warning, path.is_some());
-                if let Some(path) = path {
-                    response.on_hover_text(path);
-                }
-            })
-            .body(|ui| {
-                self.level(ui, document, package, &package.folder_paths(), "", &warnings, 0);
+        let folders = package.folder_paths();
+        // The implicit Resources group is hidden until it contains assets or subfolders.
+        let has_children =
+            !package.graphs.is_empty() || !package.resources.is_empty() || folders.iter().any(|folder| !folder.eq_ignore_ascii_case("Resources"));
+        let mut header = |ui: &mut Ui| {
+            let response = self.row(ui, &target, package, &name, icon::PACKAGE, &package_warning, path.is_some());
+            if let Some(path) = path {
+                response.on_hover_text(path);
+            }
+        };
+        if !has_children {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                header(ui);
             });
+            return;
+        }
+        let id = ui.make_persistent_id((document, "package"));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
+            self.level(ui, document, package, &folders, "", &warnings, 0);
+        });
     }
 
     fn level(&mut self, ui: &mut Ui, document: u64, package: &Package, folders: &BTreeSet<String>, parent: &str, warnings: &[String], depth: usize) {

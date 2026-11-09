@@ -1,22 +1,22 @@
 use crate::{
     Result, Session, cmd,
-    commands::{CommandSpec, always, bad, strp},
+    commands::{CommandSpec, bad, has_package, strp},
     folder_path,
 };
 use serde_json::{Value, json};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("folder.create", "New folder", [], None, "{parent?, name?} creates an empty folder", always, create),
-        cmd!("folder.rename", "Rename folder", [], None, "{folder, name} renames a folder and updates local graph references", always, rename),
-        cmd!("folder.remove", "Remove folder", [], None, "{folder} removes a folder and its contents, with undo", always, remove),
+        cmd!("folder.create", "New folder", [], None, "{parent?, name?} creates an empty folder", has_package, create),
+        cmd!("folder.rename", "Rename folder", [], None, "{folder, name} renames a folder and updates local graph references", has_package, rename),
+        cmd!("folder.remove", "Remove folder", [], None, "{folder} removes a folder and its contents, with undo", has_package, remove),
         cmd!(
             "explorer.move",
             "Move Explorer item",
             [],
             None,
             "{graph? index, folder?, resource?, parent?} moves a graph, folder or resource within its package",
-            always,
+            has_package,
             move_item
         ),
     ]

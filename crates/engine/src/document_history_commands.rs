@@ -68,7 +68,7 @@ impl Session {
     }
 
     fn document_history(&self, document: u64) -> Option<&DocumentHistory> {
-        if document == self.document_id { Some(&self.history) } else { self.documents.get(&document).map(|document| &document.history) }
+        if self.has_package() && document == self.document_id { Some(&self.history) } else { self.documents.get(&document).map(|document| &document.history) }
     }
 
     pub fn can_undo_document(&self, document: u64) -> bool {
@@ -86,6 +86,7 @@ impl Session {
 
     /// Undo in an open package without changing the active canvas
     pub fn undo_document(&mut self, document: u64) -> Result<Option<String>> {
+        self.package(document)?;
         if document == self.document_id {
             return Ok(self.undo());
         }
@@ -101,6 +102,7 @@ impl Session {
 
     /// Redo in an open package without changing the active canvas
     pub fn redo_document(&mut self, document: u64) -> Result<Option<String>> {
+        self.package(document)?;
         if document == self.document_id {
             return Ok(self.redo());
         }

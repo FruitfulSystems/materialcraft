@@ -6,7 +6,7 @@ use serde_json::{Value as J, json};
 use materialcraft_core::{Package, Resource, ResourceBytes};
 use materialcraft_formats::{Depth, encode, output_name};
 
-use crate::commands::{CommandSpec, always, bad, has_graph, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, has_graph, has_package, strp, u64p};
 use crate::samples::{TEMPLATES, template};
 use crate::{Result, Session, cmd};
 
@@ -31,8 +31,8 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             always,
             open
         ),
-        cmd!("file.save", "Save", ["File"], Some("Ctrl+S"), "{path?} saves .sbs with adjacent resources or an independent .mcraft archive", always, save),
-        cmd!("file.saveAs", "Save as...", ["File"], Some("Ctrl+Shift+S"), "{path} saves the package under a new name", always, save),
+        cmd!("file.save", "Save", ["File"], Some("Ctrl+S"), "{path?} saves .sbs with adjacent resources or an independent .mcraft archive", has_package, save),
+        cmd!("file.saveAs", "Save as...", ["File"], Some("Ctrl+Shift+S"), "{path} saves the package under a new name", has_package, save),
         cmd!(
             "file.export",
             "Export outputs...",
@@ -48,7 +48,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             ["File"],
             None,
             "{path, name?, folder?} imports an image into Resources or its subfolders; returns its name without adding a graph node",
-            always,
+            has_package,
             import_bitmap
         ),
         cmd!("graph.templates", "Graph templates", [], None, "{} lists the templates for file.new", always, |_, _| Ok(json!(
@@ -77,16 +77,19 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
     crate::folder_path::require_graph_folder(folder)?;
     let base = crate::folder_path::name(&base)?;
 
+    let name = crate::folder_path::unique(&session.pkg, folder, base);
+    let mut graph = if kind == materialcraft_core::GraphKind::Function {
+        let mut graph = materialcraft_core::Graph::new(&name);
+        graph.function = Some(materialcraft_core::FunctionGraph::default());
+        graph
+    } else {
+        template(template_id, &name, log2)?
+    };
+    graph.folder = folder.into();
+    if !session.has_package() {
+        session.open_package(Package::new("Untitled package"), None)?;
+    }
     session.edit("New graph", |session| {
-        let name = crate::folder_path::unique(&session.pkg, folder, base);
-        let mut graph = if kind == materialcraft_core::GraphKind::Function {
-            let mut graph = materialcraft_core::Graph::new(&name);
-            graph.function = Some(materialcraft_core::FunctionGraph::default());
-            graph
-        } else {
-            template(template_id, &name, log2)?
-        };
-        graph.folder = folder.into();
         session.pkg.graphs.push(graph);
         session.graph = session.pkg.graphs.len() - 1;
         session.open_material_preview();
@@ -109,6 +112,7 @@ pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
     // Reloaded archive dependencies must replace cached snapshots before links are refreshed.
     s.linked_sources.extend(pkg.dependencies.clone());
     s.pkg = pkg;
+    s.document_open = true;
     s.clipboard = None;
     s.embedded_clipboard = None;
     s.clear_decoded();
@@ -187,6 +191,7 @@ pub fn save_bytes(session: &Session) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
+    session.package(session.document_id)?;
     if let Some(path) = path.filter(|path| is_mcraft(path)) {
         return Ok(save_files_at(session, path)?.zip()?);
     }
@@ -213,6 +218,7 @@ fn package_for_save(session: &Session, path: Option<&str>) -> Package {
 }
 
 pub fn save_files_at(session: &Session, path: &str) -> Result<materialcraft_formats::project::ProjectFiles> {
+    session.package(session.document_id)?;
     let archive = is_mcraft(path);
     let package = if archive { session.pkg.clone() } else { package_for_save(session, Some(path)) };
     let filename = std::path::Path::new(path).file_name().and_then(|name| name.to_str()).unwrap_or("package.sbs");

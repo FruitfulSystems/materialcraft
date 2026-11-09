@@ -1,6 +1,6 @@
 use crate::{
     Result, Session, cmd,
-    commands::{CommandSpec, always, bad, has_graph, point, strp},
+    commands::{CommandSpec, bad, has_graph, has_package, point, strp},
 };
 use materialcraft_core::Value as GraphValue;
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             ["File"],
             None,
             "{path, name?, folder?} imports an SVG into Resources or its subfolders, preserving its original bytes without adding a graph node",
-            always,
+            has_package,
             import_vector
         ),
         cmd!(

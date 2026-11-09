@@ -47,7 +47,7 @@ mod unsaved_state_tests {
         guard(&mut a, Guarded::Menu { id: "ui.closeAll".into() });
         assert!(a.ui.windows.unsaved.is_none());
         assert!(a.session.pkg.graphs.is_empty());
-        assert_eq!(a.session.open_packages().len(), 1);
+        assert!(a.session.open_packages().is_empty());
     }
 
     #[test]

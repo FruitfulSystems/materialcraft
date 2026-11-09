@@ -26,6 +26,10 @@ pub(crate) fn always(_: &Session) -> std::result::Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn has_package(s: &Session) -> std::result::Result<(), String> {
+    if s.has_package() { Ok(()) } else { Err("no package is open".into()) }
+}
+
 pub(crate) fn has_graph(s: &Session) -> std::result::Result<(), String> {
     s.graph().map(|_| ()).map_err(|_| "no graph is open".into())
 }

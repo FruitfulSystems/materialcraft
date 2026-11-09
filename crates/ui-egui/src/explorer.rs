@@ -25,15 +25,17 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         if crate::widgets::icon_button(ui, icon::FOLDER_OPEN, tr("Open package..."), false, 22.0).clicked() {
             crate::menus::invoke(app, ui.ctx(), "file.open");
         }
-        if crate::widgets::icon_button(ui, icon::FLOPPY_DISK, tr("Save package"), false, 22.0).clicked() {
-            crate::menus::invoke(app, ui.ctx(), "file.save");
-        }
-        if crate::widgets::icon_button(ui, icon::EXPORT, tr("Export outputs..."), false, 22.0).clicked() {
-            app.ui.windows.export = true;
-        }
-        if crate::widgets::icon_button(ui, icon::IMAGE, tr("Import bitmap..."), false, 22.0).clicked() {
-            crate::windows::import_resource(app, ui.ctx(), false);
-        }
+        ui.add_enabled_ui(app.session.has_package(), |ui| {
+            if crate::widgets::icon_button(ui, icon::FLOPPY_DISK, tr("Save package"), false, 22.0).clicked() {
+                crate::menus::invoke(app, ui.ctx(), "file.save");
+            }
+            if crate::widgets::icon_button(ui, icon::EXPORT, tr("Export outputs..."), false, 22.0).clicked() {
+                app.ui.windows.export = true;
+            }
+            if crate::widgets::icon_button(ui, icon::IMAGE, tr("Import bitmap..."), false, 22.0).clicked() {
+                crate::windows::import_resource(app, ui.ctx(), false);
+            }
+        });
     });
     ui.add_space(2.0);
     let context = ui.ctx().clone();

@@ -3,6 +3,107 @@ use egui::accesskit::Role;
 
 #[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_can_close_the_last_package_and_all_packages() {
+    use materialcraft_engine::{Session, core::Package};
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut app = MaterialCraftApp::headless(Session::new(Package::new("Untitled package")), UiState::default());
+    app.ui.dock.close(materialcraft_ui_egui::docking::Panel::Library);
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 4);
+    harness.get(By::new().role(Role::TreeItem).label("Untitled package")).click_secondary();
+    settle(&mut harness, 3);
+    harness.get(By::new().role(Role::Button).label("Close")).click();
+    settle(&mut harness, 4);
+    assert!(harness.state().session.open_packages().is_empty());
+    assert_eq!(harness.query_all(By::new().role(Role::TreeItem)).count(), 0);
+    assert!(harness.get(By::new().label("Save package")).accesskit_node().is_disabled());
+    save(&mut harness, &directory, "explorer-no-open-projects");
+
+    harness.get_by_label("New graph...").click();
+    settle(&mut harness, 3);
+    harness.get_by_label("Create").click();
+    settle(&mut harness, 5);
+    assert_eq!(harness.state().session.open_packages().len(), 1);
+    assert!(harness.state().session.graph().is_ok());
+    harness.state_mut().run("file.newPackage", json!({"name": "Second"})).unwrap();
+    let context = harness.ctx.clone();
+    materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "ui.closeAll");
+    settle(&mut harness, 3);
+    assert!(harness.state().ui.windows.unsaved.is_some());
+    harness.get_by_label("Cancel").click();
+    settle(&mut harness, 3);
+    assert_eq!(harness.state().session.open_packages().len(), 2);
+    materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "ui.closeAll");
+    settle(&mut harness, 3);
+    harness.get_by_label("Discard").click();
+    settle(&mut harness, 5);
+    assert!(harness.state().session.open_packages().is_empty());
+    assert_eq!(harness.query_all(By::new().role(Role::TreeItem)).count(), 0);
+    assert!(harness.state().ui.windows.unsaved.is_none());
+    save(&mut harness, &directory, "explorer-after-close-all");
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_empty_packages_have_no_disclosure() {
+    use materialcraft_engine::{Session, core::Package};
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    let app = MaterialCraftApp::headless(Session::new(Package::new("Empty package")), UiState::default());
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 4);
+    let arrow_visible = |harness: &mut egui_kittest::Harness<'static, MaterialCraftApp>| {
+        let label = if harness.state().session.modified { "Empty package*" } else { "Empty package" };
+        let row = harness.get(By::new().role(Role::TreeItem).label(label)).rect();
+        let image = harness.render().unwrap();
+        // The disclosure gutter must stay blank when the package has no visible children.
+        ((row.left() as u32 - 16)..(row.left() as u32 - 2))
+            .any(|x| ((row.top() as u32 + 3)..(row.bottom() as u32 - 3)).any(|y| image.get_pixel(x, y).0[..3].iter().all(|channel| *channel > 150)))
+    };
+    assert!(!arrow_visible(&mut harness));
+    save(&mut harness, &directory, "explorer-empty-package");
+
+    // An empty reserved group can be present in loaded SBS XML without appearing in the tree.
+    harness.state_mut().session.pkg.folders.push("Resources".into());
+    settle(&mut harness, 3);
+    assert!(harness.query(By::new().role(Role::TreeItem).label("Resources")).is_none());
+    assert!(!arrow_visible(&mut harness));
+    harness.get(By::new().role(Role::TreeItem).label("Empty package")).click_secondary();
+    settle(&mut harness, 3);
+    for label in ["Import", "New", "Save As", "Close"] {
+        assert!(harness.query(By::new().role(Role::Button).label(label)).is_some());
+    }
+    harness.key_press(egui::Key::Escape);
+    settle(&mut harness, 3);
+
+    for (command, parameters, child) in [
+        ("file.new", json!({"template": "empty", "name": "Surface"}), "Surface"),
+        ("folder.create", json!({"name": "Tools"}), "Tools"),
+        ("folder.create", json!({"parent": "Resources", "name": "Masks"}), "Masks"),
+    ] {
+        harness.state_mut().run(command, parameters).unwrap();
+        settle(&mut harness, 4);
+        assert!(arrow_visible(&mut harness), "{child} must make the package expandable");
+        assert!(harness.query(By::new().role(Role::TreeItem).label(child)).is_some());
+        harness.state_mut().run("edit.undo", json!({})).unwrap();
+        settle(&mut harness, 4);
+        assert!(!arrow_visible(&mut harness), "undoing {child} must remove the disclosure");
+    }
+
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
+    materialcraft_engine::file_cmds::add_resource(&mut harness.state_mut().session, "Mask.svg", svg.to_vec(), None).unwrap();
+    settle(&mut harness, 4);
+    assert!(arrow_visible(&mut harness));
+    assert!(harness.query(By::new().role(Role::TreeItem).label("Mask")).is_some());
+    save(&mut harness, &directory, "explorer-package-with-resource");
+    harness.state_mut().run("edit.undo", json!({})).unwrap();
+    settle(&mut harness, 4);
+    assert!(!arrow_visible(&mut harness));
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
 fn explorer_resources_drag_into_the_graph() {
     use materialcraft_engine::{core::Value, file_cmds, formats};
     let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());

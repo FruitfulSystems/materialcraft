@@ -562,6 +562,9 @@ pub fn import_resource(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: 
 }
 
 pub(crate) fn import_resource_into(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: bool, folder: &str) {
+    if !app.session.has_package() {
+        return;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = ctx;
@@ -585,6 +588,9 @@ pub fn after_open(app: &mut MaterialCraftApp) {
 
 /// File menu actions that need a file dialog. Returns true when handled
 pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) -> bool {
+    if matches!(id, "file.save" | "file.saveAs" | "file.saveCopyAs" | "file.importBitmap" | "file.importVector") && !app.session.has_package() {
+        return true;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ctx;
     #[cfg(not(target_arch = "wasm32"))]

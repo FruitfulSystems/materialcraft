@@ -46,9 +46,12 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                         document.exchange(session);
                     }
                 } else {
-                    crate::file_cmds::replace_package(session, Package::new("Untitled package"), None);
+                    session.clear_documents();
                 }
-                if modified && let Some(path) = path {
+                if session.has_package()
+                    && modified
+                    && let Some(path) = path
+                {
                     session.discard_source_changes(&path);
                 }
                 Ok(Value::Null)
@@ -65,9 +68,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                 if session.open_packages().iter().any(|entry| entry.3) && parameters.get("discard").and_then(Value::as_bool) != Some(true) {
                     return Err(bad("package.closeAll", "save the packages or explicitly discard their edits"));
                 }
-                session.documents.clear();
-                session.linked_sources.clear();
-                crate::file_cmds::replace_package(session, Package::new("Untitled package"), None);
+                session.clear_documents();
                 Ok(Value::Null)
             }
         ),
@@ -75,8 +76,22 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 }
 
 impl Session {
+    /// Whether the workspace contains an active project, including an empty unsaved package.
+    pub fn has_package(&self) -> bool {
+        self.document_open
+    }
+
+    fn clear_documents(&mut self) {
+        self.documents.clear();
+        self.linked_sources.clear();
+        crate::file_cmds::replace_package(self, Package::default(), None);
+        self.document_open = false;
+        self.cook_epoch = self.cook_epoch.wrapping_add(1);
+        self.cooked = Default::default();
+    }
+
     pub fn package(&self, document: u64) -> Result<&Package> {
-        if document == self.document_id {
+        if self.document_open && document == self.document_id {
             return Ok(&self.pkg);
         }
         self.documents.get(&document).map(|document| &document.pkg).ok_or_else(|| bad("package", "The inspected package is no longer open"))
@@ -99,7 +114,7 @@ impl Session {
     }
 
     pub fn activate_document(&mut self, id: u64) -> Result<()> {
-        if id == self.document_id {
+        if self.document_open && id == self.document_id {
             return Ok(());
         }
         if !self.documents.contains_key(&id) {
@@ -121,15 +136,22 @@ impl Session {
         let id = self.next_document_id;
         self.next_document_id = id.checked_add(1).ok_or_else(|| bad("file.open", "document identifiers exhausted"))?;
         self.linked_sources.extend(package.dependencies.clone());
+        let had_document = self.document_open;
         let mut document = OpenDocument::new(id, package, path);
         document.exchange(self);
-        self.documents.insert(document.id, document);
+        self.document_open = true;
+        if had_document {
+            self.documents.insert(document.id, document);
+        }
         self.refresh_links();
         Ok(())
     }
 
     pub fn open_packages(&self) -> Vec<(u64, &Package, Option<&str>, bool)> {
-        let mut packages = vec![(self.document_id, &self.pkg, self.path.as_deref(), self.modified)];
+        let mut packages = Vec::new();
+        if self.document_open {
+            packages.push((self.document_id, &self.pkg, self.path.as_deref(), self.modified));
+        }
         packages.extend(self.documents.values().map(|document| (document.id, &document.pkg, document.path.as_deref(), document.modified)));
         packages.sort_by_key(|entry| entry.0);
         packages
