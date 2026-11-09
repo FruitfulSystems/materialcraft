@@ -10,6 +10,11 @@ mod start_failure;
 use materialcraft_engine::Session;
 use materialcraft_ui_egui::MaterialCraftApp;
 
+/// The window's size when it opens, in points.
+const DEFAULT_SIZE: [f32; 2] = [1600.0, 960.0];
+/// The smallest size the window can be resized to, in points.
+const MIN_SIZE: [f32; 2] = [960.0, 600.0];
+
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.materialcraft.png");
 
 fn version() -> String {
@@ -99,7 +104,7 @@ fn main() {
     let session = initial_session(&args);
     let window_frame = craft_window::Choice::probe(craft_window::Prefix::new("MATERIALCRAFT")).into_frame();
     let mut viewport = craft_window::decorate(
-        egui::ViewportBuilder::default().with_title("MaterialCraft").with_inner_size([1600.0, 960.0]).with_min_inner_size([960.0, 600.0]),
+        egui::ViewportBuilder::default().with_title("MaterialCraft").with_inner_size(DEFAULT_SIZE).with_min_inner_size(MIN_SIZE),
         &window_frame,
     );
     if let Some(i) = icon() {
