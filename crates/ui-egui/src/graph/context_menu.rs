@@ -64,7 +64,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2, node: Opti
 pub(super) fn add_nodes(app: &mut MaterialCraftApp, ui: &mut Ui, at: Pos2) {
     let definitions = materialcraft_engine::nodes::catalog().iter().filter(|definition| definition.id != "dot");
     let entries = definitions.map(|definition| (definition.id, definition.label, if definition.id == "output" { "Output" } else { definition.category }));
-    if let Some(definition) = super::add_node_menu::show(ui, entries) {
+    if let Some(definition) = super::add_node_menu::show(app, ui, entries) {
         app.run("graph.node.add", json!({"def": definition, "at": [at.x, at.y], "snapToGrid": app.ui.prefs.snap_to_grid}));
     }
 }

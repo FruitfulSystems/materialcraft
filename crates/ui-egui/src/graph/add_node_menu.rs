@@ -1,8 +1,11 @@
 use egui::{Button, Event, Key, Ui};
 
+use crate::MaterialCraftApp;
 use crate::i18n::tr;
+use crate::shell::modality::Modality;
 
-pub(crate) fn show(ui: &mut Ui, entries: impl IntoIterator<Item = (&'static str, &'static str, &'static str)>) -> Option<&'static str> {
+pub(crate) fn show(app: &MaterialCraftApp, ui: &mut Ui, entries: impl IntoIterator<Item = (&'static str, &'static str, &'static str)>) -> Option<&'static str> {
+    let blocked = Modality::capture(app, ui.ctx()).is_blocked();
     let filter_id = ui.make_persistent_id("add-node-filter");
     let frame = ui.ctx().cumulative_frame_nr();
     let previous = ui.ctx().data_mut(|data| data.get_temp::<(u64, Option<char>)>(filter_id));
@@ -39,7 +42,7 @@ pub(crate) fn show(ui: &mut Ui, entries: impl IntoIterator<Item = (&'static str,
             }
 
             let label = tr(label);
-            let enabled = filter.is_none_or(|letter| label.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&letter)));
+            let enabled = !blocked && filter.is_none_or(|letter| label.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&letter)));
             if ui.add_enabled(enabled, Button::new(label)).clicked() || (enter && enabled && selected.is_none()) {
                 selected = Some(id);
             }
@@ -62,10 +65,26 @@ mod tests {
         kittest::{By, NodeT, Queryable},
     };
 
+    fn app() -> crate::MaterialCraftApp {
+        crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default())
+    }
+
+    #[test]
+    fn entries_are_disabled_behind_a_prompt() {
+        let mut app = app();
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        let mut harness = Harness::builder().build_ui(move |ui| {
+            super::show(&app, ui, [("svg", "SVG", "Atomic nodes")]);
+        });
+        harness.run_steps(3);
+        assert!(harness.get(By::new().role(egui::accesskit::Role::Button).label("SVG")).accesskit_node().is_disabled());
+    }
+
     #[test]
     fn ordered_entries_keep_the_catalog_sequence() {
-        let mut harness = Harness::builder().build_ui(|ui| {
-            super::show(ui, [("second", "Second", "Native"), ("first", "First", "Native"), ("third", "Third", "Native")]);
+        let app = app();
+        let mut harness = Harness::builder().build_ui(move |ui| {
+            super::show(&app, ui, [("second", "Second", "Native"), ("first", "First", "Native"), ("third", "Third", "Native")]);
         });
         harness.run_steps(3);
         let rows: Vec<_> = ["Second", "First", "Third"]
@@ -78,9 +97,11 @@ mod tests {
 
     #[test]
     fn letters_disable_other_initials_without_removing_entries() {
+        let app = app();
         let mut harness = Harness::builder().build_ui_state(
-            |ui, selected: &mut Option<&'static str>| {
+            move |ui, selected: &mut Option<&'static str>| {
                 if let Some(id) = super::show(
+                    &app,
                     ui,
                     [("svg", "SVG", "Atomic nodes"), ("sharpen", "Sharpen", "Atomic nodes"), ("grayscale", "Grayscale conversion", "Atomic nodes")],
                 ) {

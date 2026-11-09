@@ -88,7 +88,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
     });
     let clicked_out = ui.input(|i| i.pointer.any_pressed())
         && ui.ctx().pointer_interact_pos().is_some_and(|p| !ui.ctx().layer_id_at(p).is_some_and(|l| l.id == egui::Id::unique("node-search")));
-    if let Some(def) = pick {
+    if let Some(def) = pick.filter(|_| !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()) {
         let s = app.graph.search.take();
         if let Some(s) = s {
             let mut p = json!({"def": def, "at": [s.at.x, s.at.y - 20.0]});

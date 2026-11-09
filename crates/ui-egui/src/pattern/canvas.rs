@@ -53,7 +53,7 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
     let painter = ui.painter_at(bounds);
     painter.rect_filled(bounds, 0.0, Color32::from_rgb(0x26, 0x28, 0x2c));
     let snap = app.ui.prefs.snap_to_grid;
-    let frame_key = GraphCamera::frame_key(ui, bounds);
+    let frame_key = GraphCamera::frame_key(ui, bounds) && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked();
     if !editor.framed || app.ui.frame_all || frame_key {
         let selected_only = frame_key && !editor.selection.is_empty();
         let destination = graph

@@ -252,11 +252,7 @@ pub(super) fn handle(
 
     // Keys over the canvas
     let hovered = pointer.is_some_and(|position| rect.contains(position));
-    #[cfg(not(target_arch = "wasm32"))]
-    let update_dialog_open = crate::updates_ui::blocks_input(app);
-    #[cfg(target_arch = "wasm32")]
-    let update_dialog_open = false;
-    if hovered && app.graph.search.is_none() && !update_dialog_open {
+    if hovered && app.graph.search.is_none() && !crate::shell::modality::Modality::capture(app, &context).is_blocked() {
         let space = !context.egui_wants_keyboard_input() && context.input(|input| input.key_pressed(egui::Key::Space));
         let tab = !app.graph.keyboard_was_focused && !context.text_edit_focused() && context.input(|input| input.key_pressed(egui::Key::Tab));
         if (space || tab)

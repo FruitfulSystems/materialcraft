@@ -58,7 +58,7 @@ fn background_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, u
     ui.menu_button(tr("Add node"), |ui| {
         let entries =
             target.available_operations(&app.session).filter(|operation| operation.id != "passthrough").map(|operation| (operation.id, operation.label, ""));
-        add = crate::graph::add_node_menu::show(ui, entries);
+        add = crate::graph::add_node_menu::show(app, ui, entries);
     });
     annotations(app, editor, ui);
     if edit_menu::button(ui, "Add Navigation pin", "graph.pin.add", standalone) {

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
+use crate::shell::modality::Modality;
 use crate::theme::{Accent, Brightness, Tokens};
 
 /// Template previews for the New graph dialog (rendered in the background on first open)
@@ -358,18 +359,20 @@ fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
 fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let mut create: Option<(&str, &str)> = None;
+    let modality = Modality::capture(app, ctx);
+    let free = !modality.is_blocked();
     modal(ctx, "home", tr("Home"), &mut open, vec2(760.0, 470.0), |ui| {
         let tk = Tokens::get(ui.ctx());
         ui.horizontal_top(|ui| {
             // Left rail: actions and links
             ui.vertical(|ui| {
                 ui.set_width(150.0);
-                if ui.add(crate::widgets::primary_button(ui, tr("New graph"))).clicked() {
+                if ui.add_enabled(free, crate::widgets::primary_button(ui, tr("New graph"))).clicked() {
                     app.ui.windows.home = false;
                     app.ui.windows.new_graph = true;
                 }
                 ui.add_space(4.0);
-                if ui.button(format!("{}  {}", icon::FOLDER_OPEN, tr("Open package..."))).clicked() {
+                if ui.add_enabled(modality.allows("file.open"), egui::Button::new(format!("{}  {}", icon::FOLDER_OPEN, tr("Open package...")))).clicked() {
                     app.ui.windows.home = false;
                     crate::menus::invoke(app, ui.ctx(), "file.open");
                 }
@@ -395,7 +398,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                     for (id, label) in materialcraft_engine::samples::TEMPLATES.iter().filter(|(id, _)| !matches!(*id, "empty" | "pbr")) {
                         let (r, resp) = ui.allocate_exact_size(vec2(92.0, 116.0), egui::Sense::click());
                         crate::widgets::name(&resp, egui::Role::ListItem, label);
-                        if resp.hovered() {
+                        if free && resp.hovered() {
                             ui.painter().rect_filled(r, 6.0, tk.row_hover);
                         }
                         let img = egui::Rect::from_min_size(r.min + vec2(6.0, 4.0), vec2(80.0, 80.0));
@@ -409,7 +412,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                         }
                         let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 90.0);
                         ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
-                        if resp.clicked() {
+                        if free && resp.clicked() {
                             create = Some((id, label));
                         }
                     }
@@ -421,7 +424,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 for p in app.ui.recent.clone().into_iter().take(6) {
-                    if ui.link(&p).clicked() {
+                    if ui.add_enabled(free, egui::Link::new(&p)).clicked() {
                         open_path(app, &p);
                         app.ui.windows.home = false;
                     }

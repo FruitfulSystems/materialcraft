@@ -15,6 +15,8 @@ mod instance_context_menu;
 #[cfg(test)]
 mod interaction_tests;
 mod library_drag;
+#[cfg(test)]
+mod modality_tests;
 pub(crate) mod node_card;
 mod node_layout;
 mod node_search;

@@ -179,6 +179,7 @@ pub(super) fn handle(
     if response.hovered()
         && !ui.ctx().egui_wants_keyboard_input()
         && ui.input(|input| input.key_pressed(egui::Key::Space))
+        && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()
         && let Some(pointer_position) = pointer
     {
         editor.menu_at = camera.to_graph(pointer_position);
