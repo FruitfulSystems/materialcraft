@@ -72,10 +72,10 @@ pub(crate) fn require_mutable_folder(path: &str) -> Result<()> {
 pub(crate) fn unique(package: &Package, parent: &str, base: &str) -> String {
     let occupied = package.folder_paths();
     let free = |name: &str| {
-        !(parent.is_empty() && name.eq_ignore_ascii_case("Resources"))
-            && !occupied.contains(&join(parent, name))
-            && !package.graphs.iter().any(|graph| graph.folder == parent && graph.name == name)
-            && !package.resources.iter().any(|resource| resource.folder == parent && resource.name == name)
+        !(parent.is_empty() && name.eq_ignore_ascii_case("Resources")
+            || occupied.contains(&join(parent, name))
+            || package.graphs.iter().any(|graph| graph.folder == parent && graph.name == name)
+            || package.resources.iter().any(|resource| resource.folder == parent && resource.name == name))
     };
     if free(base) {
         return base.to_string();
