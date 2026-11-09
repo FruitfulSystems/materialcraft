@@ -5,16 +5,6 @@ pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, relo
     ui.set_min_width(190.0);
     let mut action = None;
     let resources = target.is_resources();
-    if matches!(target, ExplorerTarget::Package { .. }) || resources {
-        ui.menu_button(tr("Import"), |ui| {
-            for (label, command) in menus::EXPLORER_IMPORT {
-                if ui.button(tr(label)).clicked() {
-                    action = Some(*command);
-                    ui.close();
-                }
-            }
-        });
-    }
     if matches!(target, ExplorerTarget::Package { .. } | ExplorerTarget::Folder { .. }) {
         ui.menu_button(tr("New"), |ui| {
             for (label, command) in menus::EXPLORER_NEW {
@@ -27,6 +17,16 @@ pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, relo
                 }
             }
         });
+        if matches!(target, ExplorerTarget::Package { .. }) || resources {
+            ui.menu_button(tr("Import"), |ui| {
+                for (label, command) in menus::EXPLORER_IMPORT {
+                    if ui.button(tr(label)).clicked() {
+                        action = Some(*command);
+                        ui.close();
+                    }
+                }
+            });
+        }
         ui.separator();
     }
     if resources {
