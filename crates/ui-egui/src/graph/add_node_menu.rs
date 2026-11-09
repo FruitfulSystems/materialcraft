@@ -23,8 +23,6 @@ pub(crate) fn show(ui: &mut Ui, entries: impl IntoIterator<Item = (&'static str,
         }
     });
 
-    let mut entries: Vec<_> = entries.into_iter().collect();
-    entries.sort_by_key(|(_, label, category)| (*category, *label));
     let mut selected = None;
     let enter = filter.is_some() && ui.input(|input| input.key_pressed(Key::Enter));
     ui.set_min_width(220.0);
@@ -63,6 +61,20 @@ mod tests {
         Harness,
         kittest::{By, NodeT, Queryable},
     };
+
+    #[test]
+    fn ordered_entries_keep_the_catalog_sequence() {
+        let mut harness = Harness::builder().build_ui(|ui| {
+            super::show(ui, [("second", "Second", "Native"), ("first", "First", "Native"), ("third", "Third", "Native")]);
+        });
+        harness.run_steps(3);
+        let rows: Vec<_> = ["Second", "First", "Third"]
+            .iter()
+            .map(|label| harness.get(By::new().role(egui::accesskit::Role::Button).label(label)).rect().center().y)
+            .collect();
+
+        assert!(rows.windows(2).all(|pair| pair[0] < pair[1]), "catalog order must survive rendering: {rows:?}");
+    }
 
     #[test]
     fn letters_disable_other_initials_without_removing_entries() {

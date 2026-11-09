@@ -65,7 +65,7 @@ fn reaches(
     false
 }
 
-fn add(session: &mut Session, parameters: &Value) -> Result<Value> {
+pub(crate) fn add(session: &mut Session, parameters: &Value) -> Result<Value> {
     if parameters.get("pattern").is_some() {
         return Err(bad(COMMAND, "FX-Map graphs do not accept graph instances"));
     }
@@ -79,10 +79,20 @@ fn add(session: &mut Session, parameters: &Value) -> Result<Value> {
     if let Some(target) = &target {
         target.current(session)?;
     }
-    let document = u64p(parameters, "document").ok_or_else(|| bad(COMMAND, "document is required"))?;
     let name = strp(parameters, "graph").ok_or_else(|| bad(COMMAND, "graph is required"))?;
     let packages = session.open_packages();
-    let (_, source, path, _) = packages.iter().find(|entry| entry.0 == document).copied().ok_or_else(|| bad(COMMAND, "the source package is not open"))?;
+    let document = u64p(parameters, "document");
+    let (source, path) = if let Some(path) = strp(parameters, "package") {
+        if !path.starts_with("sbs://") {
+            return Err(bad(COMMAND, "library instances require an sbs:// package"));
+        }
+
+        (session.pkg.dependencies.get(path).map(AsRef::as_ref).ok_or_else(|| bad(COMMAND, "the library package is missing"))?, Some(path))
+    } else {
+        let document = document.ok_or_else(|| bad(COMMAND, "document is required"))?;
+        let (_, source, path, _) = packages.iter().find(|entry| entry.0 == document).copied().ok_or_else(|| bad(COMMAND, "the source package is not open"))?;
+        (source, path)
+    };
     let (_, graph) = source.graph_by_name(name).ok_or_else(|| bad(COMMAND, "the source graph no longer exists"))?;
     if graph.function.is_some() != target.is_some() {
         return Err(bad(COMMAND, "Function instances require a Function canvas; main instances require a main graph"));
@@ -100,17 +110,18 @@ fn add(session: &mut Session, parameters: &Value) -> Result<Value> {
             return Err(bad(COMMAND, "source connector identifiers must be unique"));
         }
     }
-    let file = if document == session.document_id {
+    let file = if document == Some(session.document_id) && parameters.get("package").is_none() {
         ""
     } else {
         path.ok_or_else(|| bad(COMMAND, "save the source SBS file before instancing its graph in another package"))?
     };
-    let source_file = path.map(str::to_string).unwrap_or_else(|| format!("unsaved:{document}"));
+    let source_file = path.map(str::to_string).unwrap_or_else(|| format!("unsaved:{}", document.unwrap_or(session.document_id)));
     let target_file = session.path.clone().unwrap_or_else(|| format!("unsaved:{}", session.document_id));
-    if reaches(source, &source_file, name, &target_file, &session.graph()?.name, &session.pkg.dependencies) {
+    if reaches(source, &source_file, &graph.sbs_path(), &target_file, &session.graph()?.sbs_path(), &session.pkg.dependencies) {
         return Err(bad(COMMAND, "the instance would create a graph dependency cycle"));
     }
-    let instance = GraphInstance { package: file.into(), graph: name.into(), inputs, outputs };
+    let instance =
+        GraphInstance { label: graph.display_name().into(), defaults: Default::default(), package: file.into(), graph: graph.sbs_path(), inputs, outputs };
     let at =
         crate::graph_grid::snap_position(point(parameters, "at").unwrap_or([0.0; 2]), parameters.get("snapToGrid").and_then(Value::as_bool).unwrap_or(false));
     session.edit("Add graph instance", |session| {
@@ -122,6 +133,8 @@ fn add(session: &mut Session, parameters: &Value) -> Result<Value> {
             let id = function.next_id();
             function.nodes.push(materialcraft_core::FunctionNode {
                 id,
+                missing: None,
+                missing_data: String::new(),
                 op: "instance".into(),
                 type_code: instance.outputs.first().map_or(0, |port| port.type_code),
                 inputs: vec![None; instance.inputs.len()],

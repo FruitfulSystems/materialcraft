@@ -39,7 +39,7 @@ pub fn node_label(n: &Node) -> String {
         return n.label.clone();
     }
     if let Some(instance) = &n.instance {
-        return instance.graph.clone();
+        return if instance.label.is_empty() { instance.graph.clone() } else { instance.label.clone() };
     }
     let label = match n.def.as_str() {
         "graph_instance" => match n.params.get("graph") {
@@ -47,7 +47,13 @@ pub fn node_label(n: &Node) -> String {
             _ => tr("Graph instance").into(),
         },
         "output" | "input_color" | "input_grayscale" | "input_value" => materialcraft_engine::eval::identifier(n),
-        d => materialcraft_engine::nodes::find(d).map_or(d, |d| d.label).to_string(),
+        d => {
+            if let Some(definition) = materialcraft_engine::nodes::find(d) {
+                return tr(definition.label).into();
+            }
+
+            d.to_string()
+        }
     };
     label.split(['_', ' ']).filter(|word| !word.is_empty()).fold(String::with_capacity(label.len()), |mut display, word| {
         if !display.is_empty() {

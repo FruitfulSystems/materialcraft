@@ -1,4 +1,7 @@
 pub(crate) fn normalize(path: &str) -> String {
+    if path.contains("://") {
+        return path.to_string();
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::path::{Component, PathBuf};
@@ -32,6 +35,12 @@ pub(crate) fn normalize(path: &str) -> String {
 }
 
 pub(crate) fn resolve(owner: &str, reference: &str) -> String {
+    if reference.contains("://") {
+        return reference.to_string();
+    }
+    if owner.starts_with("sbs://") {
+        return materialcraft_formats::sbs::library::resolve(owner, reference).unwrap_or_else(|_| format!("sbs://{reference}"));
+    }
     let path = std::path::Path::new(reference);
     if path.is_absolute() {
         return normalize(reference);
@@ -40,6 +49,9 @@ pub(crate) fn resolve(owner: &str, reference: &str) -> String {
 }
 
 pub(crate) fn relative(owner: &str, source: &str) -> String {
+    if source.contains("://") {
+        return source.to_string();
+    }
     let folder = std::path::Path::new(owner).parent().unwrap_or(std::path::Path::new(""));
     let from: Vec<_> = folder.components().collect();
     let to: Vec<_> = std::path::Path::new(source).components().collect();

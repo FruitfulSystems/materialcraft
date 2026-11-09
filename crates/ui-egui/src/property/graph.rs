@@ -5,44 +5,29 @@ use egui_phosphor::regular as icon;
 use materialcraft_engine::core::{Graph, OutputFormat, Resource, Value};
 use serde_json::{Value as JsonValue, json};
 
-/// A one-line field for a value the engine holds: what is typed stays between frames, and the text
-/// comes back when the field loses focus with something new in it. A change to the value from
-/// elsewhere (undo) drops the draft.
-fn draft_field(ui: &mut Ui, salt: String, current: &str, label: &str) -> Option<String> {
-    let id = ui.make_persistent_id(salt);
-    let draft: Option<(String, String)> = ui.data(|data| data.get_temp(id));
-    let mut text = draft.filter(|(seen, _)| seen == current).map_or_else(|| current.to_string(), |(_, text)| text);
-    let response = ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()));
-    crate::widgets::name(&response, egui::Role::TextInput, label);
-    if response.has_focus() {
-        ui.data_mut(|data| data.insert_temp(id, (current.to_string(), text.clone())));
-    } else {
-        ui.data_mut(|data| data.remove_temp::<(String, String)>(id));
-    }
-    (response.lost_focus() && text != current).then_some(text)
+pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, target: materialcraft_engine::GraphTarget) {
+    ui.push_id(target, |ui| show_target(app, ui, target));
 }
 
-pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
+fn show_target(app: &mut MaterialCraftApp, ui: &mut Ui, target: materialcraft_engine::GraphTarget) {
+    super::graph_attributes::show(app, ui, target);
     let tokens = Tokens::get(ui.ctx());
-    let graph_index = app.session.graph;
-    let Ok(graph) = app.session.graph() else {
+    let Ok(graph) = target.get(&app.session) else {
         ui.label(tr("No graph is open"));
         return;
     };
 
     let mut commands = Vec::new();
-    let mut emit = |id: &'static str, parameters| commands.push((id, parameters));
-    section(ui, "graph-base", tr("Base parameters"), |ui| {
-        ui.horizontal(|ui| {
-            ui.label(tr("Name"));
-            if let Some(name) = draft_field(ui, format!("graph-name-{graph_index}"), &graph.name, "Graph name") {
-                emit("graph.rename", json!({"name": name}));
-            }
-        });
-        if graph.function.is_some() {
-            return;
-        }
+    let mut emit = |id: &'static str, mut parameters: JsonValue| {
+        parameters["document"] = serde_json::json!(target.document);
+        parameters["graph"] = serde_json::json!(target.graph);
+        commands.push((id, parameters));
+    };
+    if graph.function.is_some() {
+        return;
+    }
 
+    section(ui, "graph-base", tr("Base parameters"), |ui| {
         for (axis, label) in [(0usize, "Width"), (1, "Height")] {
             let mut value = graph.size[axis] as f32;
             if crate::widgets::slider(ui, &format!("{}  {} px", tr(label), 1u32 << graph.size[axis]), &mut value, 4.0..=13.0, 0).changed() {
@@ -63,21 +48,13 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             emit("graph.seed", json!({"seed": seed.round() as i64}));
         }
     });
-    section(ui, "graph-attr", tr("Attributes"), |ui| {
-        for (key, label, current) in [
-            ("category", "Category", &graph.attributes.category),
-            ("description", "Description", &graph.attributes.description),
-            ("author", "Author", &graph.attributes.author),
-            ("tags", "Tags", &graph.attributes.tags),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(tr(label));
-                if let Some(edited) = draft_field(ui, format!("graph-attribute-{graph_index}-{key}"), current, label) {
-                    emit("graph.attributes", json!({key: edited}));
-                }
-            });
+    if target != materialcraft_engine::GraphTarget::active(&app.session) {
+        for (id, parameters) in commands {
+            app.run(id, parameters);
         }
-    });
+        return;
+    }
+
     section(ui, "graph-inputs", tr("Input parameters"), |ui| {
         if graph.exposed.is_empty() {
             ui.label(RichText::new(tr("Right-click a node parameter > Expose as graph input")).size(11.0).color(tokens.text_dim));

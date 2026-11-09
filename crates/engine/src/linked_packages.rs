@@ -38,7 +38,14 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
                     return None;
                 }
                 let materialcraft_core::Value::Text(name) = node.params.get("graph")? else { return None };
-                Some(GraphInstance { package: String::new(), graph: name.clone(), inputs: Vec::new(), outputs: Vec::new() })
+                Some(GraphInstance {
+                    label: String::new(),
+                    defaults: Default::default(),
+                    package: String::new(),
+                    graph: name.clone(),
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                })
             })?;
             let source = if instance.package.is_empty() { &*package } else { sources.get(&instance.package)?.as_ref() };
             let (_, graph) = source.graph_by_name(&instance.graph)?;
@@ -63,6 +70,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             }
             instance.inputs = inputs;
             instance.outputs = outputs;
+            instance.label = graph.display_name().into();
             (node.instance.as_ref() != Some(&instance)).then_some((graph_index, node_index, instance))
         })
         .collect();

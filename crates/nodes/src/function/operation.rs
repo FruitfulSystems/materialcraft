@@ -32,12 +32,7 @@ pub(crate) fn evaluate(
 
     if op.starts_with("get_") {
         let name = name()?;
-        let value = match name {
-            "$pos" => Value::Float2(context.position),
-            "$size" => Value::Float2(context.size),
-            "$sizelog2" => Value::Float2(context.size.map(f32::log2)),
-            _ => variables.get(name).or_else(|| context.variables.get(name)).cloned().ok_or_else(|| format!("undefined variable `{name}`"))?,
-        };
+        let value = context.variable(name, variables)?.ok_or_else(|| format!("undefined variable `{name}` in this context"))?;
 
         if value_type::type_code(&value) != instruction.type_code {
             return Err(format!("variable `{name}` has the wrong type for {op}"));
@@ -64,7 +59,7 @@ pub(crate) fn evaluate(
         }
         "isdefined" => {
             let name = name()?;
-            Value::Bool(variables.contains_key(name) || context.variables.contains_key(name) || matches!(name, "$pos" | "$size" | "$sizelog2"))
+            Value::Bool(context.variable(name, variables)?.is_some())
         }
         "and" => Value::Bool(boolean(first()?)? && boolean(second()?)?),
         "or" => Value::Bool(boolean(first()?)? || boolean(second()?)?),

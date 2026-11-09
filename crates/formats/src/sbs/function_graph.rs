@@ -27,26 +27,30 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
             .map(|value| to_natural_value(&value));
         let type_code = child_value(element, "type").and_then(|value| value.parse().ok()).unwrap_or(0);
         let mut instance = if op == "instance" { Some(super::function_instance::read(element, value.as_ref(), type_code)?) } else { None };
+        let mut missing = instance.is_none() && function::definition(op).is_none();
         let mut names: Vec<String> = if let Some(instance) = &instance {
             instance.inputs.iter().map(|port| port.identifier.clone()).collect()
         } else {
-            function::definition(op).ok_or_else(|| format!("unsupported function `{op}`"))?.inputs.iter().map(|name| (*name).into()).collect()
+            function::definition(op).into_iter().flat_map(|definition| definition.inputs.iter().map(|name| (*name).into())).collect()
         };
         let mut inputs = vec![None; names.len()];
         for connection in child_element(element, "connections").into_iter().flat_map(|connections| children_named(connections, "connection")) {
             let port = child_value(connection, "identifier").unwrap_or("");
             let index = if let Some(index) = names.iter().position(|name| name == port) {
                 index
-            } else if let Some(instance) = &mut instance {
+            } else {
                 if names.len() >= 4096 {
                     return Err("Function instance exceeds the 4096-input limit".into());
                 }
-                instance.inputs.push(materialcraft_core::GraphPort { identifier: port.into(), type_code: 0 });
+                if let Some(instance) = &mut instance {
+                    instance.inputs.push(materialcraft_core::GraphPort { identifier: port.into(), type_code: 0 });
+                } else {
+                    // A newer connector contract must remain editable without running the older operation
+                    missing = true;
+                }
                 names.push(port.into());
                 inputs.push(None);
                 names.len() - 1
-            } else {
-                return Err(format!("{op}: unknown input `{port}`"));
             };
             let source = child_value(connection, "connRef").and_then(|value| value.parse().ok()).ok_or("invalid function connection")?;
             let input = inputs.get_mut(index).ok_or("invalid input index")?;
@@ -56,6 +60,12 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
         }
         let position = child_element(element, "GUILayout").and_then(|layout| child_value(layout, "gpos")).map(parse_floats).unwrap_or_default();
         graph.nodes.push(FunctionNode {
+            missing: missing.then_some(names),
+            missing_data: if missing {
+                child_element(element, "funcDatas").map(|data| element.document().input_text()[data.range()].to_string()).unwrap_or_default()
+            } else {
+                String::new()
+            },
             instance,
             source: None,
             id,
@@ -74,7 +84,7 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
         return Err("function connection references a missing node".into());
     }
     // Earlier files may designate a Dot; keep the graph editable without promoting another node
-    if graph.output.and_then(|id| graph.node(id)).is_some_and(|node| !function::can_be_output(&node.op)) {
+    if graph.output.and_then(|id| graph.node(id)).is_some_and(|node| node.missing.is_none() && !function::can_be_output(&node.op)) {
         graph.output = None;
     }
     Ok(graph)
@@ -120,7 +130,21 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
             }
         }
         output.push_str("</connections>");
-        if let Some(instance) = &node.instance {
+        if node.missing.is_some() && !node.missing_data.is_empty() {
+            // Only a bounded data element may be emitted; command input must not inject package XML
+            let options = roxmltree::ParsingOptions { allow_dtd: false, nodes_limit: 100_000 };
+            if node.missing_data.len() > (1 << 20) {
+                return Err("invalid preserved function data".into());
+            }
+
+            let document = roxmltree::Document::parse_with_options(&node.missing_data, options).map_err(|_| "invalid preserved function data")?;
+            let root = document.root_element();
+            if !root.has_tag_name("funcDatas") {
+                return Err("invalid preserved function data".into());
+            }
+
+            output.push_str(node.missing_data.get(root.range()).ok_or("invalid preserved function data")?);
+        } else if let Some(instance) = &node.instance {
             output.push_str(&super::function_instance::write(instance, writer));
         } else if let Some(value) = &node.value {
             let constant = constant_xml(value).ok_or("function data must be a scalar or vector constant")?;

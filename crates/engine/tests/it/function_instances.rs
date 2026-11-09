@@ -43,10 +43,57 @@ fn evaluate(graph: &FunctionGraph) -> Value {
     function::compile(graph, 0)
         .unwrap()
         .evaluate(
-            &EvaluationContext { position: [0.5; 2], size: [16.0; 2], images: &[], tile: true, variables: &BTreeMap::new() },
+            &EvaluationContext { scope: Default::default(), position: [0.5; 2], size: [16.0; 2], images: &[], tile: true, variables: &BTreeMap::new() },
             &mut EvaluationState::default(),
         )
         .unwrap()
+}
+
+#[test]
+fn redundant_legacy_function_connectors_preserve_wires_without_repeating_evaluation() {
+    let mut package = source();
+    let mut graph = Graph::new("Caller");
+    let mut body = FunctionGraph::default();
+    let maximum = body.add_constant(Value::Float(1.0));
+    let random = body.add("rand", &[maximum], None);
+    let instance = body.add("instance", &[random], None);
+    let call = body.nodes.iter_mut().find(|node| node.id == instance).unwrap();
+    call.instance = Some(GraphInstance {
+        label: String::new(),
+        package: String::new(),
+        graph: "Twice".into(),
+        inputs: vec![GraphPort { identifier: "amount".into(), type_code: 256 }],
+        outputs: vec![GraphPort { identifier: "output".into(), type_code: 256 }],
+        defaults: BTreeMap::new(),
+    });
+    let next_random = body.add("rand", &[maximum], None);
+    body.output = Some(body.add("add", &[instance, next_random], None));
+    graph.function = Some(body);
+    package.graphs.push(graph);
+    let canonical = Session::new(package.clone());
+    let expected = evaluate(canonical.pkg.graph_by_name("Caller").unwrap().1.function.as_ref().unwrap());
+    let caller = package.graphs.last_mut().unwrap().function.as_mut().unwrap();
+    let call = caller.nodes.iter_mut().find(|node| node.id == instance).unwrap();
+    call.instance.as_mut().unwrap().inputs.push(GraphPort { identifier: "old_amount".into(), type_code: 0 });
+    call.inputs.push(Some(random));
+
+    let session = Session::new(package.clone());
+    let function = session.pkg.graph_by_name("Caller").unwrap().1.function.as_ref().unwrap();
+    assert_eq!(evaluate(function), expected);
+    assert!(function::warnings(function).is_empty());
+    let saved = formats::sbs::write_sbs(&session.pkg).unwrap();
+    let reopened = Session::new(formats::sbs::read_sbs(&saved, "caller.sbs", &|_| None).unwrap().pkg);
+    let function = reopened.pkg.graph_by_name("Caller").unwrap().1.function.as_ref().unwrap();
+    let call = function.nodes.iter().find(|node| node.instance.is_some()).unwrap();
+    assert_eq!(call.instance.as_ref().unwrap().inputs.iter().map(|port| port.identifier.as_str()).collect::<Vec<_>>(), ["amount", "old_amount"]);
+    assert_eq!(call.inputs[0], call.inputs[1]);
+    assert_eq!(evaluate(function), expected);
+
+    let caller = package.graphs.last_mut().unwrap().function.as_mut().unwrap();
+    *caller.nodes.iter_mut().find(|node| node.id == instance).unwrap().inputs.last_mut().unwrap() = Some(maximum);
+    let conflicting = Session::new(package);
+    let function = conflicting.pkg.graph_by_name("Caller").unwrap().1.function.as_ref().unwrap();
+    assert!(function::compile(function, 0).err().unwrap().contains("connected input no longer exists"));
 }
 
 #[test]
@@ -64,7 +111,7 @@ fn functions_link_across_documents_and_keep_independent_undo() {
     let constant = edit(&mut session, &target, json!({"action": "add", "operation": "const_float1", "at": [0,0]}))["id"].as_u64().unwrap();
     edit(&mut session, &target, json!({"action": "value", "id": constant, "value": Value::Float(0.25)}));
     edit(&mut session, &target, json!({"action": "output", "id": instance}));
-    assert!(function::warnings(session.graph().unwrap().function.as_ref().unwrap())[0].contains("missing input"));
+    assert!(function::warnings(session.graph().unwrap().function.as_ref().unwrap()).is_empty());
     edit(&mut session, &target, json!({"action": "connect", "from": constant, "to": instance, "input": 0}));
     assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(0.5));
     let history = session.history();
@@ -76,7 +123,7 @@ fn functions_link_across_documents_and_keep_independent_undo() {
     assert_eq!(session.history(), history);
     assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(0.75));
     execute(&mut session, "edit.undo", &json!({})).unwrap();
-    assert!(function::compile(session.graph().unwrap().function.as_ref().unwrap(), 0).is_err());
+    assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(1.5));
     execute(&mut session, "edit.redo", &json!({})).unwrap();
     assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(0.75));
 }
@@ -173,6 +220,8 @@ fn calls_isolate_variables_and_evaluate_arguments_once() {
     let argument = caller.add("set", &[next], Some(Value::Text("private".into())));
     let call = caller.add("instance", &[argument], None);
     caller.nodes.last_mut().unwrap().instance = Some(GraphInstance {
+        label: String::new(),
+        defaults: Default::default(),
         package: String::new(),
         graph: "Twice".into(),
         inputs: vec![GraphPort { identifier: "amount".into(), type_code: 256 }],
@@ -182,6 +231,19 @@ fn calls_isolate_variables_and_evaluate_arguments_once() {
     caller.output = Some(caller.add("sequence", &[init, total], None));
     function::resolve_instances(&mut caller, &package, &BTreeMap::new());
     assert_eq!(evaluate(&caller), Value::Float(6.0));
+}
+
+#[test]
+fn unconnected_instance_inputs_use_the_source_defaults() {
+    let mut session = Session::new(source());
+    execute(&mut session, "file.new", &json!({"name": "Caller", "kind": "function"})).unwrap();
+    let target = json!({"kind": "graph"});
+    let instance = call(&mut session, 0, "Twice", &target);
+    edit(&mut session, &target, json!({"action": "output", "id": instance}));
+
+    let graph = session.graph().unwrap().function.as_ref().unwrap();
+    assert_eq!(evaluate(graph), Value::Float(1.0));
+    assert!(function::warnings(graph).is_empty());
 }
 
 #[test]
@@ -312,6 +374,8 @@ fn cyclic_references_loaded_from_sbs_report_errors_without_recursing_forever() {
     let mut function = FunctionGraph::default();
     let id = function.add("instance", &[], None);
     function.nodes[0].instance = Some(GraphInstance {
+        label: String::new(),
+        defaults: Default::default(),
         package: String::new(),
         graph: graph.name.clone(),
         inputs: Vec::new(),

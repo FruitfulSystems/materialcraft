@@ -7,6 +7,42 @@ use materialcraft_engine::{
 use serde_json::json;
 
 #[test]
+fn new_processors_start_with_empty_functions_and_preserve_them_in_sbs() {
+    use materialcraft_engine::{FunctionGraphTarget, core::NodeId};
+
+    for definition in ["pixel_processor", "value_processor"] {
+        let mut session = materialcraft_engine::new_session();
+        let node = NodeId(execute(&mut session, "graph.node.add", &json!({"def": definition})).unwrap()["id"].as_u64().unwrap());
+        let target = FunctionGraphTarget::Parameter { node, parameter: "function".into() };
+
+        assert_eq!(target.current(&session).unwrap(), &FunctionGraph::default(), "{definition}");
+        session.preview_size = Some(16);
+        session.cook();
+        assert_eq!(session.cooked.nodes[&node].error.as_deref(), Some("function has no result node"), "{definition}");
+
+        let loaded = read_sbs(&write_sbs(&session.pkg).unwrap(), "empty_processors.sbs", &|_| None).unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let session = Session::new(loaded.pkg);
+        let node = session.graph().unwrap().nodes[0].id;
+        let target = FunctionGraphTarget::Parameter { node, parameter: "function".into() };
+        assert_eq!(target.current(&session).unwrap(), &FunctionGraph::default(), "{definition}");
+    }
+}
+
+#[test]
+fn new_fx_map_starts_with_a_quadrant_output() {
+    use materialcraft_engine::core::{NodeId, PatternGraph, PatternNodeKind};
+
+    let mut session = materialcraft_engine::new_session();
+    let node = NodeId(execute(&mut session, "graph.node.add", &json!({"def": "fx_map"})).unwrap()["id"].as_u64().unwrap());
+
+    assert_eq!(
+        session.graph().unwrap().node(node).unwrap().params.get("pattern"),
+        Some(&Value::PatternGraph(Box::new(PatternGraph::with_root(PatternNodeKind::Quadrant))))
+    );
+}
+
+#[test]
 fn atomic_sample_round_trips_through_native_fields_and_cooks_identically() {
     let mut original = Session::new(atomic_sample().unwrap());
     original.preview_size = Some(64);
@@ -55,7 +91,7 @@ fn every_catalog_entry_has_a_native_sbs_representation() {
     let bytes = write_sbs(&package).unwrap();
     let loaded = read_sbs(&bytes, "primitives.sbs", &|_| None).unwrap();
     assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-    assert_eq!(loaded.pkg.graphs[0].nodes.len(), 30);
+    assert_eq!(loaded.pkg.graphs[0].nodes.len(), 29);
     for (before, after) in package.graphs[0].nodes.iter().zip(&loaded.pkg.graphs[0].nodes) {
         assert_eq!(before.def, after.def);
     }

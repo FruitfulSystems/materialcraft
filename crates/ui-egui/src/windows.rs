@@ -96,6 +96,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         home(app, ctx);
     }
     crate::unsaved::show(app, ctx);
+    crate::explorer::dialogs(app, ctx);
 }
 
 fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
@@ -283,6 +284,10 @@ fn preferences(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         if crate::widgets::slider(ui, tr("Autosave every (minutes, 0 = off)"), &mut auto, 0.0..=60.0, 0).changed() {
             p.autosave_minutes = auto.round() as u32;
         }
+        let mut undo_limit = p.history.undo_limit as f32;
+        if crate::widgets::slider(ui, tr("Undo history (steps)"), &mut undo_limit, 1.0..=10_000.0, 0).changed() {
+            p.history.undo_limit = undo_limit.round() as u32;
+        }
         crate::widgets::combo(ui, tr("Preview size while editing"), crate::preview_resolution::label(p.preview_size), |ui| {
             crate::preview_resolution::choices(ui, &mut p.preview_size);
         });
@@ -459,14 +464,14 @@ pub fn console(app: &mut MaterialCraftApp, ui: &mut Ui) {
 pub fn history(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for (i, h) in app.session.history().iter().enumerate() {
+        for (i, h) in app.session.document_history_labels(crate::history::document(app)).iter().enumerate() {
             ui.label(RichText::new(format!("{:>3}  {h}", i + 1)).size(11.5).color(tk.text));
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(app.session.can_undo(), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_LEFT, tr("Undo")))).clicked() {
+            if ui.add_enabled(crate::menus::enabled(app, "edit.undo"), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_LEFT, tr("Undo")))).clicked() {
                 app.run("edit.undo", json!({}));
             }
-            if ui.add_enabled(app.session.can_redo(), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_RIGHT, tr("Redo")))).clicked() {
+            if ui.add_enabled(crate::menus::enabled(app, "edit.redo"), egui::Button::new(format!("{} {}", icon::ARROW_U_UP_RIGHT, tr("Redo")))).clicked() {
                 app.run("edit.redo", json!({}));
             }
         });
@@ -529,7 +534,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 }
                 true
             }
-            "file.save" if app.session.path.is_some() => {
+            "file.save" if app.session.path.as_ref().is_some_and(|path| !path.contains("://")) => {
                 if let Some(r) = app.run("file.save", json!({})) {
                     let path = r["path"].as_str().unwrap_or_default().to_string();
                     app.ui.add_recent(&path);
@@ -537,12 +542,14 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 }
                 true
             }
-            "file.save" | "file.saveAs" => {
+            "file.save" | "file.saveAs" | "file.saveCopyAs" => {
                 let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
                 if let Some(p) = rfd::FileDialog::new().set_file_name(name).add_filter("SBS package", &["sbs"]).save_file() {
                     let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
-                    if app.run("file.save", json!({"path": path})).is_some() {
-                        app.ui.add_recent(&path);
+                    if app.run(if id == "file.saveCopyAs" { id } else { "file.save" }, json!({"path": path})).is_some() {
+                        if id != "file.saveCopyAs" {
+                            app.ui.add_recent(&path);
+                        }
                         app.toast(format!("{} {path}", tr("Saved")), false);
                     }
                 }
@@ -581,6 +588,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             "file.open" => crate::web_files::open(ctx),
             "file.importBitmap" => crate::web_files::import_bitmap(ctx),
             "file.save" | "file.saveAs" => crate::web_files::save(app),
+            "file.saveCopyAs" => crate::web_files::save_copy(app),
             "file.exportMaterial" => crate::web_files::export_material(app),
             _ => return false,
         }

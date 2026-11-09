@@ -5,6 +5,9 @@ use std::sync::atomic::AtomicBool;
 
 /// What to cook and how
 pub struct Options<'a> {
+    pub environment: materialcraft_core::EvaluationEnvironment,
+    pub parent_tiling: Option<[bool; 2]>,
+    pub parent_pixel_ratio: Option<i32>,
     /// Cap on the larger side of every node's output (previews); `None` = full size
     pub max_size: Option<u32>,
     /// Cook only these nodes and what they depend on (`None` = the whole graph)
@@ -28,6 +31,9 @@ pub struct Options<'a> {
 impl<'a> Options<'a> {
     pub fn new(resource: &'a crate::ResourceDecoder<'a>) -> Options<'a> {
         Options {
+            environment: Default::default(),
+            parent_tiling: None,
+            parent_pixel_ratio: None,
             max_size: None,
             only: None,
             inputs: BTreeMap::new(),

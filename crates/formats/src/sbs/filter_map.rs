@@ -6,7 +6,6 @@ pub(super) struct FilterMap {
 }
 
 pub(super) const FILTERS: &[FilterMap] = &[
-    FilterMap { sbs: "motionblur", def: "motion_blur", inputs: &[("input1", "input")], params: &[("intensity", "intensity"), ("shiftangle", "shiftangle")] },
     FilterMap { sbs: "uniform", def: "uniform", inputs: &[], params: &[("outputcolor", "color"), ("colorswitch", "color_mode")] },
     FilterMap {
         sbs: "blend",

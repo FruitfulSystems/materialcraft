@@ -16,7 +16,6 @@ mod input_color;
 mod input_grayscale;
 mod input_value;
 mod levels;
-mod motion_blur;
 mod normal;
 mod output;
 mod pattern_map;

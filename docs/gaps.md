@@ -8,6 +8,16 @@ Current integration also provides workspace-scoped `material_export`, real Heigh
 from the assigned material, explicit normal-map convention, and linear bitmap/input previews.
 The native SBS and primitive-library limitations in [atomic-workflow.md](atomic-workflow.md) remain.
 
+Reusable SBS functions now appear in the Library for Function and processor canvases. The bundled
+library now retains all 171 supplied function bodies, with no empty implementation placeholders.
+Full numerical equivalence and importing the converted library in the reference application remain
+unverified. Redistribution rights for the retained source bodies are not established.
+See [architecture.md](architecture.md) for alias resolution and conversion details.
+
+Explorer now displays native SBS folders, including empty groups and nested resources. Its initial
+package, folder and graph context menus support creation, copy/paste, rename, removal, and package
+save/reload/close actions. Publishing and additional resource creation menus remain outside this scope.
+
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (portable `.mcmat` materials closed the published-archive gap) · **Target:** the professional node-based material workflow
 
 Every known shortfall, most important first. Pick from the top.

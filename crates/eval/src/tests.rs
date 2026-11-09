@@ -43,6 +43,31 @@ fn cooks_and_caches() {
 }
 
 #[test]
+fn processor_tiling_variable_tracks_both_axes_and_invalidates_cached_values() {
+    let mut function = materialcraft_core::FunctionGraph::default();
+    function.output = Some(function.add("get_integer1", &[], Some(Value::Text("$tiling".into()))));
+    let mut graph = Graph::new("Tiling");
+    let processor = graph.add_node("value_processor", [0.0; 2]);
+    graph.node_mut(processor).unwrap().params.insert("function".into(), Value::Function(Box::new(function)));
+    let mut package = Package::new("Tiling");
+    package.graphs.push(graph);
+    let cache = Mutex::new(Cache::default());
+
+    for (tiling, expected) in [([false, false], 0), ([true, false], 1), ([false, true], 2), ([true, true], 3)] {
+        package.graphs[0].node_mut(processor).unwrap().base.tiling = tiling;
+        package.graphs[0].node_mut(processor).unwrap().base.tiling_mode = materialcraft_core::ParameterInheritance::Absolute;
+        let result = cook(&package, 0, &Options::new(&no_res), &cache);
+
+        assert_eq!(result.nodes[&processor].error, None);
+        assert_eq!(result.nodes[&processor].outputs[0].as_value(), Some(&Value::Int(expected)));
+        assert!(!result.nodes[&processor].cached);
+        let cached = cook(&package, 0, &Options::new(&no_res), &cache);
+        assert!(cached.nodes[&processor].cached);
+        assert_eq!(cached.nodes[&processor].outputs[0].as_value(), Some(&Value::Int(expected)));
+    }
+}
+
+#[test]
 fn hostile_param_is_clamped_before_cooking() {
     let (mut p, noise, _, _) = sample();
     let blur = p.graphs[0].add_node("directional_blur", [150.0, 100.0]);
@@ -229,6 +254,8 @@ fn input_change_recooks_only_readers() {
     let (mut p, noise, blur, out) = sample();
     let reader = p.graphs[0].add_node("pixel_processor", [0.0, 100.0]);
     let get_a = FunctionNode {
+        missing: None,
+        missing_data: String::new(),
         instance: None,
         source: None,
         id: 1,

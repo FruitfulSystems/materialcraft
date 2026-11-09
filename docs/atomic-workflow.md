@@ -121,6 +121,9 @@ function graphs remains outside this change. The reference application's ability
 saved files still needs external verification.
 
 Function Graphs share the main canvas card geometry and styling, including compact Dot nodes.
-The Graph, Function Graph and FX-Map Add node menus remain flat, with dividers between groups
-and room to use the window height. Type a letter to enable names starting with it while keeping the full list visible;
-Backspace clears the filter.
+The Graph, Function Graph and FX-Map Add node menus remain flat and preserve their native catalog
+order, also used by the Library. The regular graph menu separates primitives, inputs and output;
+Dot is excluded from every Add node list and is added through its separate action. The function
+and Pixel Processor menus list 84 operations; Value Processor omits the two samplers. FX-Map lists
+Quadrant, Switch, Iterate in that order. Type a letter to enable names starting
+with it while keeping the full list visible; Backspace clears the filter.

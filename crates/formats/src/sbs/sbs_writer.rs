@@ -65,17 +65,7 @@ impl SbsWriter {
 
     pub(super) fn write_graph(&mut self, out: &mut String, pkg: &Package, graph: &Graph, self_uid: u64) -> Result<()> {
         let _ = write!(out, "<graph><identifier v=\"{}\"/><uid v=\"{}\"/><graphtype v=\"material\"/>", xml_escape(&graph.name), self.next_uid());
-        let attributes = &graph.attributes;
-        if !(attributes.category.is_empty() && attributes.description.is_empty() && attributes.author.is_empty() && attributes.tags.is_empty()) {
-            let _ = write!(
-                out,
-                "<attributes><category v=\"{}\"/><description v=\"{}\"/><author v=\"{}\"/><tags v=\"{}\"/></attributes>",
-                xml_escape(&attributes.category),
-                xml_escape(&attributes.description),
-                xml_escape(&attributes.author),
-                xml_escape(&attributes.tags)
-            );
-        }
+        super::graph_attributes::write(out, graph);
 
         let mut node_uids: HashMap<NodeId, u64> = HashMap::new();
         let mut node_outputs: HashMap<NodeId, WrittenOutputs> = HashMap::new();
@@ -148,11 +138,19 @@ impl SbsWriter {
 
             out.push_str("<compImplementation>");
             let ids = NodeIdentifiers { input_entry: input_entries.get(&node.id).copied(), graph_output: output_uids.get(&node.id).copied(), self_uid };
-            self.write_implementation(out, node, outputs, ids)?;
+            self.write_implementation(out, node, outputs, ids, pkg)?;
             out.push_str("</compImplementation></compNode>");
         }
         out.push_str("</compNodes><baseParameters>");
         out.push_str(&param_xml("randomseed", &Value::Int(graph.seed)).unwrap_or_default());
+        let base = materialcraft_core::BaseParameters {
+            pixel_ratio: graph.pixel_ratio,
+            pixel_ratio_mode: graph.pixel_ratio_mode,
+            tiling: graph.tiling,
+            tiling_mode: graph.tiling_mode,
+            ..Default::default()
+        };
+        out.push_str(&super::base_parameters::base_params_xml(&base));
         out.push_str("</baseParameters>");
 
         write_canvas_items(out, graph, self);
@@ -236,7 +234,14 @@ impl SbsWriter {
         out.push_str("</graphOutputs>");
         output_uids
     }
-    pub(super) fn write_implementation(&mut self, out: &mut String, node: &Node, outputs: &[(String, u32, u64)], ids: NodeIdentifiers) -> Result<()> {
+    pub(super) fn write_implementation(
+        &mut self,
+        out: &mut String,
+        node: &Node,
+        outputs: &[(String, u32, u64)],
+        ids: NodeIdentifiers,
+        package: &Package,
+    ) -> Result<()> {
         let base = base_params_xml(&node.base);
 
         match node.def.as_str() {
@@ -253,7 +258,17 @@ impl SbsWriter {
                     .as_ref()
                     .filter(|instance| !instance.package.is_empty())
                     .map_or(ids.self_uid, |instance| self.external_package_uid(&instance.package));
-                let params: String = node.params.iter().filter(|(k, _)| *k != "graph").filter_map(|(k, v)| param_xml(k, v)).collect();
+                let mut params: String = node
+                    .params
+                    .iter()
+                    .filter(|(name, _)| *name != "graph" && !node.functions.contains_key(*name))
+                    .filter_map(|(name, value)| param_xml(name, value))
+                    .collect();
+                for (name, function) in &node.functions {
+                    let body = function_graph::write(function, self).map_err(FormatError::Io)?;
+                    let _ = write!(params, "<parameter><name v=\"{}\"/><relativeTo v=\"0\"/><paramValue>{body}</paramValue></parameter>", xml_escape(name));
+                }
+
                 let _ = write!(
                     out,
                     "<compInstance><path v=\"pkg:///{}?dependency={}\"/><parameters>{base}{params}</parameters>",
@@ -309,7 +324,7 @@ impl SbsWriter {
                         }
                         out.push_str(&param_xml(sbs_name, value).unwrap_or_default());
                     }
-                    out.push_str(&special_filter_params_xml(filter.sbs, &value_of, ids.self_uid));
+                    out.push_str(&special_filter_params_xml(filter.sbs, &value_of, ids.self_uid, package));
                     out.push_str("</parameters>");
                     for parameter in ["curve", "gradient"] {
                         if let Some(value) = value_of(parameter) {

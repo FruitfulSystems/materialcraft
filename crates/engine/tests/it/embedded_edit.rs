@@ -27,13 +27,16 @@ fn function_session(kind: &str) -> (Session, FunctionGraphTarget) {
                     .unwrap(),
             );
             if kind == "dynamic" {
-                session.graph_mut().unwrap().node_mut(node).unwrap().functions.insert("test".into(), FunctionGraph::default());
+                let owner = session.graph_mut().unwrap().node_mut(node).unwrap();
+                owner.params.insert("function".into(), Value::Function(Box::new(FunctionGraph::constant(Value::Float4([0.5; 4])))));
+                owner.functions.insert("test".into(), FunctionGraph::default());
                 FunctionGraphTarget::Dynamic { node, parameter: "test".into() }
             } else {
                 FunctionGraphTarget::Parameter { node, parameter: "function".into() }
             }
         }
     };
+
     execute(&mut session, "graph.function.set", &json!({"target": target, "function": FunctionGraph::default()})).unwrap();
     session.reset_history();
     (session, target)

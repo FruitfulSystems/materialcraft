@@ -1,4 +1,4 @@
-//! Edit menu: undo/redo, clipboard, duplicate, delete and selection
+//! Edit menu: clipboard, duplicate, delete and selection
 
 use std::collections::BTreeMap;
 
@@ -10,18 +10,8 @@ use crate::Clip;
 use crate::commands::{CommandSpec, always, bad, has_graph, has_selection, ids_param, point};
 use crate::{Result, Session, cmd};
 
-fn can_undo(s: &Session) -> std::result::Result<(), String> {
-    if s.can_undo() { Ok(()) } else { Err("nothing to undo".into()) }
-}
-
-fn can_redo(s: &Session) -> std::result::Result<(), String> {
-    if s.can_redo() { Ok(()) } else { Err("nothing to redo".into()) }
-}
-
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("edit.undo", "Undo", ["Edit"], Some("Ctrl+Z"), "{}", can_undo, |s, _| Ok(json!({"undone": s.undo()}))),
-        cmd!("edit.redo", "Redo", ["Edit"], Some("Ctrl+Y"), "{}", can_redo, |s, _| Ok(json!({"redone": s.redo()}))),
         cmd!("edit.copy", "Copy selection", [], Some("Ctrl+C"), "{ids?} copies nodes (and the wires between them)", has_selection, copy),
         cmd!("edit.cut", "Cut selection", [], Some("Ctrl+X"), "{ids?}", has_selection, cut),
         cmd!("edit.paste", "Paste", [], Some("Ctrl+V"), "{at? [x, y], clip? (JSON from edit.copy)} pastes nodes, selected", has_clip_or_param, paste),

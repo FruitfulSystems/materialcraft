@@ -3,7 +3,7 @@ use crate::{CookContext, CookResult, NodeDefinition, node};
 use materialcraft_image::{Image, Kind};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("directional_warp", "Directional Warp", ATOMIC)
+    node("directional_warp", "Directional warp", ATOMIC)
         .desc("Offsets the input along a direction, by an intensity map.")
         .atomic()
         .any_in("input", "Input")

@@ -1,6 +1,5 @@
 use super::{
     constant::{FIRST_UID, FORMAT_VERSION, SELF_DEPENDENCY, UPDATER_VERSION},
-    embedded::encode_embedded,
     sbs_writer::SbsWriter,
     xml::xml_escape,
 };
@@ -13,31 +12,7 @@ pub fn write_sbs(pkg: &Package) -> Result<Vec<u8>> {
     let self_uid = writer.next_uid();
 
     let mut content = String::from("<content>");
-    for graph in &pkg.graphs {
-        if graph.function.is_some() {
-            super::standalone_function::write(&mut content, graph, &mut writer)?;
-        } else {
-            writer.write_graph(&mut content, pkg, graph, self_uid)?;
-        }
-    }
-    if !pkg.resources.is_empty() {
-        let _ = write!(content, "<group><uid v=\"{}\"/><identifier v=\"Resources\"/><content>", writer.next_uid());
-        for resource in &pkg.resources {
-            let svg = resource.file.to_ascii_lowercase().ends_with(".svg");
-            let ext = resource.file.rsplit_once('.').map_or("png", |(_, e)| e);
-            let _ = write!(
-                content,
-                "<resource><identifier v=\"{}\"/><uid v=\"{}\"/><type v=\"{}\"/><format v=\"{}\"/><filepath v=\"\"/><source><binembedded><datalength v=\"{}\"/><strdata v=\"{}\"/></binembedded></source></resource>",
-                xml_escape(&resource.name),
-                writer.next_uid(),
-                if svg { "svg" } else { "bitmap" },
-                xml_escape(ext),
-                resource.bytes.len(),
-                encode_embedded(resource.bytes.as_slice())?
-            );
-        }
-        content.push_str("</content></group>");
-    }
+    super::group_layout::write(&mut content, pkg, &mut writer, self_uid)?;
     content.push_str("</content>");
 
     let mut out = String::with_capacity(content.len() + 4096);

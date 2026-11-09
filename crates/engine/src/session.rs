@@ -12,9 +12,6 @@ use serde::{Deserialize, Serialize};
 use crate::snapshot::Snapshot;
 use crate::{AnnotationSelection, Clip, EngineError, Result};
 
-/// Undo keeps this many steps.
-const MAX_UNDO: usize = 200;
-
 /// The 3D view's scene and look.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -119,6 +116,7 @@ pub struct View2d {
 pub const WARNING_PREFIX: &str = "Warning: ";
 
 pub struct Session {
+    pub environment: materialcraft_core::EvaluationEnvironment,
     pub document_id: u64,
     pub(crate) next_document_id: u64,
     pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
@@ -139,12 +137,14 @@ pub struct Session {
     pub preview_size: Option<u32>,
     /// 3D view camera preferences (set with [`Session::set_camera_prefs`]).
     pub camera: CameraPrefs,
+    pub history_prefs: crate::HistoryPrefs,
     pub modified: bool,
     pub log: Vec<String>,
     /// What the last opened SBS package held that MaterialCraft couldn't read; empty after a clean open.
     pub load_warnings: Vec<String>,
     pub clipboard: Option<Clip>,
     pub embedded_clipboard: Option<crate::EmbeddedClipboard>,
+    pub explorer_clipboard: Option<crate::ExplorerClipboard>,
     /// The last cook of the open graph.
     pub cooked: Cooked,
     /// Set when the graph changed and needs cooking.
@@ -155,17 +155,21 @@ pub struct Session {
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
-    pub(crate) undo: Vec<Snapshot>,
-    pub(crate) redo: Vec<Snapshot>,
-    /// Edits with the same key coalesce into one undo step (slider drags).
-    merge_key: Option<String>,
+    pub(crate) history: crate::document_history::DocumentHistory,
     group: Option<(Snapshot, bool)>,
     decoded: Arc<Mutex<HashMap<(u64, bool), Image>>>,
 }
 
 impl Session {
-    pub fn new(pkg: Package) -> Session {
+    pub fn new(mut pkg: Package) -> Session {
+        let library = crate::function_library::load();
+        if let Ok(library) = &library {
+            for (path, package) in &library.packages {
+                pkg.dependencies.entry(path.clone()).or_insert_with(|| package.clone());
+            }
+        }
         let mut session = Session {
+            environment: Default::default(),
             document_id: 0,
             next_document_id: 1,
             documents: std::collections::BTreeMap::new(),
@@ -182,23 +186,31 @@ impl Session {
             view3d: View3d::default(),
             preview_size: Some(512),
             camera: CameraPrefs::default(),
+            history_prefs: crate::HistoryPrefs::default(),
             modified: false,
             log: Vec::new(),
             load_warnings: Vec::new(),
             clipboard: None,
             embedded_clipboard: None,
+            explorer_clipboard: None,
             cooked: Cooked::default(),
             dirty: true,
             cook_epoch: 0,
             cache: Arc::new(Mutex::new(Cache::default())),
             custom_mesh: None,
-            undo: Vec::new(),
-            redo: Vec::new(),
-            merge_key: None,
+            history: Default::default(),
             group: None,
             decoded: Arc::new(Mutex::new(HashMap::new())),
         };
         session.refresh_links();
+        match library {
+            Ok(library) => {
+                for warning in library.warnings {
+                    session.warn(warning);
+                }
+            }
+            Err(error) => session.warn(format!("Missing function library: {error}")),
+        }
         session
     }
 
@@ -227,41 +239,27 @@ impl Session {
 
     /// Run `f` as one undoable step. On error the session is restored.
     pub fn edit<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        self.merge_key = None;
-        self.edit_inner(label, f)
+        self.finish_edit();
+        self.edit_inner(label, None, f)
     }
 
     /// Like [`Session::edit`], but consecutive edits with the same `key` (dragging one slider)
     /// make a single undo step.
     pub fn edit_merged<T>(&mut self, key: &str, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        if self.group.is_some() {
-            return self.edit_inner(label, f);
-        }
-        if self.merge_key.as_deref() == Some(key) && !self.undo.is_empty() {
-            // Preserve the gesture snapshot while rolling back failed edits
-            let snap = self.snapshot(label);
-            let r = f(self);
-            match &r {
-                Ok(_) => self.changed(),
-                Err(_) => self.restore(snap),
-            }
-            return r;
-        }
-        let r = self.edit_inner(label, f);
-        if r.is_ok() {
-            self.merge_key = Some(key.into());
-        }
-        r
+        self.edit_inner(label, Some(key), f)
     }
 
     /// End the current gesture without adding an undo step
     pub fn finish_edit(&mut self) {
-        self.merge_key = None;
+        self.history.finish_edit();
+        for document in self.documents.values_mut() {
+            document.history.finish_edit();
+        }
     }
 
     pub fn begin_group(&mut self, label: &str) {
         if self.group.is_none() {
-            self.merge_key = None;
+            self.finish_edit();
             self.group = Some((self.snapshot(label), false));
         }
     }
@@ -270,7 +268,7 @@ impl Session {
         if let Some((snap, edited)) = self.group.take()
             && edited
         {
-            self.record_undo(snap);
+            self.history.record(snap, None, self.history_prefs.undo_limit as usize);
             self.refresh_links();
         }
     }
@@ -301,14 +299,14 @@ impl Session {
         r
     }
 
-    fn edit_inner<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+    fn edit_inner<T>(&mut self, label: &str, key: Option<&str>, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
         let snapshot = self.snapshot(label);
         match f(self) {
             Ok(value) => {
                 if let Some((_, edited)) = self.group.as_mut() {
                     *edited = true;
                 } else {
-                    self.record_undo(snapshot);
+                    self.history.record(snapshot, key, self.history_prefs.undo_limit as usize);
                 }
                 self.changed();
                 Ok(value)
@@ -318,14 +316,6 @@ impl Session {
                 Err(error)
             }
         }
-    }
-
-    fn record_undo(&mut self, snapshot: Snapshot) {
-        self.undo.push(snapshot);
-        if self.undo.len() > MAX_UNDO {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
     }
 
     fn restore(&mut self, s: Snapshot) {
@@ -352,26 +342,28 @@ impl Session {
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        self.history.can_undo()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        self.history.can_redo()
     }
 
     /// Labels of the undo stack, oldest first.
     pub fn history(&self) -> Vec<String> {
-        self.undo.iter().map(|s| s.label.clone()).collect()
+        self.history.labels()
     }
 
     pub fn undo(&mut self) -> Option<String> {
         self.end_group();
-        let s = self.undo.pop()?;
+        if !self.can_undo() {
+            return None;
+        }
+
+        let s = self.history.undo(self.snapshot(""), self.history_prefs.undo_limit as usize)?;
         let label = s.label.clone();
-        let cur = self.snapshot(&label);
-        self.redo.push(cur);
         self.restore(s);
-        self.merge_key = None;
+        self.finish_edit();
         self.dirty = true;
         self.refresh_links();
         Some(label)
@@ -379,12 +371,14 @@ impl Session {
 
     pub fn redo(&mut self) -> Option<String> {
         self.end_group();
-        let s = self.redo.pop()?;
+        if !self.can_redo() {
+            return None;
+        }
+
+        let s = self.history.redo(self.snapshot(""), self.history_prefs.undo_limit as usize)?;
         let label = s.label.clone();
-        let cur = self.snapshot(&label);
-        self.undo.push(cur);
         self.restore(s);
-        self.merge_key = None;
+        self.finish_edit();
         self.dirty = true;
         self.refresh_links();
         Some(label)
@@ -392,9 +386,7 @@ impl Session {
 
     /// Forget undo history (after opening a package).
     pub fn reset_history(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-        self.merge_key = None;
+        self.history.clear();
         self.group = None;
     }
 
@@ -432,6 +424,7 @@ impl Session {
     pub fn cook(&mut self) -> &Cooked {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         opts.max_size = self.preview_size;
         let cooked = crate::PreviewCook::run(&self.pkg, self.graph, &self.material_preview.graphs(), &opts, &self.cache);
         self.accept_preview(cooked);
@@ -453,7 +446,8 @@ impl Session {
     /// Cook graph `gi` at full size, without touching the preview results.
     pub fn cook_full(&self, gi: usize) -> Cooked {
         let dec = self.resource_decoder();
-        let opts = Options::new(&dec);
+        let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         materialcraft_eval::cook(&self.pkg, gi, &opts, &self.cache)
     }
 

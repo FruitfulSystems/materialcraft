@@ -69,6 +69,7 @@ pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool
 }
 
 pub(crate) fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
+    crate::properties::GraphPropertyDraft::commit(app);
     match materialcraft_engine::file_cmds::open_bytes(&mut app.session, bytes, Some(name.to_string())) {
         Ok(()) => {
             app.close_subgraph_after("file.open");
@@ -168,10 +169,21 @@ mod web {
 
     /// File ▸ Save: download the package as `<name>.sbs` (bitmaps embedded)
     pub fn save(app: &mut MaterialCraftApp) {
+        save_download(app, false);
+    }
+
+    pub fn save_copy(app: &mut MaterialCraftApp) {
+        save_download(app, true);
+    }
+
+    fn save_download(app: &mut MaterialCraftApp, copy: bool) {
+        crate::properties::GraphPropertyDraft::commit(app);
         let name = format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
         match materialcraft_engine::file_cmds::save_bytes(&app.session).map_err(|e| e.to_string()).and_then(|b| download(&name, &b)) {
             Ok(()) => {
-                app.session.modified = false;
+                if !copy {
+                    app.session.modified = false;
+                }
                 app.toast(format!("{} {name}", tr("Downloaded")), false);
             }
             Err(e) => app.toast(format!("{} {name}: {e}", tr("Couldn't save")), true),

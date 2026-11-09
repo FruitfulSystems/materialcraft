@@ -7,7 +7,7 @@ use crate::session::Session;
 fn normal_map_session() -> Session {
     let mut pkg = Package::new("T");
     let png = encode(&Image::filled(4, 4, Kind::Color, [0.5, 0.5, 1.0, 1.0]), "png", Depth::U8, false).unwrap();
-    pkg.resources.push(Resource { name: "n".into(), file: "n.png".into(), bytes: materialcraft_core::ResourceBytes::new(png) });
+    pkg.resources.push(Resource::new("n", "n.png", materialcraft_core::ResourceBytes::new(png)));
     Session::new(pkg)
 }
 

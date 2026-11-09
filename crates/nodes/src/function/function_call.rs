@@ -5,4 +5,5 @@ pub(crate) const DEFINITION: FunctionDefinition = FunctionDefinition { id: "inst
 pub(crate) struct FunctionCall {
     pub program: Program,
     pub inputs: Vec<String>,
+    pub defaults: std::collections::BTreeMap<String, materialcraft_core::Value>,
 }

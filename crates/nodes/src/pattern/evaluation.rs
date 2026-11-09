@@ -50,13 +50,13 @@ pub(crate) fn cook(context: &CookContext) -> CookResult {
         visit.variables.insert("$depth".into(), Value::Float(visit.depth as f32));
         visit.variables.insert("$depthpow2".into(), Value::Float(visit.extent));
         visit.variables.insert("$number".into(), Value::Float(visit.number as f32));
-        visit.variables.insert("$time".into(), Value::Float(0.0));
 
         let mut parameters = BTreeMap::new();
         for parameter in &definition.params {
             let value = match functions.get(&(node.id, parameter.id)) {
                 Some(program) => {
                     let evaluation = EvaluationContext {
+                        scope: crate::function::FunctionScope::FxMap,
                         position: visit.center,
                         size: [context.w as f32, context.h as f32],
                         images: context.inputs.get(1..).unwrap_or(&[]),

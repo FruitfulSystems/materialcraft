@@ -4,7 +4,7 @@ use materialcraft_core::Gradient;
 use materialcraft_image::{Kind, luminance};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("gradient_map", "Gradient Map", ATOMIC)
+    node("gradient_map", "Gradient map", ATOMIC)
         .desc("Maps grayscale values to colors along a gradient.")
         .atomic()
         .gray_in("input", "Input")

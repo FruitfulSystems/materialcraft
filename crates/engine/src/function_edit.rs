@@ -42,6 +42,8 @@ impl FunctionEdit {
                 let definition = materialcraft_nodes::function::definition(operation).ok_or("unknown function operation")?;
                 let id = graph.next_id();
                 graph.nodes.push(FunctionNode {
+                    missing: None,
+                    missing_data: String::new(),
                     instance: None,
                     source: None,
                     id,
@@ -84,7 +86,7 @@ impl FunctionEdit {
             }
             Self::Value { id, value } => {
                 let node = graph.nodes.iter_mut().find(|node| node.id == *id).ok_or("missing function node")?;
-                if node.value.is_none() {
+                if node.value.is_none() || node.missing.is_some() {
                     return Err("the operation has no editable value".into());
                 }
 

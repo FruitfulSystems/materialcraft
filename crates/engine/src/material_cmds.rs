@@ -66,6 +66,7 @@ pub fn material_bytes(s: &Session, gi: usize, o: &MaterialOptions) -> Result<Vec
     let g = pkg.graph(gi)?;
     let dec = s.resource_decoder();
     let mut opts = materialcraft_eval::Options::new(&dec);
+    opts.environment = s.environment;
     opts.inputs = o.inputs.clone();
     let cooked = materialcraft_eval::cook(&pkg, gi, &opts, &s.cache);
     let mut maps: Vec<(String, Vec<u8>)> = Vec::new();

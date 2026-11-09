@@ -3,7 +3,7 @@ use crate::{CookContext, CookResult, NodeDefinition, node};
 use materialcraft_image::{Image, Kind};
 
 pub(super) fn definition() -> NodeDefinition {
-    node("directional_blur", "Directional Blur", ATOMIC)
+    node("directional_blur", "Directional blur", ATOMIC)
         .desc("Blurs along one direction.")
         .atomic()
         .any_in("input", "Input")

@@ -124,6 +124,13 @@ pub(super) fn handle(
 
     let camera = GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
 
+    if let Some(payload) = crate::widgets::dnd_release::<super::function_library_drag::FunctionLibraryDrag>(response)
+        && let Some(pointer) = pointer
+    {
+        let position = camera.to_graph(pointer);
+        super::library::insert(app, editor, &payload, [position.x - crate::graph::NODE_W * 0.5, position.y - 20.0]);
+    }
+
     if let Some(payload) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(response)
         && let Some(pointer) = pointer
         && let Some(target) = editor.command_target()

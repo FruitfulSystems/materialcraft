@@ -116,7 +116,8 @@ impl Session {
         json!(self.open_packages().into_iter().map(|(id, package, path, modified)| json!({
             "id": id, "name": package.name, "path": path, "modified": modified,
             "active": id == self.document_id,
-            "graphs": package.graphs.iter().enumerate().map(|(index, graph)| json!({"index": index, "name": graph.name, "kind": graph.kind()})).collect::<Vec<_>>()
+            "folders": package.folder_paths(),
+            "graphs": package.graphs.iter().enumerate().map(|(index, graph)| json!({"index": index, "name": graph.name, "path": graph.sbs_path(), "kind": graph.kind()})).collect::<Vec<_>>()
         })).collect::<Vec<_>>())
     }
 }

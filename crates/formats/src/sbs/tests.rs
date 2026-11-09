@@ -2,7 +2,7 @@ use super::embedded::{base64_engine, decode_embedded, encode_embedded};
 use super::read::{is_sbs, read_sbs};
 use super::write::write_sbs;
 use base64::Engine as _;
-use materialcraft_core::{Frame, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, MISSING_NODE, Package, Resource, ResourceBytes, SizeMode, Value, missing_ports};
+use materialcraft_core::{Frame, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, Package, Resource, ResourceBytes, SizeMode, Value, missing_ports};
 
 fn no_linked_files(_: &str) -> Option<Vec<u8>> {
     None
@@ -135,11 +135,11 @@ fn native_data_is_the_saved_document() {
 }
 
 #[test]
-fn missing_nodes_are_placeholders_that_survive_saving() {
+fn external_references_and_unknown_filters_survive_saving() {
     let xml = r#"<?xml version="1.0"?><package><identifier v="P"/><dependencies><dependency><filename v="sbs://noise_fancy.sbs"/><uid v="7"/></dependency></dependencies><content><graph><identifier v="G"/>
         <compNodes>
           <compNode><uid v="1"/><GUILayout><gpos v="0 0 0"/></GUILayout><compOutputs><compOutput><uid v="11"/><comptype v="2"/></compOutput></compOutputs>
-            <compImplementation><compInstance><path v="pkg:///fancy_noise?dependency=7"/><parameters><parameter><name v="scale"/><paramValue><constantValueFloat1 v="3"/></paramValue></parameter></parameters>
+            <compImplementation><compInstance><path v="pkg:///fancy_noise?dependency=7"/><parameters><parameter><name v="scale"/><paramValue><constantValueFloat1 v="3"/></paramValue></parameter><parameter><name v="detail"/><paramValue><dynamicValue><rootnode v="77"/><paramNodes><paramNode><uid v="77"/><type v="256"/><function v="const_float1"/></paramNode></paramNodes></dynamicValue></paramValue></parameter></parameters>
             <outputBridgings><outputBridging><uid v="11"/><identifier v="noise"/></outputBridging></outputBridgings></compInstance></compImplementation></compNode>
           <compNode><uid v="2"/><GUILayout><gpos v="200 0 0"/></GUILayout><compOutputs><compOutput><uid v="21"/><comptype v="1"/></compOutput></compOutputs>
             <connections><connection><identifier v="input1"/><connRef v="1"/><connRefOutput v="11"/></connection></connections>
@@ -154,25 +154,32 @@ fn missing_nodes_are_placeholders_that_survive_saving() {
     assert_eq!(graph.connections.len(), 2);
 
     let fancy = &graph.nodes[0];
-    assert_eq!(fancy.def, MISSING_NODE);
-    assert_eq!(fancy.label, "fancy_noise");
-    assert_eq!(missing_ports(fancy).1, vec![("noise".to_string(), true)]);
+    assert_eq!(fancy.def, "graph_instance");
+    let instance = fancy.instance.as_ref().unwrap();
+    assert_eq!(instance.package, "sbs://noise_fancy.sbs");
+    assert_eq!(instance.graph, "fancy_noise");
+    assert_eq!(instance.outputs[0].identifier, "noise");
+    assert_eq!(instance.outputs[0].type_code, 2);
+    assert_eq!(fancy.params.get("scale"), Some(&Value::Float(3.0)));
     assert_eq!(graph.nodes[1].params.get("intensity"), Some(&Value::Float(6.0)));
     assert_eq!(graph.input_of(graph.nodes[1].id, "input").map(|c| c.from_port.as_str()), Some("noise"));
     assert_eq!(missing_ports(&graph.nodes[2]).0, vec!["weird_in".to_string()]);
-    for expected in ["missing node `fancy_noise`", "missing node `futurefilter`", "bogus"] {
+    for expected in ["missing node `futurefilter`", "bogus"] {
         assert!(read.warnings.iter().any(|w| w.contains(expected)), "{expected}: {:?}", read.warnings);
     }
 
-    // Saved and read back from the SBS data alone, the placeholders are written as they came
+    // References and unavailable operations survive without embedding their implementations
     let text = String::from_utf8(write_sbs(&read.pkg).unwrap()).unwrap();
     assert!(text.contains("sbs://noise_fancy.sbs"));
     assert!(text.contains("pkg:///fancy_noise?dependency="));
     assert!(text.contains("<filter v=\"futurefilter\"/>"));
     let back = read_sbs(text.as_bytes(), "p.sbs", &no_linked_files).unwrap();
     let back_graph = &back.pkg.graphs[0];
-    assert_eq!(back_graph.nodes[0].def, MISSING_NODE);
-    assert_eq!(back_graph.nodes[0].params.get("sbs_parameters"), fancy.params.get("sbs_parameters"));
+    assert_eq!(back_graph.nodes[0].def, "graph_instance");
+    assert_eq!(back_graph.nodes[0].instance, fancy.instance);
+    assert_eq!(back_graph.nodes[0].params, fancy.params);
+    assert_eq!(back_graph.nodes[0].functions["detail"].nodes.len(), 1);
+    assert_eq!(back_graph.nodes[0].functions["detail"].nodes[0].value, fancy.functions["detail"].nodes[0].value);
     assert_eq!(back_graph.connections.len(), 2);
 }
 
@@ -220,7 +227,7 @@ fn hostile_input_is_an_error_or_a_warning_never_a_panic() {
     ];
     for case in cases {
         if let Ok(read) = read_sbs(case.as_bytes(), "x.sbs", &no_linked_files) {
-            assert!(!read.pkg.graphs.is_empty(), "{case}");
+            assert!(write_sbs(&read.pkg).is_ok(), "{case}");
         }
     }
     assert!(read_sbs(b"\xff\xfe", "x.sbs", &no_linked_files).is_err());
@@ -242,7 +249,8 @@ fn linked_resources_load_through_the_callback() {
     assert_eq!(found.pkg.resources[0].bytes.as_slice(), &[1, 2, 3]);
 
     let not_found = read_sbs(xml.as_bytes(), "p.sbs", &no_linked_files).unwrap();
-    assert!(not_found.pkg.resources.is_empty());
+    assert!(not_found.pkg.resources[0].bytes.is_empty());
+    assert_eq!(not_found.pkg.resources[0].source, "p.resources/img.png");
     assert!(not_found.warnings.iter().any(|w| w.contains("img")), "{:?}", not_found.warnings);
 }
 

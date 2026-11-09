@@ -80,6 +80,59 @@ per pixel. Calls share the execution-step budget and are capped at eight levels 
 SBS Function nodes store the source URI in their instance data; a `materialcraftInterface` cache
 preserves unconnected input pins when a source file is unavailable.
 
+Package folders are part of each graph's SBS identity. Exact paths take priority over leaf names;
+a leaf name is accepted only when it is unambiguous. Unconnected function-instance inputs use
+the source's declared defaults. Unknown function operations retain their connector names, data
+and output designation so an unavailable implementation does not erase the containing graph.
+Missing external resources retain their paths for repair on a later load.
+
+Empty folders also persist as native SBS groups. Explorer renders these groups as a collapsible
+tree, including resources in their original folders. Folder creation, rename, removal, copying
+and moving use engine commands with snapshot undo. Renames and moves update local instance paths;
+copies retarget references between copied graphs. The Explorer clipboard survives document changes.
+Single clicks select Explorer rows; double clicks open their graph or input/output preview.
+The Explorer New submenu creates items immediately with numbered default names, advancing past
+name conflicts in the destination folder. Rename remains an explicit context-menu action.
+
+`sbs://` resolves beneath `assets/sbs/`. Native installations can place that directory beside the
+executable or set `MATERIALCRAFT_SBS_DIR`; packaged and browser builds also embed the standard
+library. Alias paths cannot escape that root, and saved packages retain the alias. The Function
+Library lists these source graphs and inserts references into Function and processor canvases.
+Library aliases are read-only save destinations; an edited library can be saved to a local path.
+Resource paths resolve beside their owning package: `resources/tile.png` in
+`sbs://functions.sbs` reads `assets/sbs/resources/tile.png`, also addressable as
+`sbs://resources/tile.png`. Nested packages use their own adjacent `resources/` directory.
+Loaded resource bytes are embedded on save; unavailable files keep their reference and missing state.
+
+Importing a user-supplied function package preserves its graph bodies, connections and positions;
+it does not replace them with the bundled library. Redundant legacy instance connectors are retained
+on save and evaluated only through the declared inputs. Conflicting obsolete connections remain
+visible errors. A shared typed system-variable catalog drives Get-node suggestions and execution.
+Ordinary functions expose size, log2 size, pixel ratio, tiling, physical size, UV tile, time and
+normal-format variables. Pixel Processor adds `$pos`; FX-Map adds `$pos`, `$depth`, `$depthpow2`
+and `$number`. Reusable function instances inherit their caller's scope. Out-of-scope variables
+remain undefined even if a user input has the same name, and Set cannot overwrite system variables.
+Get properties offer a type-filtered dropdown and accept typed custom names.
+
+Node tiling and pixel ratio resolve from absolute values, the first connected image input or the
+parent graph. SBS preserves these inheritance modes and the graph's `physicalSize` attribute.
+The host supplies time, UV tile and a raw normal-format integer through `EvaluationEnvironment`;
+the static authoring defaults are zero. These values propagate through nested graph instances
+without becoming constants in saved functions. Relevant variable changes invalidate cached cooks.
+The normal-format integer is passed through without assigning a convention label to an unverified code.
+
+The local `assets/sbs/functions.sbs` is converted from a user-supplied package with
+`cargo run -p materialcraft-formats --release --example standard_function_library -- <source.sbs> assets/sbs/functions.sbs`.
+The converter preserves all 171 function bodies (2,334 nodes), folder paths, identifiers, inputs,
+defaults and internal references. It writes new interface-based descriptions, generates node
+positions and omits source annotations and icons. It rejects import warnings and functions that
+cannot compile instead of substituting empty graphs. The source graph bodies are retained;
+rewritten metadata does not establish redistribution rights.
+Local tests compare every converted body and evaluate all 171 functions against the supplied
+package with valid inputs and caller context. External runtime import and numerical compatibility
+still require validation. SBS's `updaterVersion` derives from the workspace's Cargo version;
+its format schema version is a separate constant.
+
 Every user-visible action is a `CommandSpec` (`engine/src/*_cmds.rs`): id, label, menu, shortcut,
 params doc, `enabled`, `run`. The UI calls them through `MaterialCraftApp::run`; the CLI, the JSON
 control channel and MCP dispatch the same ids. `Session::edit` snapshots the package before running
@@ -117,6 +170,10 @@ Shared modules own node cards, selection and annotation gestures. The regular ca
 document while drawing, then dispatches edits. Graph Properties follows the same pattern; its
 `property/` modules separate panel routing, node and graph settings, parameter controls, curves
 and gradients. Function and pattern Properties dispatch value edits without cloning graphs in the UI.
+Explorer inspection uses a document-and-graph target independent of the canvas. Shared graph
+attribute controls retain text drafts until focus changes, then dispatch targeted engine commands.
+Inactive packages record those edits in their own snapshot history. Both graph kinds share the SBS
+attribute codec; display labels are resolved separately from reference identifiers.
 
 The properties panel builds every parameter editor from the node catalog; the Levels node adds a
 histogram editor with range handles on top of its sliders ([levels-editor.md](levels-editor.md)).

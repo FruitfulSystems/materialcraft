@@ -10,6 +10,7 @@ pub mod fonts;
 pub mod function;
 pub mod graph;
 mod graph_drag_payload;
+mod history;
 pub mod i18n;
 pub mod levels_editor;
 pub mod library;

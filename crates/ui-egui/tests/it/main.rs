@@ -2,6 +2,7 @@
 //! Keep snapshot.rs standalone; language_switching.rs needs process isolation for global locale state.
 
 mod dialogs;
+mod graph_properties;
 mod interface_scale;
 mod normal_maps;
 mod numeric_input;

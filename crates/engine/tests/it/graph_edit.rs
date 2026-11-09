@@ -97,6 +97,8 @@ fn connected_selection_performance() {
     let mut graph = FunctionGraph::default();
     for id in 1..=4096 {
         graph.nodes.push(materialcraft_engine::core::FunctionNode {
+            missing: None,
+            missing_data: String::new(),
             instance: None,
             source: None,
             id,

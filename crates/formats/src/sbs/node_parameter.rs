@@ -11,12 +11,20 @@ pub(super) fn text_param(node: &Node, key: &str, default: &str) -> String {
 pub(super) fn param_xml(name: &str, value: &Value) -> Option<String> {
     Some(format!("<parameter><name v=\"{}\"/><relativeTo v=\"0\"/><paramValue>{}</paramValue></parameter>", xml_escape(name), constant_xml(value)?))
 }
-pub(super) fn special_filter_params_xml<'a>(filter: &str, value_of: &dyn Fn(&str) -> Option<&'a Value>, self_uid: u64) -> String {
+pub(super) fn special_filter_params_xml<'a>(
+    filter: &str,
+    value_of: &dyn Fn(&str) -> Option<&'a Value>,
+    self_uid: u64,
+    package: &materialcraft_core::Package,
+) -> String {
     match filter {
         "bitmap" | "svg" => match value_of("resource") {
             Some(Value::Text(name)) if !name.is_empty() => param_xml(
                 if filter == "svg" { "vectorresourcepath" } else { "bitmapresourcepath" },
-                &Value::Text(format!("pkg:///Resources/{name}?dependency={self_uid}")),
+                &Value::Text(format!(
+                    "pkg:///{}?dependency={self_uid}",
+                    package.resource(name).map_or_else(|| format!("Resources/{name}"), |resource| resource.sbs_path())
+                )),
             )
             .unwrap_or_default(),
             _ => String::new(),

@@ -259,6 +259,9 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                     if id == "view.previewSize" {
                         app.ui.prefs.preview_size = app.session.preview_size.unwrap_or(0);
                     }
+                    if id == "session.history" {
+                        app.ui.prefs.history = app.session.history_prefs;
+                    }
                     app.close_subgraph_after(id);
                     ok(v)
                 }
@@ -294,6 +297,7 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 "graphView": rect(view),
                 "selection": app.session.selection,
                 "inspectedNode": app.graph.inspected_node,
+                "inspectedGraph": app.inspected_graph.map(|target| json!({"document": target.document, "graph": target.graph})),
                 "subgraph": match target {
                     crate::graph::editor_target::EditorTarget::Function => app.function_editor.as_ref()
                         .map(|editor| json!({"kind": "function", "graph": app.session.graph, "node": editor.node, "target": editor.command_target(), "selection": editor.selection, "selectedWires": editor.selected_wires, "inspectedNode": editor.inspected_node})),

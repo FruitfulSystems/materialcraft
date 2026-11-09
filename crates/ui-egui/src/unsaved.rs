@@ -60,6 +60,21 @@ pub fn holds_close(modified: bool, confirmed: bool) -> bool {
 
 /// Run `action`, asking first when the package has unsaved changes
 pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
+    if app.ui.windows.unsaved.is_some() {
+        return;
+    }
+
+    crate::properties::GraphPropertyDraft::commit(app);
+    if let Guarded::Package { document, .. } = &action {
+        if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
+            return;
+        }
+        if let Some(action) = request(&mut app.ui.windows.unsaved, app.session.modified, action) {
+            perform(app, action);
+        }
+        return;
+    }
+
     if app.ui.windows.unsaved.is_none()
         && let Some((document, ..)) = app.session.open_packages().into_iter().find(|entry| entry.3)
     {
@@ -74,6 +89,11 @@ pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
 /// Run an allowed action
 fn perform(app: &mut MaterialCraftApp, action: Guarded) {
     match action {
+        Guarded::Package { document, reload } => {
+            if app.run("package.activate", serde_json::json!({"document": document})).is_some() {
+                app.run(if reload { "file.reload" } else { "package.close" }, serde_json::json!({"discard": true}));
+            }
+        }
         action @ (Guarded::Menu { .. } | Guarded::Quit) => {
             if app.session.modified {
                 app.run("package.close", serde_json::json!({"discard": true}));
@@ -100,9 +120,13 @@ fn perform(app: &mut MaterialCraftApp, action: Guarded) {
 
 /// Per frame: hold back a window close while there is unsaved work, and finish a confirmed quit
 pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
-    if ctx.input(|i| i.viewport().close_requested()) && holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        guard(app, Guarded::Quit);
+    if ctx.input(|i| i.viewport().close_requested()) && !app.quit_confirmed {
+        // Focused text is still a draft when the OS asks to close the window
+        crate::properties::GraphPropertyDraft::commit(app);
+        if holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            guard(app, Guarded::Quit);
+        }
     }
     if app.quit_confirmed {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -113,6 +137,13 @@ pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
 pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
     if app.ui.windows.unsaved.is_none() {
         return;
+    }
+    if let Some(Guarded::Package { document, .. }) = &app.ui.windows.unsaved {
+        let document = *document;
+        if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
+            app.ui.windows.unsaved = None;
+            return;
+        }
     }
     let mut choice = None;
     Window::new(tr("Unsaved changes"))

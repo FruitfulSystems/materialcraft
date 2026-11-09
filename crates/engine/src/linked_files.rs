@@ -2,6 +2,12 @@ use crate::document_path;
 use materialcraft_core::Package;
 
 pub(crate) fn normalize_references(package: &mut Package, path: &str) {
+    for resource in &mut package.resources {
+        if !resource.source.is_empty() {
+            resource.source = document_path::resolve(path, &resource.source);
+        }
+    }
+
     for instance in package.graphs.iter_mut().flat_map(|graph| graph.instances_mut()) {
         if !instance.package.is_empty() {
             instance.package = document_path::resolve(path, &instance.package);
@@ -31,7 +37,6 @@ impl crate::Session {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn load(package: &mut Package) -> Vec<String> {
     use std::{collections::BTreeSet, sync::Arc};
     let references = |package: &Package| {
@@ -60,23 +65,40 @@ pub(crate) fn load(package: &mut Package) -> Vec<String> {
             continue;
         }
         let mut read = || -> std::result::Result<Package, String> {
-            let size = std::fs::metadata(&path).map_err(|error| error.to_string())?.len();
-            if size > remaining {
-                return Err("linked package exceeds the remaining file budget".into());
+            if path.starts_with("sbs://") {
+                let bytes = materialcraft_formats::sbs::library::read(&path)?;
+                if bytes.len() as u64 > remaining {
+                    return Err("linked package exceeds the remaining file budget".into());
+                }
+                remaining -= bytes.len() as u64;
+                let read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &crate::file_cmds::linked_files(&path)).map_err(|error| error.to_string())?;
+                warnings.extend(read.warnings);
+                return Ok(read.pkg);
             }
-            // Bound the read even if the file grows after the metadata check
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            std::fs::File::open(&path).map_err(|error| error.to_string())?.take(remaining + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-            if bytes.len() as u64 > remaining {
-                return Err("linked package exceeds the remaining file budget".into());
+            #[cfg(target_arch = "wasm32")]
+            return Err("external file is unavailable in the browser".into());
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let size = std::fs::metadata(&path).map_err(|error| error.to_string())?.len();
+                if size > remaining {
+                    return Err("linked package exceeds the remaining file budget".into());
+                }
+                // Bound the read even if the file grows after the metadata check
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                std::fs::File::open(&path)
+                    .map_err(|error| error.to_string())?
+                    .take(remaining + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| error.to_string())?;
+                if bytes.len() as u64 > remaining {
+                    return Err("linked package exceeds the remaining file budget".into());
+                }
+                remaining -= bytes.len() as u64;
+                let read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &crate::file_cmds::linked_files(&path)).map_err(|error| error.to_string())?;
+                warnings.extend(read.warnings);
+                Ok(read.pkg)
             }
-            remaining -= bytes.len() as u64;
-            let read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &crate::file_cmds::linked_files(&path)).map_err(|error| error.to_string())?;
-            if !read.warnings.is_empty() {
-                return Err(read.warnings.join("; "));
-            }
-            Ok(read.pkg)
         };
         match read() {
             Ok(mut source) => {

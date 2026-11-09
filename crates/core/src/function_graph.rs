@@ -30,6 +30,8 @@ impl FunctionGraph {
         let horizontal_position = self.nodes.len() as f32 * 140.0;
         let node = FunctionNode {
             id,
+            missing: None,
+            missing_data: String::new(),
             instance: None,
             source: None,
             type_code: 0,

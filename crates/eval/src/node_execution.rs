@@ -80,6 +80,13 @@ pub(crate) fn cook_node(
 
         incoming.push(output);
     }
+    let base = prepared.base_parameters(node);
+    if !node.functions.is_empty() || matches!(node.def.as_str(), "pixel_processor" | "value_processor" | "fx_map") {
+        let tiling = i32::from(base.tiling[0]) | (i32::from(base.tiling[1]) << 1);
+        variables.to_mut().insert("$tiling".into(), Value::Int(tiling));
+        variables.to_mut().insert("$pixelratio".into(), Value::Int(base.pixel_ratio));
+    }
+
     let vars = &variables;
     let first = prepared.first_input_size(node.id);
     let (w, h) = node_size(graph, def, node, first, opts.max_size);
@@ -101,7 +108,7 @@ pub(crate) fn cook_node(
         Err(error) => return fail(error, 0),
     };
 
-    let tile = node.base.tiling[0] && node.base.tiling[1];
+    let tile = base.tiling[0] && base.tiling[1];
     // Input nodes read the caller's image for their identifier
     let input_img = node.def.starts_with("input_").then(|| opts.inputs.get(&identifier(node))).flatten();
     let res_hash = match params.get("resource") {
@@ -119,10 +126,12 @@ pub(crate) fn cook_node(
     let key = hash_of(&(
         &node.def,
         serde_json::to_string(&params).unwrap_or_default(),
-        (w, h, seed, tile, node.disabled),
+        (w, h, seed, tile, node.disabled, base.tiling, base.pixel_ratio),
         &input_keys,
         res_hash,
         sub_hash,
+        // A cached graph instance includes results evaluated with its host environment
+        (node.def == "graph_instance").then(|| serde_json::to_string(&opts.environment).unwrap_or_default()),
         input_img.map(|image| image_key(image, cache)),
         variable_key(node, &params, vars),
     ));
@@ -150,7 +159,7 @@ pub(crate) fn cook_node(
 
         Err(format!("unsupported node `{name}`"))
     } else if node.def == "graph_instance" {
-        cook_instance(pkg, gi, node, in_ports, out_ports, &incoming, &params, (w, h), opts, cache)
+        cook_instance(pkg, gi, node, in_ports, out_ports, &incoming, &params, (w, h), base, opts, cache)
     } else if let Some(definition) = def {
         let context = CookContext { w, h, seed, tile, inputs: &inputs, params: &params, resource: opts.resource, vars };
         (definition.cook)(&context).map(|images| images.into_iter().map(NodeOutput::Image).collect())
