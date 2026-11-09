@@ -14,6 +14,41 @@ mod lib_tests {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod close_order_tests {
+    use crate::MaterialCraftApp;
+    use crate::state::UiState;
+
+    fn close_frame(app: &mut MaterialCraftApp) -> bool {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput::default();
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+        let mut canceled = false;
+        ctx.run_ui(input, |ui| {
+            app.step_then(ui.ctx(), |ctx| {
+                canceled = ctx.viewport(|viewport| viewport.commands.contains(&egui::ViewportCommand::CancelClose));
+                false
+            });
+        })
+        .textures_delta
+        .clear();
+        canceled
+    }
+
+    #[test]
+    fn the_quit_hook_runs_after_the_close_guard() {
+        let mut held = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+        held.fonts_ready = true;
+        held.session.modified = true;
+        assert!(close_frame(&mut held), "the guard canceled the close before the hook runs");
+
+        let mut clean = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+        clean.fonts_ready = true;
+        clean.session.modified = false;
+        assert!(!close_frame(&mut clean), "nothing to hold: the hook sees a close to take over");
+    }
+}
+
 #[cfg(test)]
 mod unsaved_state_tests {
     use crate::unsaved::{Choice, Guarded, Step, answer, guard};

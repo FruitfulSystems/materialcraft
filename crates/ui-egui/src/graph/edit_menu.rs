@@ -3,7 +3,7 @@ use egui::Ui;
 
 pub(crate) fn button(ui: &mut Ui, label: &str, command: &str, enabled: bool) -> bool {
     let mut button = egui::Button::new(tr(label));
-    if let Some(shortcut) = menus::shortcut_of(command) {
+    if let Some(shortcut) = menus::shortcut_of(command).map(|text| menus::shortcut_label(ui.ctx(), text)) {
         button = button.shortcut_text(shortcut);
     }
     let clicked = ui.add_enabled(enabled, button).clicked();
