@@ -40,6 +40,9 @@ pub struct MaterialCraftApp {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     next_autosave: f64,
     styled: Option<(theme::Brightness, theme::Accent)>,
+    /// Release checks and the update prompt (desktop only)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) updates_rt: crate::updates_ui::Runtime,
     /// Fallback fonts for Arabic
     pub fonts: fonts::UiFonts,
     /// The icon font is installed (it takes effect on the frame after `set_fonts`)
@@ -88,6 +91,8 @@ impl MaterialCraftApp {
             last_time: 0.0,
             next_autosave,
             styled: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            updates_rt: crate::updates_ui::Runtime::default(),
             fonts: fonts::UiFonts::default(),
             fonts_ready: false,
             ui_gesture_active: false,
@@ -306,6 +311,8 @@ impl MaterialCraftApp {
         cook::drive(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.autosave(now);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::updates_ui::tick(self, ctx);
         self.reconcile_editors();
         menus::shortcuts(self, ctx);
         self.toasts.retain(|t| t.until > now);

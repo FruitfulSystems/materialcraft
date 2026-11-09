@@ -103,6 +103,8 @@ pub const CATALOG: &[MenuItem] = &[
     it("Help", "ArtCraft website...", "ui.help.website", None),
     it("Help", "Report a bug...", "ui.help.bug", None),
     sep("Help"),
+    #[cfg(not(target_arch = "wasm32"))]
+    it("Help", "Check for updates...", "ui.help.checkForUpdates", None),
     it("Help", "About MaterialCraft...", "ui.about", None),
 ];
 
@@ -182,6 +184,8 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
         "ui.home" => app.ui.windows.home = true,
         "ui.help.shortcuts" => app.ui.windows.shortcuts = true,
         "ui.about" => app.ui.windows.about = true,
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.help.checkForUpdates" => crate::updates_ui::check(app),
         "ui.help.discord" => ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft")),
         "ui.help.website" => ctx.open_url(egui::OpenUrl::new_tab("https://getartcraft.com/apps/materialcraft")),
         "ui.help.docs" => ctx.open_url(egui::OpenUrl::new_tab("https://github.com/storytold/materialcraft#readme")),
@@ -293,6 +297,10 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
 /// Dispatch shortcuts unless a widget or popup owns the keyboard
 pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
+        return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::updates_ui::blocks_input(app) {
         return;
     }
     if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {

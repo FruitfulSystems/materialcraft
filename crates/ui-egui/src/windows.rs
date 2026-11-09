@@ -97,6 +97,8 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     crate::unsaved::show(app, ctx);
     crate::explorer::dialogs(app, ctx);
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::updates_ui::show(app, ctx);
 }
 
 fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {

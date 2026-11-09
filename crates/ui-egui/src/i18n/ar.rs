@@ -68,6 +68,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Cancel", "إلغاء"),
     ("Cast", "تحويل النوع"),
     ("Ceil", "الحد الأعلى (Ceil)"),
+    ("Check for updates...", "التحقق من وجود تحديثات..."),
     ("Choose a folder to export to", "اختر مجلداً للتصدير إليه"),
     ("Clamp", "تقييد النطاق (Clamp)"),
     ("Clear cache", "مسح الذاكرة المؤقتة"),
