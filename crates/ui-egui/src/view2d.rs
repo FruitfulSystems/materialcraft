@@ -234,25 +234,11 @@ fn draw_histogram(st: &mut View2dState, p: &egui::Painter, rect: Rect, key: u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn save_image(app: &mut MaterialCraftApp) {
+pub(crate) fn save_image(app: &mut MaterialCraftApp) {
     let Some((id, img)) = app.session.view2d_image().map(|(id, i)| (id, i.clone())) else { return };
     let name = app.session.graph().ok().and_then(|g| g.node(id).ok().map(crate::graph::node_label)).unwrap_or_else(|| "image".into());
-    let Some(path) = rfd::FileDialog::new()
-        .set_file_name(format!("{name}.png"))
-        .add_filter("PNG", &["png"])
-        .add_filter("OpenEXR", &["exr"])
-        .add_filter("TGA", &["tga"])
-        .save_file()
-    else {
-        return;
-    };
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
-    let depth = if ext == "exr" { materialcraft_engine::formats::Depth::F32 } else { materialcraft_engine::formats::Depth::U16 };
-    let result = materialcraft_engine::formats::encode(&img, &ext, depth, !img.is_gray()).and_then(|b| materialcraft_engine::formats::write_atomic(&path, &b));
-    match result {
-        Ok(()) => app.toast(format!("{} {}", tr("Saved"), path.display()), false),
-        Err(e) => app.toast(e.to_string(), true),
-    }
+    let dialog = craft_dialogs::FileDialog::save().file_name(format!("{name}.png")).filter("PNG", &["png"]).filter("OpenEXR", &["exr"]).filter("TGA", &["tga"]);
+    crate::native_dialogs::ask(app, dialog, crate::native_dialogs::Then::SaveImage(Box::new(img)));
 }
 
 #[cfg(test)]

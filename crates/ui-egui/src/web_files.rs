@@ -59,9 +59,9 @@ pub fn load_mesh(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = ctx;
-        if let Some(p) = rfd::FileDialog::new().add_filter("Meshes", materialcraft_engine::formats::mesh::MESH_EXTENSIONS).pick_file() {
-            app.run("view.3d.loadMesh", serde_json::json!({"path": p.display().to_string()}));
-        }
+        let dialog = craft_dialogs::FileDialog::open().filter("Meshes", materialcraft_engine::formats::mesh::MESH_EXTENSIONS);
+        let then = crate::native_dialogs::Then::LoadMesh { document: app.session.document_id };
+        crate::native_dialogs::ask(app, dialog, then);
     }
     #[cfg(target_arch = "wasm32")]
     {

@@ -60,7 +60,7 @@ pub fn holds_close(modified: bool, confirmed: bool) -> bool {
 
 /// Run `action`, asking first when the package has unsaved changes
 pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
-    if app.ui.windows.unsaved.is_some() {
+    if app.ui.windows.unsaved.is_some() || app.awaiting_save.is_some() {
         return;
     }
 
@@ -123,8 +123,14 @@ pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
     if ctx.input(|i| i.viewport().close_requested()) && !app.quit_confirmed {
         // Focused text is still a draft when the OS asks to close the window
         crate::properties::GraphPropertyDraft::commit(app);
-        if holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
+        // While the Save dialog of a held action is open, the close waits for its answer
+        if app.awaiting_save.is_some() || holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            // The prompt is drawn only while the window is visible
+            if ctx.input(|i| i.viewport().minimized) == Some(true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
             guard(app, Guarded::Quit);
         }
     }
@@ -174,14 +180,39 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
     let Some(choice) = choice else { return };
     match answer(&mut app.ui.windows.unsaved, choice) {
         Step::Run(a) => perform(app, a),
-        Step::Save(a) => {
-            crate::windows::file_action(app, ctx, "file.save");
-            match after_save(app.session.modified, a) {
-                Some(a) => perform(app, a),
-                None => app.pending_load = None,
-            }
-        }
+        Step::Save(a) => save_then(app, ctx, a),
         Step::Stop => app.pending_load = None,
+    }
+}
+
+/// Save first, then run `action` if the package is no longer modified. Without a path to save to,
+/// the action waits for the Save dialog's answer ([`finish_save_dialog`]) on the desktop
+pub(crate) fn save_then(app: &mut MaterialCraftApp, ctx: &Context, action: Guarded) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::windows::has_local_path(app) {
+        app.awaiting_save = Some(action);
+        crate::native_dialogs::save_before_action(app);
+        return;
+    }
+    crate::windows::file_action(app, ctx, "file.save");
+    run_if_saved(app, action);
+}
+
+fn run_if_saved(app: &mut MaterialCraftApp, action: Guarded) {
+    match after_save(app.session.modified, action) {
+        Some(action) => perform(app, action),
+        None => app.pending_load = None,
+    }
+}
+
+/// The Save dialog of a held action has answered: run the action when `saved`, otherwise drop it
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn finish_save_dialog(app: &mut MaterialCraftApp, saved: bool) {
+    let Some(action) = app.awaiting_save.take() else { return };
+    if saved {
+        run_if_saved(app, action);
+    } else {
+        app.pending_load = None;
     }
 }
 

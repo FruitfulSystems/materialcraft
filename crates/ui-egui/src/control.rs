@@ -119,7 +119,8 @@ fn modifiers(v: &Value) -> Modifiers {
     for k in v.get("modifiers").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
         match k.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => {
-                m.ctrl = true;
+                // A shortcut's Ctrl is Command on macOS, where the real Control key is a different chord
+                m.ctrl = !cfg!(target_os = "macos");
                 m.command = true;
             }
             "shift" => m.shift = true,

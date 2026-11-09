@@ -7,8 +7,6 @@ use egui::{Color32, RichText, TextureHandle, Ui, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
-#[cfg(not(target_arch = "wasm32"))]
-use materialcraft_engine::formats::material::MATERIAL_EXT;
 use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
@@ -185,10 +183,8 @@ fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             let r = ui.add(egui::TextEdit::singleline(&mut app.ui.export_dir).desired_width(280.0));
             crate::widgets::name(&r, egui::Role::TextInput, "Folder");
             #[cfg(not(target_arch = "wasm32"))]
-            if ui.button(icon::FOLDER_OPEN).clicked()
-                && let Some(d) = rfd::FileDialog::new().pick_folder()
-            {
-                app.ui.export_dir = d.display().to_string();
+            if ui.button(icon::FOLDER_OPEN).clicked() {
+                crate::native_dialogs::ask(app, craft_dialogs::FileDialog::folder(), crate::native_dialogs::Then::ExportFolder);
             }
         });
         crate::widgets::combo(ui, tr("Format"), app.ui.export_format.to_uppercase(), |ui| {
@@ -334,7 +330,7 @@ fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
             egui::Grid::new("sc").striped(true).show(ui, |ui| {
                 for i in crate::menus::CATALOG.iter().filter(|i| i.shortcut.is_some()) {
                     ui.label(tr(i.label));
-                    ui.label(RichText::new(i.shortcut.unwrap_or_default()).monospace());
+                    ui.label(RichText::new(crate::menus::shortcut_label(ctx, i.shortcut.unwrap_or_default())).monospace());
                     ui.end_row();
                 }
                 for (k, what) in [
@@ -529,20 +525,22 @@ pub(crate) fn package_filters(open: bool, archive: bool) -> Vec<(&'static str, &
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn package_dialog(open: bool, archive: bool) -> rfd::FileDialog {
-    let mut dialog = rfd::FileDialog::new();
+pub(crate) fn package_dialog(open: bool, archive: bool) -> craft_dialogs::FileDialog {
+    let mut dialog = if open { craft_dialogs::FileDialog::open() } else { craft_dialogs::FileDialog::save() };
     for (name, extensions) in package_filters(open, archive) {
-        dialog = dialog.add_filter(name, extensions);
+        dialog = dialog.filter(name, extensions);
     }
+
     dialog
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn resource_dialog(vector: bool) -> rfd::FileDialog {
-    let mut dialog = rfd::FileDialog::new();
+fn resource_dialog(vector: bool) -> craft_dialogs::FileDialog {
+    let mut dialog = craft_dialogs::FileDialog::open();
     for (label, extensions) in resource_filters(vector) {
-        dialog = dialog.add_filter(label, extensions);
+        dialog = dialog.filter(label, extensions);
     }
+
     dialog
 }
 
@@ -571,10 +569,8 @@ pub(crate) fn import_resource_into(app: &mut MaterialCraftApp, ctx: &egui::Conte
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = ctx;
-        if let Some(path) = resource_dialog(vector).pick_file() {
-            let command = if vector { "file.importVector" } else { "file.importBitmap" };
-            app.run(command, json!({"path": path.display().to_string(), "folder": folder}));
-        }
+        let then = crate::native_dialogs::Then::ImportResource { document: app.session.document_id, vector, folder: folder.to_string() };
+        crate::native_dialogs::ask(app, resource_dialog(vector), then);
     }
     #[cfg(target_arch = "wasm32")]
     crate::web_files::import_resource(ctx, app.session.document_id, vector, folder);
@@ -599,14 +595,13 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     let _ = ctx;
     #[cfg(not(target_arch = "wasm32"))]
     {
+        use crate::native_dialogs::{self, Then};
         match id {
             "file.open" => {
-                if let Some(p) = package_dialog(true, false).pick_file() {
-                    open_path(app, &p.display().to_string());
-                }
+                native_dialogs::ask(app, package_dialog(true, false), Then::OpenPackage);
                 true
             }
-            "file.save" if app.session.path.as_ref().is_some_and(|path| !path.contains("://")) => {
+            "file.save" if has_local_path(app) => {
                 if let Some(r) = app.run("file.save", json!({})) {
                     let path = r["path"].as_str().unwrap_or_default().to_string();
                     app.ui.add_recent(&path);
@@ -615,29 +610,11 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.save" | "file.saveAs" | "file.saveCopyAs" => {
-                let ext = if app.session.path.as_deref().is_some_and(materialcraft_engine::file_cmds::is_mcraft) { "mcraft" } else { "sbs" };
-                let name = format!("{}.{ext}", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = package_dialog(false, ext == "mcraft").set_file_name(name).save_file() {
-                    let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
-                    if app.run(if id == "file.saveCopyAs" { id } else { "file.save" }, json!({"path": path})).is_some() {
-                        if id != "file.saveCopyAs" {
-                            app.ui.add_recent(&path);
-                        }
-                        app.toast(format!("{} {path}", tr("Saved")), false);
-                    }
-                }
+                native_dialogs::save_package(app, id == "file.saveCopyAs");
                 true
             }
             "file.exportMaterial" => {
-                let name = format!(
-                    "{}.{MATERIAL_EXT}",
-                    materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default())
-                );
-                if let Some(p) = rfd::FileDialog::new().set_file_name(name).add_filter("MaterialCraft material", &[MATERIAL_EXT]).save_file()
-                    && let Some(r) = app.run("file.exportMaterial", json!({"path": p.display().to_string()}))
-                {
-                    app.toast(format!("{} {}", tr("Exported"), r["path"].as_str().unwrap_or_default()), false);
-                }
+                native_dialogs::export_material(app);
                 true
             }
             "file.sendToTextureCraft" => {
@@ -647,9 +624,8 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.importBitmap" => {
-                if let Some(path) = resource_dialog(false).pick_file() {
-                    crate::graph::import_bitmap_file(app, &path.display().to_string());
-                }
+                let then = Then::ImportBitmap(native_dialogs::GraphRef::active(app));
+                native_dialogs::ask(app, resource_dialog(false), then);
                 true
             }
             "file.importVector" => {
@@ -673,6 +649,12 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
         }
         true
     }
+}
+
+/// Whether File ▸ Save writes straight to the package's path (a package opened from a URL has none to write to)
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn has_local_path(app: &MaterialCraftApp) -> bool {
+    app.session.path.as_ref().is_some_and(|path| !path.contains("://"))
 }
 
 /// Open a package from a path (recent list, command line)

@@ -45,6 +45,18 @@ pub struct MaterialCraftApp {
     /// Release checks and the update prompt (desktop only)
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates_rt: crate::updates_ui::Runtime,
+    /// Native file dialogs (desktop only)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) dialogs: crate::native_dialogs::Dialogs,
+    /// The held action waiting for the Save dialog the unsaved-changes prompt opened
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) awaiting_save: Option<crate::unsaved::Guarded>,
+    /// The window buttons to draw when the app draws the window frame; `None` while the desktop draws it (desktop only)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub window_layout: Option<craft_window::Layout>,
+    /// Keyboard shortcuts and their dispatch
+    pub(crate) keymap: craft_keymap::Keymap,
+    pub(crate) dispatcher: craft_keymap::egui::Dispatcher,
     /// Fallback fonts for Arabic
     pub fonts: fonts::UiFonts,
     /// The icon font is installed (it takes effect on the frame after `set_fonts`)
@@ -60,6 +72,10 @@ impl MaterialCraftApp {
         i18n::set_language(&app.ui.prefs.language);
         app.fonts_ready = true;
         app.ui.windows.home = app.ui.prefs.show_home;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.dialogs = crate::native_dialogs::attached(&cc.egui_ctx);
+        }
         app
     }
 
@@ -97,6 +113,14 @@ impl MaterialCraftApp {
             styled: None,
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: crate::updates_ui::Runtime::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            dialogs: crate::native_dialogs::unattached(),
+            awaiting_save: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            window_layout: None,
+            keymap: menus::keymap(craft_keymap::Platform::current()),
+            // The web build sends a key press with each clipboard event, and the option lets that press run its command
+            dispatcher: craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(cfg!(target_arch = "wasm32")),
             fonts: fonts::UiFonts::default(),
             fonts_ready: false,
             ui_gesture_active: false,
@@ -285,15 +309,29 @@ impl eframe::App for MaterialCraftApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.step_then(ctx, craft_quit::on_close_request);
+        #[cfg(target_arch = "wasm32")]
         self.step(ctx);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.draw(ui);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.dialogs.show_pending(Some(&*frame));
+        #[cfg(target_arch = "wasm32")]
+        let _ = frame;
     }
 }
 
 impl MaterialCraftApp {
+    /// [`Self::step`], then the platform's close handling, which sees a close `step` canceled
+    #[cfg(not(target_arch = "wasm32"))]
+    fn step_then(&mut self, ctx: &egui::Context, close: impl FnOnce(&egui::Context) -> bool) {
+        self.step(ctx);
+        close(ctx);
+    }
+
     /// Per-frame logic before drawing: styles, the control channel, cooking, shortcuts
     pub fn step(&mut self, ctx: &egui::Context) {
         if !self.fonts_ready {
@@ -324,6 +362,8 @@ impl MaterialCraftApp {
         crate::unsaved::handle_close(self, ctx);
         control::poll(self, ctx);
         web_files::poll(self);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::native_dialogs::poll(self);
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
             web_files::dropped(self, ctx, &f);
         }
@@ -356,6 +396,10 @@ impl MaterialCraftApp {
         toolbar::status_bar(self, ui);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::Tokens::get(&ctx).chrome)).show(ui, |ui| docking::show(self, ui));
         windows::show(self, &ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.window_layout.is_some() {
+            crate::window_controls::resize_zones(ui);
+        }
         let gesture_active = ctx.input(|input| input.pointer.any_down()) || ctx.egui_wants_keyboard_input();
         if !gesture_active && (self.ui_gesture_active || ctx.input(|input| input.pointer.any_released())) {
             self.session.finish_edit();

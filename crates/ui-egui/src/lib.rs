@@ -33,12 +33,16 @@ pub mod widgets;
 pub mod windows;
 
 mod material_craft_app;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_dialogs;
 pub mod pattern;
 mod toast;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod updates_ui;
 mod user_directory;
 mod value_editor;
+#[cfg(not(target_arch = "wasm32"))]
+mod window_controls;
 
 /// This app as the updater knows it: its release repository, and the icon and accent color the
 /// update prompt shows
