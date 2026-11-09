@@ -32,7 +32,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             app.ui.windows.export = true;
         }
         if crate::widgets::icon_button(ui, icon::IMAGE, tr("Import bitmap..."), false, 22.0).clicked() {
-            crate::menus::invoke(app, ui.ctx(), "file.importBitmap");
+            crate::windows::import_resource(app, ui.ctx(), false);
         }
     });
     ui.add_space(2.0);

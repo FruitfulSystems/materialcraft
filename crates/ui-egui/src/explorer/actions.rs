@@ -12,6 +12,17 @@ pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: Ex
     }
     let Some(folder) = target.folder(&app.session.pkg) else { return };
     match command {
+        "file.importBitmap" | "file.importVector" => {
+            crate::windows::import_resource(app, ctx, command == "file.importVector");
+        }
+        "graph.node.add" => {
+            if let ExplorerTarget::Resource { name, .. } = &target
+                && let Some(resource) = app.session.pkg.resource(name)
+            {
+                let def = if resource.file.to_ascii_lowercase().ends_with(".svg") { "svg" } else { "bitmap" };
+                app.run(command, json!({"def": def, "params": {"resource": name}}));
+            }
+        }
         "ui.newGraph" | "ui.newFunctionGraph" => {
             let (kind, name) = if command == "ui.newFunctionGraph" { ("function", "Untitled_Function_Graph_1") } else { ("material", "Untitled_Graph_1") };
             if app.run("file.new", json!({"folder": folder, "kind": kind, "name": name, "template": "empty"})).is_some() {

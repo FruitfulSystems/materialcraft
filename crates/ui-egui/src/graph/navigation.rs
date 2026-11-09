@@ -52,11 +52,12 @@ fn import_bitmap(app: &mut MaterialCraftApp, import: impl FnOnce(&mut materialcr
     let snap = app.ui.prefs.snap_to_grid;
     let result = app.session.group("Import bitmap", |session| {
         let resource = import(session)?;
+        let def = if session.pkg.resource(&resource).is_some_and(|resource| resource.file.to_ascii_lowercase().ends_with(".svg")) { "svg" } else { "bitmap" };
         materialcraft_engine::execute(
             session,
             "graph.node.add",
             &json!({
-                "def": "bitmap", "at": [center.x - NODE_W * 0.5, center.y - 60.0],
+                "def": def, "at": [center.x - NODE_W * 0.5, center.y - 60.0],
                 "snapToGrid": snap, "params": {"resource": resource}
             }),
         )?;

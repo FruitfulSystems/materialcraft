@@ -60,6 +60,8 @@ fn explorer_folder_tree_and_context_menus() {
     app.run("folder.create", json!({"parent": "Tools", "name": "Math"})).unwrap();
     app.run("file.new", json!({"folder": "Tools/Math", "kind": "function", "name": "Helper"})).unwrap();
     app.run("file.new", json!({"folder": "Tools", "template": "empty", "name": "Surface"})).unwrap();
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
+    materialcraft_engine::file_cmds::add_resource(&mut app.session, "Mask.svg", svg.to_vec(), None).unwrap();
     let mut harness = harness(app, 1600.0, 960.0);
     settle(&mut harness, 6);
     fn tree(label: &str) -> By<'_> {
@@ -76,7 +78,7 @@ fn explorer_folder_tree_and_context_menus() {
 
     for (label, expected, screenshot) in [
         ("Tools", vec!["New", "Copy", "Paste", "Rename", "Remove"], "explorer-folder-menu"),
-        ("Explorer menus*", vec!["New", "Reload", "Save", "Save As", "Save A Copy As", "Copy", "Paste", "Close"], "explorer-package-menu"),
+        ("Explorer menus*", vec!["Import", "New", "Reload", "Save", "Save As", "Save A Copy As", "Copy", "Paste", "Close"], "explorer-package-menu"),
         ("Helper", vec!["Open", "Copy", "Paste", "Remove", "Rename"], "explorer-function-menu"),
         ("Surface", vec!["Open", "Copy", "Paste", "Remove", "Rename"], "explorer-graph-menu"),
     ] {
@@ -85,7 +87,7 @@ fn explorer_folder_tree_and_context_menus() {
         for label in expected {
             assert!(harness.query(By::new().label(label)).is_some(), "{screenshot}: {label}");
         }
-        for label in ["Duplicate", "Delete", "Import", "Link"] {
+        for label in ["Duplicate", "Delete", "Link"] {
             assert!(harness.query(button(label)).is_none(), "{screenshot}: unexpected {label}");
         }
         assert!(harness.get(button("Paste")).accesskit_node().is_disabled());
@@ -93,6 +95,28 @@ fn explorer_folder_tree_and_context_menus() {
         harness.key_press(egui::Key::Escape);
         settle(&mut harness, 2);
     }
+
+    harness.get(tree("Resources")).click_secondary();
+    settle(&mut harness, 3);
+    for label in ["New", "Copy", "Paste", "Rename", "Remove"] {
+        assert!(harness.query(button(label)).is_none(), "Resources must not offer {label}");
+    }
+    harness.get(By::new().label("Import")).click();
+    settle(&mut harness, 3);
+    for label in ["Bitmap", "Vector graphics"] {
+        assert!(harness.query_all(button(label)).next().is_some());
+    }
+    save(&mut harness, &directory, "explorer-resources-import");
+    harness.key_press(egui::Key::Escape);
+    harness.key_press(egui::Key::Escape);
+    settle(&mut harness, 2);
+
+    harness.get(tree("Mask")).click_secondary();
+    settle(&mut harness, 2);
+    save(&mut harness, &directory, "explorer-resource-menu");
+    harness.get(button("Add to graph")).click();
+    settle(&mut harness, 3);
+    assert!(harness.state().session.graph().unwrap().nodes.iter().any(|node| node.def == "svg"));
 
     harness.get(tree("Helper")).click_secondary();
     settle(&mut harness, 2);

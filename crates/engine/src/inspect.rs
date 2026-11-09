@@ -65,7 +65,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
     });
     json!({
         "documents": s.inspect_documents(),
-        "package": {"name": s.pkg.name, "path": s.path, "modified": s.modified, "folders": s.pkg.folder_paths(), "warnings": s.load_warnings, "resources": s.pkg.resources.iter().map(|r| json!({"name": r.name, "bytes": r.bytes.len()})).collect::<Vec<_>>()},
+        "package": {"name": s.pkg.name, "path": s.path, "modified": s.modified, "folders": s.pkg.folder_paths(), "warnings": s.load_warnings, "resources": s.pkg.resources.iter().map(|r| json!({"name": r.name, "folder": r.folder, "file": r.file, "missing": r.bytes.is_empty(), "bytes": r.bytes.len()})).collect::<Vec<_>>()},
         "graphs": s.pkg.graphs.iter().enumerate().map(|(i, g)| json!({"index": i, "name": g.name, "path": g.sbs_path(), "nodes": g.nodes.len(), "kind": g.kind()})).collect::<Vec<_>>(),
         "openGraph": s.graph,
         "graph": graph_json,

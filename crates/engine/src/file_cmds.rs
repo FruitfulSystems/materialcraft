@@ -27,11 +27,11 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Open...",
             ["File"],
             Some("Ctrl+O"),
-            "{path} opens an SBS package; returns `warnings` and `path` (null when unsupported content requires Save As)",
+            "{path} opens an SBS or MaterialCraft package; returns `warnings` and `path` (null when unsupported content requires Save As)",
             always,
             open
         ),
-        cmd!("file.save", "Save", ["File"], Some("Ctrl+S"), "{path?} saves native SBS to the current file or `path`", always, save),
+        cmd!("file.save", "Save", ["File"], Some("Ctrl+S"), "{path?} saves .sbs with adjacent resources or an independent .mcraft archive", always, save),
         cmd!("file.saveAs", "Save as...", ["File"], Some("Ctrl+Shift+S"), "{path} saves the package under a new name", always, save),
         cmd!(
             "file.export",
@@ -47,7 +47,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Import bitmap...",
             ["File"],
             None,
-            "{path, name?} embeds an image file as a resource; returns its name",
+            "{path, name?} imports an image into the package Resources folder; returns its name without adding a graph node",
             always,
             import_bitmap
         ),
@@ -74,6 +74,7 @@ fn new_graph(session: &mut Session, parameters: &J) -> Result<J> {
     let base = strp(parameters, "name").map(str::to_string).unwrap_or_else(|| label.replace(' ', "_"));
     let folder = strp(parameters, "folder").unwrap_or("");
     crate::folder_path::require(&session.pkg, folder)?;
+    crate::folder_path::require_graph_folder(folder)?;
     let base = crate::folder_path::name(&base)?;
 
     session.edit("New graph", |session| {
@@ -105,6 +106,8 @@ fn new_package(s: &mut Session, p: &J) -> Result<J> {
 
 /// Replace the active document explicitly, resetting its history and views
 pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
+    // Reloaded archive dependencies must replace cached snapshots before links are refreshed.
+    s.linked_sources.extend(pkg.dependencies.clone());
     s.pkg = pkg;
     s.clipboard = None;
     s.embedded_clipboard = None;
@@ -127,7 +130,11 @@ fn has_extension(path: &str, ext: &str) -> bool {
 }
 
 pub fn package_path(path: &str) -> String {
-    if has_extension(path, materialcraft_formats::sbs::SBS_EXT) { path.to_string() } else { format!("{path}.sbs") }
+    if has_extension(path, materialcraft_formats::sbs::SBS_EXT) || is_mcraft(path) { path.to_string() } else { format!("{path}.sbs") }
+}
+
+pub fn is_mcraft(path: &str) -> bool {
+    has_extension(path, materialcraft_formats::project::EXT)
 }
 
 pub fn open_bytes(session: &mut Session, bytes: &[u8], name: Option<String>) -> Result<()> {
@@ -149,11 +156,10 @@ pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<Strin
         return Ok(());
     }
 
-    let mut read = materialcraft_formats::sbs::read_sbs(bytes, name.as_deref().unwrap_or(""), linked)?;
-    if let Some(path) = &name {
-        crate::linked_files::normalize_references(&mut read.pkg, path);
+    let mut read = read_package_bytes(bytes, name.as_deref().unwrap_or(""), linked)?;
+    for (path, source) in &session.pkg.dependencies {
+        read.pkg.dependencies.entry(path.clone()).or_insert_with(|| source.clone());
     }
-    read.pkg.dependencies = session.pkg.dependencies.clone();
     let link_warnings = crate::linked_files::load(&mut read.pkg);
     let path = if read.warnings.is_empty() { name } else { None };
     read.warnings.extend(link_warnings);
@@ -165,11 +171,30 @@ pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<Strin
     Ok(())
 }
 
+pub(crate) fn read_package_bytes(bytes: &[u8], name: &str, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<materialcraft_formats::sbs::SbsRead> {
+    if materialcraft_formats::project::is_archive(bytes) || is_mcraft(name) {
+        return Ok(materialcraft_formats::project::read(bytes, name)?);
+    }
+    let mut read = materialcraft_formats::sbs::read_sbs(bytes, name, linked)?;
+    if !name.is_empty() {
+        crate::linked_files::normalize_references(&mut read.pkg, name);
+    }
+    Ok(read)
+}
+
 pub fn save_bytes(session: &Session) -> Result<Vec<u8>> {
     save_bytes_at(session, session.path.as_deref())
 }
 
 pub(crate) fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec<u8>> {
+    if let Some(path) = path.filter(|path| is_mcraft(path)) {
+        return Ok(save_files_at(session, path)?.zip()?);
+    }
+    // Byte-only consumers (portable materials and recovery) retain standalone embedded SBS.
+    Ok(materialcraft_formats::sbs::write_sbs(&package_for_save(session, path))?)
+}
+
+fn package_for_save(session: &Session, path: Option<&str>) -> Package {
     let mut package = session.pkg.clone();
     if let Some(path) = path {
         for resource in &mut package.resources {
@@ -184,7 +209,27 @@ pub(crate) fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec
             }
         }
     }
-    Ok(materialcraft_formats::sbs::write_sbs(&package)?)
+    package
+}
+
+pub fn save_files_at(session: &Session, path: &str) -> Result<materialcraft_formats::project::ProjectFiles> {
+    let archive = is_mcraft(path);
+    let package = if archive { session.pkg.clone() } else { package_for_save(session, Some(path)) };
+    let filename = std::path::Path::new(path).file_name().and_then(|name| name.to_str()).unwrap_or("package.sbs");
+    Ok(materialcraft_formats::project::ProjectFiles::build(&package, filename, archive)?)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_package_at(session: &Session, path: &str) -> Result<usize> {
+    let files = save_files_at(session, path)?;
+    if is_mcraft(path) {
+        let bytes = files.zip()?;
+        materialcraft_formats::write_atomic(std::path::Path::new(path), &bytes)?;
+        Ok(bytes.len())
+    } else {
+        materialcraft_formats::project::write_files(std::path::Path::new(path), &files)?;
+        Ok(files.xml()?.len())
+    }
 }
 
 /// Open the package file at `path` (native), with the bitmaps an SBS package keeps next to it
@@ -195,7 +240,12 @@ pub fn open_file(s: &mut Session, path: &str) -> Result<()> {
         return open_bytes_linked(s, &bytes, Some(path.into()), &linked_files(path));
     }
 
-    let bytes = std::fs::read(path).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).and_then(|file| file.take((256 << 20) + 1).read_to_end(&mut bytes)).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
+    if bytes.len() > 256 << 20 {
+        return Err(bad("file.open", "Package exceeds 256 MiB"));
+    }
     open_bytes_linked(s, &bytes, Some(path.to_string()), &linked_files(path))
 }
 
@@ -233,13 +283,12 @@ fn save(s: &mut Session, p: &J) -> Result<J> {
     if s.open_packages().into_iter().any(|entry| entry.0 != s.document_id && entry.2 == Some(path.as_str())) {
         return Err(bad("file.save", "another open package already uses this file"));
     }
-    let bytes = save_bytes_at(s, Some(&path))?;
-    materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
+    let bytes = write_package_at(s, &path)?;
     s.path = Some(path.clone());
     s.refresh_links();
     s.modified = false;
     s.log(format!("Saved {path}"));
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+    Ok(json!({"path": path, "bytes": bytes}))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -334,8 +383,13 @@ fn export(_: &mut Session, _: &J) -> Result<J> {
 
 /// Embed image bytes as a resource; returns the resource name
 pub fn add_resource(s: &mut Session, file: &str, bytes: Vec<u8>, name: Option<&str>) -> Result<String> {
+    let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension);
+    validate_resource_extension(file, extension.eq_ignore_ascii_case("svg"))?;
+    if bytes.len() > 64 << 20 || s.pkg.resources.len() >= 4096 {
+        return Err(bad("file.importBitmap", "Resources are limited to 64 MiB per file and 4096 files per package"));
+    }
     materialcraft_formats::decode(&bytes, false)?;
-    s.edit("Import bitmap", |s| Ok(push_resource(&mut s.pkg, file, bytes, name)))
+    s.edit("Import resource", |s| Ok(push_resource(&mut s.pkg, file, bytes, name)))
 }
 
 /// Add `bytes` to `pkg` as a resource named `name` (or after `file`), made unique; returns the name
@@ -353,15 +407,37 @@ pub(crate) fn push_resource(pkg: &mut Package, file: &str, bytes: Vec<u8>, name:
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn import_bitmap(s: &mut Session, p: &J) -> Result<J> {
+pub(crate) fn import_resource_file(s: &mut Session, p: &J, vector: bool) -> Result<J> {
+    use std::io::Read;
     let path = strp(p, "path").ok_or_else(|| bad("file.importBitmap", "`path` is required"))?;
-    let bytes = std::fs::read(path).map_err(|e| bad("file.importBitmap", format!("{path}: {e}")))?;
+    validate_resource_extension(path, vector)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take((64 << 20) + 1).read_to_end(&mut bytes))
+        .map_err(|e| bad("file.importBitmap", format!("{path}: {e}")))?;
     let file = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("bitmap.png").to_string();
     let name = add_resource(s, &file, bytes, strp(p, "name"))?;
-    Ok(json!({"name": name, "use": {"command": "graph.node.add", "params": {"def": "bitmap", "params": {"resource": name}}}}))
+    let def = if file.to_ascii_lowercase().ends_with(".svg") { "svg" } else { "bitmap" };
+    Ok(json!({"name": name, "use": {"command": "graph.node.add", "params": {"def": def, "params": {"resource": name}}}}))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn import_bitmap(_: &mut Session, _: &J) -> Result<J> {
+pub(crate) fn import_resource_file(_: &mut Session, _: &J, _: bool) -> Result<J> {
     Err(bad("file.importBitmap", "the browser imports with the file picker"))
+}
+
+fn import_bitmap(session: &mut Session, parameters: &J) -> Result<J> {
+    import_resource_file(session, parameters, false)
+}
+
+pub fn validate_resource_extension(file: &str, vector: bool) -> Result<()> {
+    let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension).to_ascii_lowercase();
+    let supported = if vector { materialcraft_formats::VECTOR_EXTENSIONS } else { materialcraft_formats::BITMAP_EXTENSIONS };
+    if !supported.contains(&extension.as_str()) {
+        return Err(bad(
+            if vector { "file.importVector" } else { "file.importBitmap" },
+            if vector { "Choose an SVG file" } else { "Choose a supported bitmap format" },
+        ));
+    }
+    Ok(())
 }

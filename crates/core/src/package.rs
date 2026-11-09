@@ -31,7 +31,7 @@ impl Package {
     }
 
     pub fn folder_paths(&self) -> std::collections::BTreeSet<String> {
-        let mut folders = std::collections::BTreeSet::new();
+        let mut folders = std::collections::BTreeSet::from(["Resources".to_string()]);
         for path in self
             .folders
             .iter()

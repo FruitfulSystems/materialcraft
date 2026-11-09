@@ -119,7 +119,8 @@ ray-traced ambient occlusion and a shadowed key light).
 - **Tileable by design.** Noises and patterns live on whole-number lattices, so everything tiles
   seamlessly at any resolution, from 16 px to 8K.
 - **Robust.** No panics in shipped code, every command tested with hostile input, every node cooked
-  with odd inputs in tests, undo from snapshots, and native SBS project files.
+  with odd inputs in tests, undo from snapshots, and native SBS project files. Save `.sbs` with an
+  adjacent `resources/` folder, or a self-contained `.mcraft` ZIP with `package.sbs` and `resources/`.
 - **Open.** Export base color, normal, roughness, metallic, height and ambient occlusion as PNG,
   JPEG, TGA, TIFF, BMP, WEBP, EXR or HDR at 8, 16 or 32 bits, with your own file name pattern.
 - **Works with TextureCraft.** **File ▸ Send to TextureCraft** puts a material on TextureCraft's

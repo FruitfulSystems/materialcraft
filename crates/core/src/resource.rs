@@ -1,7 +1,7 @@
 use crate::ResourceBytes;
 use serde::{Deserialize, Serialize};
 
-/// An embedded file: a bitmap a Bitmap node shows, or an SVG
+/// An asset retained in memory until the package is saved: a bitmap or an SVG.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
     /// Unique name, referenced by nodes (`resource` parameter)
@@ -13,7 +13,7 @@ pub struct Resource {
     /// Unavailable external asset retained for repair on a later load
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source: String,
-    /// The file's bytes (stored in the zip, not in `package.json`)
+    /// Original bytes, saved beside native SBS or inside a MaterialCraft archive.
     #[serde(skip)]
     pub bytes: ResourceBytes,
 }

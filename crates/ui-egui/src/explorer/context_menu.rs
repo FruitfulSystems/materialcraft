@@ -4,6 +4,20 @@ use crate::{i18n::tr, menus};
 pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, reload: bool) -> Option<&'static str> {
     ui.set_min_width(190.0);
     let mut action = None;
+    let resources = target.is_resources();
+    if matches!(target, ExplorerTarget::Package { .. }) || resources {
+        ui.menu_button(tr("Import"), |ui| {
+            for (label, command) in menus::EXPLORER_IMPORT {
+                if ui.button(tr(label)).clicked() {
+                    action = Some(*command);
+                    ui.close();
+                }
+            }
+        });
+        if resources {
+            return action;
+        }
+    }
     if matches!(target, ExplorerTarget::Package { .. } | ExplorerTarget::Folder { .. }) {
         ui.menu_button(tr("New"), |ui| {
             for (label, command) in menus::EXPLORER_NEW {
@@ -19,6 +33,7 @@ pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, relo
         ExplorerTarget::Package { .. } => menus::EXPLORER_PACKAGE,
         ExplorerTarget::Folder { .. } => menus::EXPLORER_FOLDER,
         ExplorerTarget::Graph { .. } => menus::EXPLORER_GRAPH,
+        ExplorerTarget::Resource { .. } => menus::EXPLORER_RESOURCE,
         ExplorerTarget::Node { .. } => return None,
     };
     for (label, command) in entries {

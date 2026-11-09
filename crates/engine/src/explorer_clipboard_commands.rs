@@ -36,6 +36,7 @@ fn copy(session: &mut Session, parameters: &Value) -> Result<Value> {
     }
     if let Some(folder) = &folder {
         folder_path::require(&session.pkg, folder)?;
+        folder_path::require_graph_folder(folder)?;
     }
 
     session.explorer_clipboard =
@@ -46,6 +47,7 @@ fn copy(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "folder").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
+    folder_path::require_graph_folder(parent)?;
     let clipboard = session.explorer_clipboard.as_ref().ok_or_else(|| bad("explorer.paste", "the Explorer clipboard is empty"))?;
     let mut incoming = clipboard.source.clone();
     incoming.graphs = clipboard
@@ -76,6 +78,10 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
     let mut destination = session.pkg.clone();
     let mut folder_names = BTreeMap::new();
     for folder in &folders {
+        if folder_path::is_resources(folder) {
+            folder_names.insert(folder.clone(), folder.clone());
+            continue;
+        }
         let (source_parent, leaf) = folder.rsplit_once('/').unwrap_or(("", folder));
         let target_parent = folder_names.get(source_parent).map(String::as_str).unwrap_or(parent);
         let new = folder_path::join(target_parent, &folder_path::unique(&destination, target_parent, leaf));

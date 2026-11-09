@@ -63,7 +63,8 @@ glam = { version = "0.30", features = ["serde", "bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 rayon = "1"
 log = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga", "tiff", "exr", "hdr", "bmp", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga", "tiff", "exr", "hdr", "bmp", "webp", "gif", "pnm"] }
+dds = { version = "0.2", default-features = false }
 half = "2"
 eframe = { version = "0.37", default-features = false }
 egui = "0.37"

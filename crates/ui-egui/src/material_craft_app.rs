@@ -228,12 +228,16 @@ impl MaterialCraftApp {
         }
         self.next_autosave = now + period;
         let dir = user_dir("autosave");
-        let path = dir.join(format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));
+        let path = dir.join(format!("{}.mcraft", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));
         let pkg = self.session.pkg.clone();
         let spawned = std::thread::Builder::new().name("materialcraft-autosave".into()).spawn(move || {
             let result = std::fs::create_dir_all(&dir)
                 .map_err(|e| e.to_string())
-                .and_then(|_| materialcraft_engine::formats::sbs::write_sbs(&pkg).map_err(|e| e.to_string()))
+                .and_then(|_| {
+                    materialcraft_engine::formats::project::ProjectFiles::build(&pkg, "autosave.mcraft", true)
+                        .and_then(|files| files.zip())
+                        .map_err(|e| e.to_string())
+                })
                 .and_then(|bytes| materialcraft_engine::formats::write_atomic(&path, &bytes).map_err(|e| e.to_string()));
             match result {
                 Ok(()) => log::info!("autosaved {}", path.display()),

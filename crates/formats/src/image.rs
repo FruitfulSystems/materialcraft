@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 /// Decode image file bytes into a linear float image (8-bit color is sRGB-decoded; grayscale files stay grayscale)
 pub fn decode(bytes: &[u8], linear: bool) -> Result<Image> {
+    if bytes.starts_with(b"DDS ") {
+        return guard(|| crate::dds_image::decode(bytes, linear), || FormatError::Image("DDS decoder failed".into()));
+    }
     if std::str::from_utf8(bytes.get(..bytes.len().min(4096)).unwrap_or_default()).is_ok_and(|text| text.contains("<svg")) {
         return guard(|| crate::svg::decode(bytes), || FormatError::Image("SVG decoder failed".into()));
     }

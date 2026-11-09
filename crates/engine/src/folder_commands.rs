@@ -17,7 +17,9 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 fn create(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "parent").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
+    folder_path::require_graph_folder(parent)?;
     let name = folder_path::name(strp(parameters, "name").unwrap_or("Untitled_Folder"))?;
+    folder_path::require_graph_folder(&folder_path::join(parent, name))?;
     let path = folder_path::join(parent, &folder_path::unique(&session.pkg, parent, name));
     folder_path::validate(&path)?;
     session.edit("New folder", |session| {
@@ -29,6 +31,7 @@ fn create(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn source<'a>(session: &Session, parameters: &'a Value) -> Result<&'a str> {
     let path = strp(parameters, "folder").filter(|path| !path.is_empty()).ok_or_else(|| bad("folder", "folder is required"))?;
     folder_path::require(&session.pkg, path)?;
+    folder_path::require_graph_folder(path)?;
     Ok(path)
 }
 
@@ -41,6 +44,8 @@ fn rename(session: &mut Session, parameters: &Value) -> Result<Value> {
 
 fn relocate_folder(session: &mut Session, old: &str, new: &str) -> Result<Value> {
     folder_path::validate(new)?;
+    folder_path::require_graph_folder(old)?;
+    folder_path::require_graph_folder(new)?;
     if old == new {
         return Ok(json!({"folder": new}));
     }
@@ -108,6 +113,7 @@ fn remove(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn move_item(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "parent").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
+    folder_path::require_graph_folder(parent)?;
     if let Some(index) = parameters.get("graph").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok()) {
         let graph = session.pkg.graph(index)?;
         let new = folder_path::join(parent, &graph.name);

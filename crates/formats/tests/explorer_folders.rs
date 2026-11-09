@@ -7,7 +7,8 @@ fn empty_nested_folders_survive_sbs_round_trip() {
 
     let saved = write_sbs(&imported.pkg).unwrap();
     let document = roxmltree::Document::parse(std::str::from_utf8(&saved).unwrap()).unwrap();
-    let groups: Vec<_> = document.descendants().filter(|node| node.has_tag_name("group")).collect();
+    let groups: Vec<_> =
+        document.descendants().filter(|node| node.has_tag_name("group") && !node.children().any(|child| child.attribute("v") == Some("Resources"))).collect();
 
     assert_eq!(groups.len(), 2);
     assert!(groups[1].ancestors().any(|node| node == groups[0]));
@@ -37,7 +38,7 @@ fn nested_resource_paths_are_preserved_without_duplicate_groups() {
     assert_eq!(read.pkg.graphs[0].nodes[0].params["resource"], Value::Text("Mask".into()));
     let bytes = write_sbs(&read.pkg).unwrap();
     let document = roxmltree::Document::parse(std::str::from_utf8(&bytes).unwrap()).unwrap();
-    assert_eq!(document.descendants().filter(|node| node.has_tag_name("group")).count(), 2);
+    assert_eq!(document.descendants().filter(|node| node.has_tag_name("group")).count(), 3);
 }
 
 #[test]
@@ -64,7 +65,7 @@ fn supplied_packages_keep_native_folder_hierarchies() {
         let bytes = std::fs::read(&path).unwrap();
         let document = roxmltree::Document::parse(std::str::from_utf8(&bytes).unwrap().trim_start_matches('\u{feff}')).unwrap();
         let is_folder = |node: &roxmltree::Node<'_, '_>| node.has_tag_name("group") && node.children().any(|child| child.has_tag_name("content"));
-        let paths: std::collections::BTreeSet<_> = document
+        let mut paths: std::collections::BTreeSet<_> = document
             .descendants()
             .filter(is_folder)
             .map(|node| {
@@ -77,6 +78,7 @@ fn supplied_packages_keep_native_folder_hierarchies() {
                 parts.join("/")
             })
             .collect();
+        paths.insert("Resources".to_string());
         let imported = read_sbs(&bytes, &path.to_string_lossy(), &|_| None).unwrap();
         assert_eq!(imported.pkg.folder_paths(), paths, "{}: import", path.display());
         let saved = write_sbs(&imported.pkg).unwrap();

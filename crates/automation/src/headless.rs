@@ -100,7 +100,7 @@ impl Headless {
         batch_reply(results, None)
     }
 
-    /// Open an `.sbs` package (or a `.mcmat` material's source), reading linked bitmaps under the same access rules
+    /// Open an `.sbs` or `.mcraft` package (or a `.mcmat` material's source), using the granted file access
     pub fn open(&mut self, path: &str) -> Result<Value, AutomationError> {
         let bytes = self.read(path)?;
         let folder = path.replace('\\', "/").rsplit_once('/').map(|(folder, _)| format!("{folder}/")).unwrap_or_default();
@@ -116,21 +116,55 @@ impl Headless {
         };
 
         file_cmds::open_bytes_linked(&mut self.session, &bytes, Some(path.to_string()), &linked)?;
+        if self.session.path.is_some() {
+            self.session.path = Some(path.to_string());
+        }
         Ok(self.inspect())
     }
 
-    /// Save to `path` (`.sbs` appended without a package extension) or the package's own file; native SBS
+    /// Save SBS with adjacent resources, or an independent MaterialCraft archive.
     pub fn save(&mut self, path: Option<&str>) -> Result<Value, AutomationError> {
         let path = match path {
             Some(p) => file_cmds::package_path(p),
             None => self.session.path.clone().ok_or_else(|| bad("the package has no file yet (new, or opened from another program): give a `path`"))?,
         };
 
-        let bytes = file_cmds::save_bytes(&self.session)?;
-        self.write(&path, &bytes)?;
+        let files = file_cmds::save_files_at(&self.session, &path)?;
+        let bytes = if file_cmds::is_mcraft(&path) {
+            let bytes = files.zip().map_err(|error| bad(error.to_string()))?;
+            self.write(&path, &bytes)?;
+            bytes.len()
+        } else {
+            match &self.fs {
+                Filesystem::Denied => return Err(bad("file access is not granted")),
+                Filesystem::TrustedLocal => {
+                    materialcraft_engine::formats::project::write_files(Path::new(&path), &files).map_err(|error| bad(error.to_string()))?
+                }
+                Filesystem::Workspace(workspace) => {
+                    workspace.check_write(&path)?;
+                    let parent = path.rsplit_once('/').map_or(String::new(), |(parent, _)| format!("{parent}/"));
+                    for name in files.files.keys().filter(|name| *name != &files.entry) {
+                        workspace.check_write(&format!("{parent}{name}"))?;
+                    }
+                    workspace.create_dir_all(&format!("{parent}resources"))?;
+                    for (name, bytes) in &files.files {
+                        if name == &files.entry {
+                            continue;
+                        }
+                        let target = format!("{parent}{name}");
+                        if let Some((directory, _)) = target.rsplit_once('/') {
+                            workspace.create_dir_all(directory)?;
+                        }
+                        workspace.write_resource(&target, bytes.as_slice())?;
+                    }
+                    workspace.write(&path, files.xml().map_err(|error| bad(error.to_string()))?)?;
+                }
+            }
+            files.xml().map_err(|error| bad(error.to_string()))?.len()
+        };
         self.session.path = Some(path.clone());
         self.session.modified = false;
-        Ok(json!({"path": path, "bytes": bytes.len()}))
+        Ok(json!({"path": path, "bytes": bytes}))
     }
 
     /// Embed an image file as a bitmap resource

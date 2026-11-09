@@ -48,6 +48,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
     SPECS.get_or_init(|| {
         let mut v = Vec::new();
         v.extend(crate::file_cmds::specs());
+        v.extend(crate::resource_commands::specs());
         v.extend(crate::package_commands::specs());
         v.extend(crate::package_file_commands::specs());
         v.extend(crate::folder_commands::specs());

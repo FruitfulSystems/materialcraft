@@ -63,7 +63,8 @@ impl ExplorerTree<'_> {
         for resource in package.resources.iter().filter(|resource| resource.folder == parent) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                tree_row::show(ui, &resource.name, icon::IMAGE, false, resource.bytes.is_empty().then_some("Missing resource"));
+                let target = ExplorerTarget::Resource { document, name: resource.name.clone() };
+                self.row(ui, &target, package, &resource.name, icon::IMAGE, if resource.bytes.is_empty() { "Missing resource" } else { "" }, false);
             });
         }
         for (index, graph) in package.graphs.iter().enumerate().filter(|(_, graph)| graph.folder == parent) {
@@ -144,11 +145,14 @@ impl ExplorerTree<'_> {
                         egui::DragAndDrop::set_payload(ui.ctx(), GraphDragPayload { document: *document, name: graph.sbs_path() });
                     }
                 }
-                ExplorerTarget::Folder { .. } => egui::DragAndDrop::set_payload(ui.ctx(), target.clone()),
-                ExplorerTarget::Package { .. } | ExplorerTarget::Node { .. } => {}
+                ExplorerTarget::Folder { .. } if !target.is_resources() => egui::DragAndDrop::set_payload(ui.ctx(), target.clone()),
+                _ => {}
             }
         }
-        if let Some(parent) = target.folder(package) {
+        if !target.is_resources()
+            && !matches!(target, ExplorerTarget::Resource { .. })
+            && let Some(parent) = target.folder(package)
+        {
             if let Some(payload) = response.dnd_release_payload::<GraphDragPayload>()
                 && payload.document == target.document()
                 && let Some((index, _)) = package.graph_by_name(&payload.name)

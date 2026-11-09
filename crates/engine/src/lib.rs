@@ -29,6 +29,7 @@ mod open_document;
 mod package_commands;
 mod package_file_commands;
 mod preview_cook;
+mod resource_commands;
 pub use material_preview::MaterialPreview;
 pub use material_source::MaterialSource;
 pub use open_document::OpenDocument;

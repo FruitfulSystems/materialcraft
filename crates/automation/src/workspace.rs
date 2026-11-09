@@ -76,6 +76,36 @@ impl AuthorizedWorkspace {
         let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
         root.create_dir_all(&rel).map_err(|e| file_error("create", path, e))
     }
+
+    /// Stage an immutable project asset without overwriting another package's resources.
+    pub fn write_resource(&self, path: &str, bytes: &[u8]) -> Result<(), AutomationError> {
+        let rel = relative_path(path)?;
+        let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        match root.open_with(&rel, &options) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+                    let _ = root.remove_file(&rel);
+                    return Err(file_error("write", path, error));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let file = root.open(&rel).map_err(|error| file_error("read", path, error))?;
+                let metadata = file.metadata().map_err(|error| file_error("read", path, error))?;
+                if !metadata.is_file() || metadata.len() != bytes.len() as u64 {
+                    return Err(bad(format!("Resource filename collision: `{path}`")));
+                }
+                let mut existing = Vec::new();
+                file.take(bytes.len() as u64 + 1).read_to_end(&mut existing).map_err(|error| file_error("read", path, error))?;
+                if existing != bytes {
+                    return Err(bad(format!("Resource filename collision: `{path}`")));
+                }
+            }
+            Err(error) => return Err(file_error("write", path, error)),
+        }
+        Ok(())
+    }
 }
 
 fn open_root(path: Option<&Path>, authority: &str) -> Result<Option<Arc<Dir>>, AutomationError> {

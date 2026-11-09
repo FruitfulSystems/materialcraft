@@ -39,6 +39,18 @@ pub(crate) fn contains(parent: &str, path: &str) -> bool {
     path == parent || path.strip_prefix(parent).is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+pub(crate) fn is_resources(path: &str) -> bool {
+    path.split('/').next().is_some_and(|name| name.eq_ignore_ascii_case("Resources"))
+}
+
+pub(crate) fn require_graph_folder(path: &str) -> Result<()> {
+    // Resources is a reserved asset container; commands must enforce the same rule as Explorer.
+    if is_resources(path) {
+        return Err(bad("explorer", "Resources is reserved for assets"));
+    }
+    Ok(())
+}
+
 pub(crate) fn unique(package: &Package, parent: &str, base: &str) -> String {
     let occupied = package.folder_paths();
     let free = |name: &str| {
