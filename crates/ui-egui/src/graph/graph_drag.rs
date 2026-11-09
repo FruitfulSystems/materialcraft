@@ -14,6 +14,10 @@ pub(super) enum GraphDrag {
         from: (NodeId, String),
         detached: Option<(NodeId, String)>,
     },
+    /// Pulled from an unconnected input: it connects where it is dropped on an output
+    InputWire {
+        to: (NodeId, String),
+    },
     /// Pressed on a wire: a click selects it, a drag pulls a reroute dot out of it
     WirePress {
         wire: WireRef,

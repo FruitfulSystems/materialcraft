@@ -38,7 +38,7 @@ pub(super) fn handle(
         app.run("graph.annotation.select", serde_json::json!({}));
     }
 
-    // Gestures: wires from output dots, panning
+    // Gestures: wires from output dots and unconnected inputs, panning
     let near = |pointer: Pos2| crate::graph::port_hit::nearest_by(ports, pointer, |port| (port.position, port.radius)).map(|port| (port.node, port.slot));
     if editor.drag.is_none() && GraphCamera::pan_started(ui, canvas_bounds) {
         editor.drag = Some(FunctionDrag::Pan(crate::graph::gesture::pan_button(ui)));
@@ -47,9 +47,17 @@ pub(super) fn handle(
         && !app.graph.is_dragging()
         && let Some(pointer_position) = pointer
         && ui.rect_contains_pointer(canvas_bounds)
-        && let Some((id, None)) = near(pointer_position)
+        && let Some((id, slot)) = near(pointer_position)
     {
-        editor.drag = Some(FunctionDrag::Wire(id));
+        match slot {
+            None => editor.drag = Some(FunctionDrag::Wire(id)),
+            Some(input) => {
+                let connected = editor.current(app).and_then(|graph| graph.node(id)).is_some_and(|node| node.inputs.get(input).is_some_and(Option::is_some));
+                if !connected {
+                    editor.drag = Some(FunctionDrag::InputWire(id, input));
+                }
+            }
+        }
     }
 
     if editor.drag.is_none()
@@ -74,6 +82,11 @@ pub(super) fn handle(
         Some(FunctionDrag::Wire(id)) => {
             if let (Some(pointer_position), Some(source_id)) = (pointer, ports.iter().find(|port| port.node == *id && port.slot.is_none())) {
                 crate::graph::wire_geometry::bezier(&painter, source_id.position, pointer_position, Stroke::new(2.0, tokens.accent));
+            }
+        }
+        Some(FunctionDrag::InputWire(id, input)) => {
+            if let (Some(pointer_position), Some(destination)) = (pointer, ports.iter().find(|port| port.node == *id && port.slot == Some(*input))) {
+                crate::graph::wire_geometry::bezier(&painter, pointer_position, destination.position, Stroke::new(2.0, tokens.accent));
             }
         }
         Some(FunctionDrag::Box { start }) => {
@@ -108,6 +121,15 @@ pub(super) fn handle(
             Some(FunctionDrag::Wire(from)) => {
                 if let Some(pointer) = pointer
                     && let Some((to, Some(input))) = near(pointer)
+                    && from != to
+                {
+                    editor.edit(app, FunctionEdit::Connect { from, to, input }, false);
+                }
+            }
+            Some(FunctionDrag::InputWire(to, input)) => {
+                // Dropped anywhere but on another node's output, the input stays unconnected
+                if let Some(pointer) = pointer
+                    && let Some((from, None)) = near(pointer)
                     && from != to
                 {
                     editor.edit(app, FunctionEdit::Connect { from, to, input }, false);

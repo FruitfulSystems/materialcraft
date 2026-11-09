@@ -122,15 +122,33 @@ fn standalone_function_canvas_wires_constants_and_marks_an_output() {
     function.output = Some(multiply);
     materialcraft_engine::execute(&mut session, "graph.function.set", &json!({"function": function})).unwrap();
     let mut frames = Frames::new(session);
+    let port =
+        |frames: &Frames, node: u32, slot: &str| frames.app.graph.ports.iter().find(|port| port.node.0 == u64::from(node) && port.port == slot).unwrap().pos;
+    let wire = |frames: &mut Frames, (from, from_slot): (u32, &str), (to, to_slot): (u32, &str)| {
+        let (start, end) = (port(frames, from, from_slot), port(frames, to, to_slot));
+        drag(frames, start, end);
+    };
 
-    for (source, slot) in [(first, "0"), (second, "1")] {
-        let from = frames.app.graph.ports.iter().find(|port| port.node.0 == u64::from(source) && port.output).unwrap().pos;
-        let to = frames.app.graph.ports.iter().find(|port| port.node.0 == u64::from(multiply) && port.port == slot).unwrap().pos;
-        drag(&mut frames, from, to);
-    }
+    // An unconnected input dropped on empty canvas or on its own node's output stays unconnected
+    let input = port(&frames, multiply, "1");
+    let empty = input + vec2(0.0, 160.0);
+    assert!(!frames.app.graph.rects.iter().any(|(_, rect)| rect.expand(12.0).contains(empty)), "the drop point must be empty canvas");
+    let before = frames.app.session.pkg.clone();
+    drag(&mut frames, input, empty);
+    wire(&mut frames, (multiply, "1"), (multiply, "output"));
+    assert_eq!(frames.app.session.pkg, before);
+
+    // From an output to an input, and from an unconnected input to an output
+    wire(&mut frames, (first, "output"), (multiply, "0"));
+    wire(&mut frames, (multiply, "1"), (second, "output"));
     let function = frames.app.session.graph().unwrap().function.as_ref().unwrap();
     assert_eq!(function.node(multiply).unwrap().inputs, vec![Some(first), Some(second)]);
     assert_eq!(function.output, Some(multiply));
+
+    // Pressing a connected input does not pull a wire
+    wire(&mut frames, (multiply, "0"), (second, "output"));
+    let function = frames.app.session.graph().unwrap().function.as_ref().unwrap();
+    assert_eq!(function.node(multiply).unwrap().inputs, vec![Some(first), Some(second)]);
 }
 
 #[test]
@@ -793,4 +811,59 @@ fn function_links_swap_and_delete_without_editing_the_parent_graph() {
         assert_eq!(frames.app.session.pkg, package);
         assert_eq!(frames.app.session.history(), history);
     }
+}
+
+#[test]
+fn wires_pulled_from_an_unconnected_input_connect_on_an_output() {
+    let mut frames = Frames::new(new_session());
+    let source = NodeId(frames.app.run("graph.node.add", json!({"def": "uniform", "at": [0, 0]})).unwrap()["id"].as_u64().unwrap());
+    let target = NodeId(frames.app.run("graph.node.add", json!({"def": "blend", "at": [320, 0]})).unwrap()["id"].as_u64().unwrap());
+    frames.app.ui.frame_all = true;
+    frames.run(Vec::new(), Modifiers::NONE);
+    let ports = |frames: &Frames, node: NodeId, output: bool| {
+        frames.app.graph.ports.iter().filter(|port| port.node == node && port.output == output).cloned().collect::<Vec<_>>()
+    };
+    let (inputs, output) = (ports(&frames, target, false), ports(&frames, source, true)[0].clone());
+    let wires = |frames: &Frames| {
+        frames
+            .app
+            .session
+            .graph()
+            .unwrap()
+            .connections
+            .iter()
+            .map(|wire| (wire.from, wire.from_port.clone(), wire.to, wire.to_port.clone()))
+            .collect::<Vec<_>>()
+    };
+    let empty = frames.app.graph.view.left_bottom() + vec2(24.0, -24.0);
+    assert!(!frames.app.graph.rects.iter().any(|(_, rect)| rect.expand(12.0).contains(empty)), "the drop point must be empty canvas");
+
+    // A click, and drops on empty canvas, on another input and on the node's own output leave the input unconnected
+    let history = frames.app.session.history();
+    frames.click(inputs[0].pos, Modifiers::NONE);
+    frames.time += 1.0;
+    for end in [empty, inputs[1].pos, ports(&frames, target, true)[0].pos] {
+        drag(&mut frames, inputs[0].pos, end);
+    }
+    assert!(wires(&frames).is_empty());
+    assert!(frames.app.graph.search.is_none(), "an input wire dropped on empty canvas does not open the node search");
+    assert_eq!(frames.app.session.history(), history, "a missed wire must not add an undo step");
+
+    // While dragging, the wire is pulled from the input; dropped on the output, it connects
+    let midway = inputs[0].pos.lerp(output.pos, 0.5);
+    frames.run(vec![Event::PointerMoved(inputs[0].pos)], Modifiers::NONE);
+    frames.run(vec![Event::PointerButton { pos: inputs[0].pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }], Modifiers::NONE);
+    frames.run(vec![Event::PointerMoved(midway)], Modifiers::NONE);
+    assert!(matches!(&frames.app.graph.drag, Some(super::GraphDrag::InputWire { to }) if *to == (target, inputs[0].port.clone())));
+    frames.run(vec![Event::PointerMoved(output.pos)], Modifiers::NONE);
+    frames.run(vec![Event::PointerButton { pos: output.pos, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+    assert_eq!(wires(&frames), [(source, output.port.clone(), target, inputs[0].port.clone())]);
+
+    // The second input too; then the connected first input is unplugged by pulling its wire, as before
+    drag(&mut frames, inputs[1].pos, output.pos);
+    assert_eq!(wires(&frames)[1], (source, output.port.clone(), target, inputs[1].port.clone()));
+    drag(&mut frames, inputs[0].pos, empty);
+    assert_eq!(wires(&frames), [(source, output.port.clone(), target, inputs[1].port.clone())]);
+    frames.app.session.undo().unwrap();
+    assert_eq!(wires(&frames).len(), 2);
 }

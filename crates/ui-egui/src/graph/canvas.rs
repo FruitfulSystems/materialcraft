@@ -326,6 +326,11 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 bezier(&painter, src.pos, p, Stroke::new(2.0, theme.accent));
             }
         }
+        Some(GraphDrag::InputWire { to }) => {
+            if let (Some(p), Some(dst)) = (pointer, app.graph.ports.iter().find(|h| !h.output && h.node == to.0 && h.port == to.1)) {
+                bezier(&painter, p, dst.pos, Stroke::new(2.0, theme.accent));
+            }
+        }
         _ => {}
     }
 
