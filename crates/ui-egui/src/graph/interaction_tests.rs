@@ -155,7 +155,7 @@ fn embedded_graphs_open_with_control_e_but_not_double_click() {
         assert_eq!(frames.app.session.selection, vec![node]);
         assert_eq!(frames.app.session.view2d.node, Some(node));
 
-        let control = Modifiers::CTRL | Modifiers::COMMAND;
+        let control = Modifiers::COMMAND;
         for pressed in [true, false] {
             frames.run(vec![Event::Key { key: egui::Key::E, physical_key: Some(egui::Key::E), pressed, repeat: false, modifiers: control }], control);
         }
@@ -181,7 +181,7 @@ fn selected_pattern_subgraph_opens_with_control_e() {
     let original = frames.app.session.pkg.clone();
     let history = frames.app.session.history();
 
-    let control = Modifiers::CTRL | Modifiers::COMMAND;
+    let control = Modifiers::COMMAND;
     frames.run(vec![Event::Key { key: egui::Key::E, physical_key: Some(egui::Key::E), pressed: true, repeat: false, modifiers: control }], control);
     frames.run(vec![Event::Key { key: egui::Key::E, physical_key: Some(egui::Key::E), pressed: false, repeat: false, modifiers: control }], control);
     assert_eq!(frames.app.pattern_editor.as_ref().map(|editor| editor.node), Some(node));

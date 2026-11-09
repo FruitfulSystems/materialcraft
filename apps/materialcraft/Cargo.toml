@@ -22,9 +22,16 @@ log = { workspace = true }
 # A start that never opens a window says why in an error dialog (src/start_failure.rs).
 rfd = { workspace = true }
 
+# The window frame's choice applies before the window exists.
+craft-window = { workspace = true, features = ["egui"] }
+
 # The Windows update helper is a copy of this program started with `--finish-update`.
 [target.'cfg(windows)'.dependencies]
 craft-update = { workspace = true }
+
+# The macOS app menu whose Quit asks before unsaved work is lost.
+[target.'cfg(target_os = "macos")'.dependencies]
+craft-menu = { workspace = true }
 
 [build-dependencies]
 winresource = "0.1"

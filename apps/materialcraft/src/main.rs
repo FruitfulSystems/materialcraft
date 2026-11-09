@@ -97,7 +97,11 @@ fn main() {
         prev(info);
     }));
     let session = initial_session(&args);
-    let mut viewport = egui::ViewportBuilder::default().with_title("MaterialCraft").with_inner_size([1600.0, 960.0]).with_min_inner_size([960.0, 600.0]);
+    let window_frame = craft_window::Choice::probe(craft_window::Prefix::new("MATERIALCRAFT")).into_frame();
+    let mut viewport = craft_window::decorate(
+        egui::ViewportBuilder::default().with_title("MaterialCraft").with_inner_size([1600.0, 960.0]).with_min_inner_size([960.0, 600.0]),
+        &window_frame,
+    );
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
@@ -112,6 +116,12 @@ fn main() {
         options,
         Box::new(move |cc| {
             let mut app = MaterialCraftApp::new(cc, session);
+            app.window_layout = window_frame.layout().cloned();
+            // Called from the creator: winit installs its default menu before this runs. On error winit's menu stays, whose Quit does not ask
+            #[cfg(target_os = "macos")]
+            if let Err(error) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "MaterialCraft") {
+                log::warn!("could not install the app menu: {error}");
+            }
             app.set_startup_update_check(startup_update_check);
             if let Some(port) = control {
                 app.control = Some(control_server::start(port, cc.egui_ctx.clone()));

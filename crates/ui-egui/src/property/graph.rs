@@ -107,8 +107,20 @@ fn show_target(app: &mut MaterialCraftApp, ui: &mut Ui, target: materialcraft_en
     });
 
     for (id, parameters) in commands {
-        app.run(id, parameters);
+        run_or_pick(app, id, parameters);
     }
+}
+
+/// Run a panel command. On the desktop, `ui.pickInputImage` asks for the file first and binds it when the dialog answers
+fn run_or_pick(app: &mut MaterialCraftApp, id: &str, parameters: JsonValue) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if id == "ui.pickInputImage" {
+        let dialog = craft_dialogs::FileDialog::open().filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS);
+        let then = crate::native_dialogs::Then::BindInput(parameters, crate::native_dialogs::GraphRef::active(app));
+        crate::native_dialogs::ask(app, dialog, then);
+        return;
+    }
+    app.run(id, parameters);
 }
 
 /// Preview images of the graph's input nodes: a bitmap resource, or (desktop) an image file such as a mesh map baked in TextureCraft
@@ -134,10 +146,8 @@ fn input_previews(ui: &mut Ui, graph: &Graph, resources: &[Resource], emit: &mut
                     }
                 });
                 #[cfg(not(target_arch = "wasm32"))]
-                if crate::widgets::icon_button(ui, icon::FOLDER_OPEN, tr("Pick an image file (a mesh map baked in TextureCraft)"), false, 18.0).clicked()
-                    && let Some(path) = rfd::FileDialog::new().add_filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS).pick_file()
-                {
-                    emit("graph.input.bind", json!({"identifier": id, "path": path.display().to_string()}));
+                if crate::widgets::icon_button(ui, icon::FOLDER_OPEN, tr("Pick an image file (a mesh map baked in TextureCraft)"), false, 18.0).clicked() {
+                    emit("ui.pickInputImage", json!({"identifier": id}));
                 }
             });
         }
@@ -170,4 +180,20 @@ fn presets_bar(ui: &mut Ui, graph: &Graph, emit: &mut impl FnMut(&'static str, J
         }
     });
     ui.data_mut(|data| data.insert_temp(name_id, name));
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picking_an_input_image_asks_for_the_file_and_other_commands_run() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        let nodes = app.session.graph().unwrap().nodes.len();
+        run_or_pick(&mut app, "ui.pickInputImage", json!({"identifier": "curvature"}));
+        assert_eq!(app.dialogs.queued(), 1);
+        run_or_pick(&mut app, "graph.node.add", json!({"def": "input_grayscale"}));
+        assert_eq!(app.dialogs.queued(), 1, "a command does not ask for a file");
+        assert_eq!(app.session.graph().unwrap().nodes.len(), nodes + 1);
+    }
 }

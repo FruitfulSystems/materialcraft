@@ -1,6 +1,6 @@
 //! Menu actions and shortcuts share stable command ids
 
-use egui::{Key, KeyboardShortcut, Modifiers};
+use craft_keymap::{Active, Bindable, Binding, Chord, Keymap, Platform, Scope, Scopes};
 use serde_json::Value;
 
 use crate::MaterialCraftApp;
@@ -199,19 +199,38 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
     }
 }
 
-/// Parse "Ctrl+Shift+E" style shortcuts
-pub fn parse_shortcut(s: &str) -> Option<KeyboardShortcut> {
-    let mut mods = Modifiers::NONE;
-    let mut key = None;
-    for part in s.split('+') {
-        match part {
-            "Ctrl" | "Cmd" => mods |= Modifiers::COMMAND,
-            "Shift" => mods |= Modifiers::SHIFT,
-            "Alt" => mods |= Modifiers::ALT,
-            k => key = Key::from_name(k),
+/// Parse "Ctrl+Shift+E" style shortcuts; `Ctrl` in these texts is Command on macOS
+pub fn parse_shortcut(s: &str) -> Option<Chord> {
+    Chord::parse(&s.replace("Ctrl", "Cmd")).ok()
+}
+
+/// The text a shortcut shows on this platform: "Cmd+Shift+E" on macOS, where the interface fonts lack the ⇧ and ⌘ glyphs, and "Ctrl+Shift+E" elsewhere
+pub fn shortcut_label(ctx: &egui::Context, text: &str) -> String {
+    let platform = craft_keymap::egui::platform(ctx);
+    parse_shortcut(text).map_or_else(|| text.to_string(), |chord| if platform.is_mac() { chord.to_string() } else { chord.display(platform) })
+}
+
+/// Every shortcut in effect: the catalog's, then the engine commands' not listed there
+pub(crate) fn shortcut_table() -> Vec<(&'static str, &'static str)> {
+    let mut table: Vec<(&'static str, &'static str)> = CATALOG.iter().filter_map(|i| Some((i.id, i.shortcut?))).collect();
+    for c in materialcraft_engine::command_specs() {
+        if table.iter().any(|(id, _)| *id == c.id) {
+            continue;
+        }
+        if let Some(shortcut) = c.shortcut {
+            table.push((c.id, shortcut));
         }
     }
-    key.map(|k| KeyboardShortcut::new(mods, k))
+    table
+}
+
+/// The keymap the table's shortcuts dispatch through
+pub(crate) fn keymap(platform: Platform) -> Keymap {
+    let catalog = shortcut_table()
+        .into_iter()
+        .filter_map(|(id, text)| Some(Bindable::new(id, id, Scope::app()).with_default(Binding::new(parse_shortcut(text)?))))
+        .collect();
+    Keymap::new(catalog, Scopes::new(), platform)
 }
 
 /// The shortcut text shown for `id` (the catalog's, else the engine command's)
@@ -222,8 +241,18 @@ pub fn shortcut_of(id: &str) -> Option<&'static str> {
 pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(6, 0))).show(ui, |ui| {
+        #[cfg(not(target_arch = "wasm32"))]
+        let window_layout = app.window_layout.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        if window_layout.is_some() {
+            craft_window::title_bar::empty_area(ui, ui.max_rect());
+        }
         egui::MenuBar::new().ui(ui, |ui| {
             let ctx = ui.ctx().clone();
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(layout) = &window_layout {
+                crate::window_controls::buttons(ui, &ctx, &layout.left);
+            }
             for top in TOP {
                 ui.menu_button(tr(top), |ui| {
                     ui.set_min_width(220.0);
@@ -250,6 +279,14 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
                     }
                 });
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(layout) = window_layout.as_ref().filter(|layout| !layout.right.is_empty()) {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut right = layout.right.clone();
+                    right.reverse();
+                    crate::window_controls::buttons(ui, &ctx, &right);
+                });
+            }
         });
     });
 }
@@ -258,7 +295,7 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     let on = enabled(app, item.id);
     let mut b = egui::Button::new(tr(item.label));
     if let Some(sc) = item.shortcut {
-        b = b.shortcut_text(sc);
+        b = b.shortcut_text(shortcut_label(ctx, sc));
     }
     let checked = match item.id {
         "ui.view.graph" => Some(true),
@@ -309,31 +346,24 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
 
     crate::graph::wire_actions::shortcuts(app, ctx);
 
-    let mut table: Vec<(&'static str, KeyboardShortcut)> = CATALOG.iter().filter_map(|i| Some((i.id, parse_shortcut(i.shortcut?)?))).collect();
-    for c in materialcraft_engine::command_specs() {
-        if table.iter().any(|(id, _)| *id == c.id) {
-            continue;
-        }
-        if let Some(sc) = c.shortcut.and_then(parse_shortcut) {
-            table.push((c.id, sc));
-        }
+    let platform = craft_keymap::egui::platform(ctx);
+    if app.keymap.platform() != platform {
+        app.keymap = keymap(platform);
     }
-
-    // Longer chords take priority
-    table.sort_by_key(|(_, sc)| std::cmp::Reverse(sc.modifiers.ctrl as u8 + sc.modifiers.shift as u8 + sc.modifiers.alt as u8 + sc.modifiers.command as u8));
-    let mut fire: Vec<&str> = Vec::new();
-    ctx.input_mut(|i| {
-        for (id, sc) in &table {
-            if i.consume_shortcut(sc) {
-                fire.push(*id);
-            }
-        }
+    // Selected label text copies through egui's Copy and Cut events, which a hit would remove
+    let label_selected = label_text_selected(ctx);
+    let hits = ctx.input_mut(|i| {
+        app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| !(label_selected && matches!(hit.command.id.as_str(), "edit.copy" | "edit.cut")))
     });
-    for id in fire {
-        if crate::graph::editor_actions::shortcut_enabled(app, id) {
-            invoke(app, ctx, id);
+    for hit in hits {
+        if crate::graph::editor_actions::shortcut_enabled(app, &hit.command.id) {
+            invoke(app, ctx, &hit.command.id);
         }
     }
+}
+
+fn label_text_selected(ctx: &egui::Context) -> bool {
+    ctx.with_plugin::<egui::text_selection::LabelSelectionState, _>(|state| state.has_selection()).unwrap_or(false)
 }
 
 /// Menu items for `ui.menu.list`
@@ -366,5 +396,200 @@ mod tests {
         // Almost every item is live
         let live = CATALOG.iter().filter(|i| i.label != "-" && implemented(i.id)).count();
         assert!(live + 1 >= CATALOG.iter().filter(|i| i.label != "-").count());
+    }
+
+    #[test]
+    fn every_shortcut_is_a_chord_and_the_catalog_wins_a_shared_chord() {
+        for platform in [Platform::Mac, Platform::Windows, Platform::Linux] {
+            let map = keymap(platform);
+            let mut owners = std::collections::BTreeMap::new();
+            for (id, text) in shortcut_table() {
+                let chord = parse_shortcut(text).unwrap_or_else(|| panic!("{id}: {text}"));
+                owners.entry(chord.to_string()).or_insert((id, chord));
+            }
+            for (id, chord) in owners.into_values() {
+                assert_eq!(map.lookup(&chord, false, &Active::NONE), craft_keymap::Lookup::Run(id.into()), "{chord}");
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_in_a_shortcut_text_is_command_on_macos() {
+        let chord = parse_shortcut("Ctrl+Shift+E").unwrap();
+        assert_eq!(chord.display(Platform::Mac), "⇧⌘E");
+        assert_eq!(chord.display(Platform::Windows), "Ctrl+Shift+E");
+    }
+
+    fn dispatched(key: egui::Key, modifiers: egui::Modifiers, app: &mut MaterialCraftApp) {
+        let ctx = egui::Context::default();
+        let input =
+            egui::RawInput { events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }], ..Default::default() };
+        ctx.run_ui(input, |ui| shortcuts(app, ui.ctx())).textures_delta.clear();
+    }
+
+    fn app() -> MaterialCraftApp {
+        MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default())
+    }
+
+    #[test]
+    fn a_shortcut_needs_exactly_its_modifiers() {
+        let mut exact = app();
+        dispatched(egui::Key::N, egui::Modifiers::COMMAND, &mut exact);
+        assert!(exact.ui.windows.new_graph, "Ctrl+N is bound to New graph");
+
+        let mut extra = app();
+        dispatched(egui::Key::N, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, &mut extra);
+        assert!(!extra.ui.windows.new_graph, "Ctrl+Shift+N is not bound");
+    }
+
+    #[test]
+    fn a_longer_chord_runs_its_own_command() {
+        let mut app = app();
+        dispatched(egui::Key::E, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, &mut app);
+        assert!(app.ui.windows.export, "Ctrl+Shift+E opens Export outputs");
+    }
+
+    #[test]
+    fn a_scripted_ctrl_key_runs_its_shortcut() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let frames = crate::control::parse_events(&[serde_json::json!({"type": "key", "key": "N", "modifiers": ["ctrl"]})]).unwrap();
+        for frame in frames {
+            let input = egui::RawInput { events: frame.events, ..Default::default() };
+            ctx.run_ui(input, |ui| shortcuts(&mut app, ui.ctx())).textures_delta.clear();
+        }
+        assert!(app.ui.windows.new_graph);
+    }
+
+    #[test]
+    fn a_held_key_repeats_its_shortcut() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        // egui marks the second press of a key that was never released as a repeat
+        for _ in 0..2 {
+            app.ui.windows.new_graph = false;
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key { key: egui::Key::N, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }],
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| shortcuts(&mut app, ui.ctx())).textures_delta.clear();
+            assert!(app.ui.windows.new_graph, "a held key runs the shortcut again");
+        }
+    }
+
+    #[test]
+    fn shortcuts_wait_while_a_text_field_has_the_keyboard() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let field = egui::Id::unique("field");
+        ctx.run_ui(egui::RawInput::default(), |ui| ui.memory_mut(|m| m.request_focus(field))).textures_delta.clear();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key { key: egui::Key::N, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }],
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| {
+            let mut text = String::new();
+            ui.add(egui::TextEdit::singleline(&mut text).id(field));
+            shortcuts(&mut app, ui.ctx());
+        })
+        .textures_delta
+        .clear();
+        assert!(!app.ui.windows.new_graph);
+    }
+
+    fn press_c(events_after: Vec<egui::Event>) -> egui::RawInput {
+        let mut events = vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+            egui::Event::Key { key: egui::Key::C, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND },
+        ];
+        events.extend(events_after);
+        egui::RawInput { events, ..Default::default() }
+    }
+
+    /// Run a frame with `input` around a selectable label, and report whether egui's Copy event is still there after `shortcuts`
+    fn copy_event_kept(app: &mut MaterialCraftApp, ctx: &egui::Context, input: egui::RawInput) -> bool {
+        let mut kept = false;
+        ctx.run_ui(input, |ui| {
+            shortcuts(app, ui.ctx());
+            kept = ui.input(|i| i.events.contains(&egui::Event::Copy));
+            ui.label("selectable text");
+        })
+        .textures_delta
+        .clear();
+        kept
+    }
+
+    fn select_label_text(ctx: &egui::Context) {
+        let frame = |events: Vec<egui::Event>| {
+            let mut rect = egui::Rect::NOTHING;
+            ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| rect = ui.label("selectable text").rect).textures_delta.clear();
+            rect
+        };
+        let rect = frame(Vec::new());
+        let (from, to) = (rect.left_center() + egui::vec2(1.0, 0.0), rect.right_center() - egui::vec2(1.0, 0.0));
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame(vec![egui::Event::PointerMoved(from)]);
+        frame(vec![button(from, true)]);
+        frame(vec![egui::Event::PointerMoved(to)]);
+        frame(vec![button(to, false)]);
+        frame(Vec::new());
+    }
+
+    #[test]
+    fn the_desktops_copy_event_stays_with_egui() {
+        let mut app = app();
+        app.run("edit.selectAll", serde_json::json!({}));
+        let ctx = egui::Context::default();
+        let kept = copy_event_kept(&mut app, &ctx, egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() });
+        assert!(kept, "selected label text copies through this event");
+        assert!(app.session.clipboard.is_none(), "the desktop's Copy event does not run edit.copy");
+    }
+
+    #[test]
+    fn a_web_copy_press_runs_edit_copy() {
+        let mut app = app();
+        app.dispatcher = craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(true);
+        app.run("edit.selectAll", serde_json::json!({}));
+        let ctx = egui::Context::default();
+        copy_event_kept(&mut app, &ctx, press_c(vec![egui::Event::Copy]));
+        assert!(app.session.clipboard.is_some(), "the web build's press runs edit.copy");
+    }
+
+    #[test]
+    fn selected_label_text_keeps_its_copy_on_the_web() {
+        let mut app = app();
+        app.dispatcher = craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(true);
+        app.run("edit.selectAll", serde_json::json!({}));
+        let ctx = egui::Context::default();
+        select_label_text(&ctx);
+        assert!(label_text_selected(&ctx));
+        assert!(copy_event_kept(&mut app, &ctx, press_c(vec![egui::Event::Copy])), "egui copies the label's text from this event");
+        assert!(app.session.clipboard.is_none(), "the press does not also copy the selected nodes");
+    }
+
+    #[test]
+    fn the_interface_fonts_draw_every_shortcut_label() {
+        for os in [egui::os::OperatingSystem::Mac, egui::os::OperatingSystem::Windows, egui::os::OperatingSystem::Nix] {
+            let ctx = egui::Context::default();
+            ctx.set_os(os);
+            crate::theme::install(&ctx);
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+            for (id, text) in shortcut_table() {
+                let label = shortcut_label(&ctx, text);
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    let font = egui::FontId::new(13.0, family.clone());
+                    assert!(ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, &label)), "{id}: {label} in {family:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn macos_labels_name_the_command_key() {
+        let ctx = egui::Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Cmd+Shift+E");
+        ctx.set_os(egui::os::OperatingSystem::Windows);
+        assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Ctrl+Shift+E");
     }
 }
