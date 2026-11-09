@@ -14,8 +14,9 @@ pub fn main_toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             let (u, r) = (crate::menus::enabled(app, "edit.undo"), crate::menus::enabled(app, "edit.redo"));
+            let modality = crate::shell::modality::Modality::capture(app, &ctx);
             let mut b = |ui: &mut Ui, ic: &str, tip: &str, id: &str, on: bool| {
-                let r = ui.add_enabled_ui(on, |ui| crate::widgets::icon_button(ui, ic, tip, false, 24.0)).inner;
+                let r = ui.add_enabled_ui(on && modality.allows(id), |ui| crate::widgets::icon_button(ui, ic, tip, false, 24.0)).inner;
                 if r.clicked() {
                     crate::menus::invoke(app, &ctx, id);
                 }
@@ -66,4 +67,46 @@ pub fn status_bar(app: &mut MaterialCraftApp, ui: &mut Ui) {
             });
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::kittest::{By, NodeT, Queryable};
+
+    use crate::{MaterialCraftApp, state::UiState};
+
+    fn harness(block: impl FnOnce(&mut MaterialCraftApp)) -> egui_kittest::Harness<'static, MaterialCraftApp> {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+        block(&mut app);
+        let mut fonts_installed = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 100.0)).build_ui_state(
+            move |ui, app: &mut MaterialCraftApp| {
+                if std::mem::replace(&mut fonts_installed, true) {
+                    super::main_toolbar(app, ui);
+                } else {
+                    crate::theme::install(ui.ctx());
+                }
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness
+    }
+
+    fn off(harness: &egui_kittest::Harness<'static, MaterialCraftApp>, label: &str) -> bool {
+        harness.get(By::new().role(egui::accesskit::Role::Button).label_contains(label)).accesskit_node().is_disabled()
+    }
+
+    #[test]
+    fn toolbar_buttons_match_the_commands_a_blocker_allows() {
+        let free = harness(|_| {});
+        assert!(!off(&free, "New graph") && !off(&free, "Open package") && !off(&free, "Save") && !off(&free, "Export"));
+
+        let dialog = harness(|app| app.ui.windows.about = true);
+        assert!(off(&dialog, "New graph") && off(&dialog, "Open package") && off(&dialog, "Save") && off(&dialog, "Export"));
+
+        let file_dialog = harness(|app| app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage));
+        assert!(!off(&file_dialog, "Open package"), "a file dialog leaves Open enabled, which brings it forward");
+        assert!(off(&file_dialog, "Save"));
+    }
 }
