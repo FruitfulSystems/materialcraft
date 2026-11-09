@@ -2,6 +2,69 @@ use materialcraft_engine::{Session, core::Package, execute, file_cmds, formats, 
 use serde_json::json;
 
 #[test]
+fn closing_the_last_package_leaves_no_document_and_opening_does_not_restore_it() {
+    let mut session = Session::new(Package::new("Untitled package"));
+    let closed = session.document_id;
+    execute(&mut session, "package.close", &json!({})).unwrap();
+
+    assert!(session.open_packages().is_empty());
+    assert!(inspect::session(&session, None)["package"].is_null());
+    assert!(session.package(closed).is_err());
+    assert!(execute(&mut session, "package.activate", &json!({"document": closed})).is_err());
+    assert!(file_cmds::save_bytes(&session).is_err());
+    assert!(execute(&mut session, "folder.create", &json!({"name": "Hidden"})).is_err());
+    assert!(execute(&mut session, "file.new", &json!({"template": "invalid"})).is_err());
+    assert!(session.open_packages().is_empty());
+
+    let bytes = formats::sbs::write_sbs(&Package::new("Reopened")).unwrap();
+    file_cmds::open_bytes(&mut session, &bytes, Some("reopened.sbs".into())).unwrap();
+
+    assert_eq!(session.open_packages().len(), 1);
+    assert_ne!(session.document_id, closed);
+    assert_eq!(session.pkg.name, "Reopened");
+
+    execute(&mut session, "package.closeAll", &json!({})).unwrap();
+
+    assert!(session.open_packages().is_empty());
+
+    execute(&mut session, "file.new", &json!({"template": "empty", "name": "New graph"})).unwrap();
+
+    assert_eq!(session.open_packages().len(), 1);
+    assert_eq!(session.graph().unwrap().name, "New graph");
+    assert!(execute(&mut session, "package.close", &json!({})).is_err());
+
+    execute(&mut session, "package.close", &json!({"discard": true})).unwrap();
+
+    assert!(session.open_packages().is_empty());
+    assert!(!session.can_undo());
+
+    execute(&mut session, "file.newPackage", &json!({})).unwrap();
+
+    assert_eq!(session.open_packages().len(), 1);
+}
+
+#[test]
+fn closing_all_packages_checks_edits_and_leaves_no_placeholder() {
+    let mut session = materialcraft_engine::new_session();
+    execute(&mut session, "graph.node.add", &json!({"def": "uniform"})).unwrap();
+    execute(&mut session, "file.newPackage", &json!({"name": "Second"})).unwrap();
+
+    assert!(execute(&mut session, "package.closeAll", &json!({})).is_err());
+    assert_eq!(session.open_packages().len(), 2);
+
+    execute(&mut session, "package.closeAll", &json!({"discard": true})).unwrap();
+
+    assert!(session.open_packages().is_empty());
+    assert!(session.graph().is_err());
+    assert!(!session.can_undo());
+    assert!(!session.modified);
+
+    execute(&mut session, "package.closeAll", &json!({})).unwrap();
+
+    assert!(session.open_packages().is_empty());
+}
+
+#[test]
 fn opening_another_package_preserves_edits_selection_and_undo() {
     let mut session = Session::new(Package::new("First"));
     execute(&mut session, "file.new", &json!({"template": "empty", "name": "Source"})).unwrap();

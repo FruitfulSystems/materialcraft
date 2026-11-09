@@ -21,6 +21,11 @@ pub(crate) enum Then {
     },
     ExportMaterial(GraphRef),
     ImportBitmap(GraphRef),
+    ImportResource {
+        document: u64,
+        vector: bool,
+        folder: String,
+    },
     ExportFolder,
     LoadMesh {
         document: u64,
@@ -65,7 +70,11 @@ pub(crate) fn ask(app: &mut MaterialCraftApp, dialog: FileDialog, then: Then) {
 }
 
 fn save_dialog(app: &MaterialCraftApp) -> FileDialog {
-    FileDialog::save().file_name(format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name))).filter("SBS package", &["sbs"])
+    let archive = app.session.path.as_deref().is_some_and(materialcraft_engine::file_cmds::is_mcraft);
+    let extension = if archive { "mcraft" } else { "sbs" };
+    let name = format!("{}.{extension}", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
+
+    crate::windows::package_dialog(false, archive).file_name(name)
 }
 
 /// File ▸ Save as and Save a copy as: choose where to write the active package
@@ -135,6 +144,15 @@ fn chosen(app: &mut MaterialCraftApp, then: Then, path: &std::path::Path) {
             } else {
                 not_applied(app);
             }
+        }
+        Then::ImportResource { document, vector, folder } => {
+            // A resource picker belongs to the package that opened it, even after another package becomes active
+            if app.run("package.activate", json!({"document": document})).is_none() {
+                return;
+            }
+
+            let command = if vector { "file.importVector" } else { "file.importBitmap" };
+            app.run(command, json!({"path": picked, "folder": folder}));
         }
         Then::ExportFolder => app.ui.export_dir = picked,
         Then::LoadMesh { document } => {

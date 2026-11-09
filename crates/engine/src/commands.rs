@@ -26,6 +26,10 @@ pub(crate) fn always(_: &Session) -> std::result::Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn has_package(s: &Session) -> std::result::Result<(), String> {
+    if s.has_package() { Ok(()) } else { Err("no package is open".into()) }
+}
+
 pub(crate) fn has_graph(s: &Session) -> std::result::Result<(), String> {
     s.graph().map(|_| ()).map_err(|_| "no graph is open".into())
 }
@@ -48,9 +52,11 @@ pub fn command_specs() -> &'static [CommandSpec] {
     SPECS.get_or_init(|| {
         let mut v = Vec::new();
         v.extend(crate::file_cmds::specs());
+        v.extend(crate::resource_commands::specs());
         v.extend(crate::package_commands::specs());
         v.extend(crate::package_file_commands::specs());
         v.extend(crate::folder_commands::specs());
+        v.extend(crate::folder_property_commands::specs());
         v.extend(crate::explorer_clipboard_commands::specs());
         v.extend(crate::graph_instance_commands::specs());
         v.extend(crate::function_library_commands::specs());

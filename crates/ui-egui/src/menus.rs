@@ -24,6 +24,8 @@ const fn sep(menu: &'static str) -> MenuItem {
 pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 
 pub(crate) const EXPLORER_NEW: &[(&str, &str)] = &[("Graph", "ui.newGraph"), ("Function Graph", "ui.newFunctionGraph"), ("Folder", "folder.create")];
+pub(crate) const EXPLORER_IMPORT: &[(&str, &str)] = &[("Bitmap", "file.importBitmap"), ("Vector graphics", "file.importVector")];
+pub(crate) const EXPLORER_RESOURCE: &[(&str, &str)] = &[("Add to graph", "graph.resource.add")];
 pub(crate) const EXPLORER_PACKAGE: &[(&str, &str)] = &[
     ("Reload", "file.reload"),
     ("Save", "file.save"),
@@ -50,6 +52,7 @@ pub const CATALOG: &[MenuItem] = &[
     it("File", "Close all", "ui.closeAll", None),
     sep("File"),
     it("File", "Import bitmap...", "file.importBitmap", None),
+    it("File", "Import vector graphics...", "file.importVector", None),
     it("File", "Export outputs...", "ui.export", Some("Ctrl+Shift+E")),
     it("File", "Export material...", "file.exportMaterial", None),
     it("File", "Send to TextureCraft", "file.sendToTextureCraft", None),

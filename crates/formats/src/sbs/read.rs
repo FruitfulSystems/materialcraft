@@ -1,5 +1,5 @@
 use super::{
-    constant::{MAX_GRAPHS, MAX_SBS_BYTES, MAX_XML_NODES, SNIFF_BYTES},
+    constant::{MAX_GRAPHS, MAX_XML_NODES, SNIFF_BYTES},
     placeholder::report_placeholders,
     sbs_read::SbsRead,
     sbs_reader::SbsReader,
@@ -12,10 +12,6 @@ use roxmltree::Node as XmlNode;
 use std::collections::HashMap;
 
 pub fn read_sbs(bytes: &[u8], name: &str, linked: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<SbsRead> {
-    if bytes.len() > MAX_SBS_BYTES {
-        return Err(FormatError::BadPackage(format!("the SBS file is over the {} MB limit", MAX_SBS_BYTES >> 20)));
-    }
-
     let text = std::str::from_utf8(bytes).map_err(|e| FormatError::BadPackage(format!("the SBS file is not UTF-8 text: {e}")))?;
     let text = text.trim_start_matches('\u{feff}');
     let options = roxmltree::ParsingOptions { allow_dtd: false, nodes_limit: MAX_XML_NODES };
@@ -34,15 +30,8 @@ pub fn read_sbs(bytes: &[u8], name: &str, linked: &dyn Fn(&str) -> Option<Vec<u8
         _ => "Untitled package".to_string(),
     };
 
-    let mut reader = SbsReader {
-        text,
-        warnings: &mut warnings,
-        dependencies: HashMap::new(),
-        graph_names: HashMap::new(),
-        resource_names: HashMap::new(),
-        node_count: 0,
-        resource_bytes: 0,
-    };
+    let mut reader =
+        SbsReader { text, warnings: &mut warnings, dependencies: HashMap::new(), graph_names: HashMap::new(), resource_names: HashMap::new(), node_count: 0 };
     for dependency in child_element(root, "dependencies").into_iter().flat_map(|d| children_named(d, "dependency")) {
         if let (Some(uid), Some(file)) = (child_value(dependency, "uid"), child_value(dependency, "filename")) {
             reader.dependencies.insert(uid.to_string(), file.to_string());

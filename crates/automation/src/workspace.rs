@@ -10,9 +10,6 @@ use serde_json::Value;
 
 use crate::{AutomationError, bad};
 
-/// Largest file read through automation (the mesh importer's own limit)
-pub const MAX_READ_BYTES: u64 = 256 << 20;
-
 /// Separate read and write directory capabilities. A missing authority fails closed
 #[derive(Clone, Default)]
 pub struct AuthorizedWorkspace {
@@ -29,16 +26,14 @@ impl AuthorizedWorkspace {
     pub fn read(&self, path: &str) -> Result<Vec<u8>, AutomationError> {
         let rel = relative_path(path)?;
         let root = self.read.as_ref().ok_or_else(|| denied("read"))?;
-        let file = root.open(&rel).map_err(|e| file_error("read", path, e))?;
-        let meta = file.metadata().map_err(|e| file_error("read", path, e))?;
-        if !meta.is_file() {
+        let mut file = root.open(&rel).map_err(|e| file_error("read", path, e))?;
+        let metadata = file.metadata().map_err(|e| file_error("read", path, e))?;
+        if !metadata.is_file() {
             return Err(bad(format!("not a regular file: `{path}`")));
         }
-        if meta.len() > MAX_READ_BYTES {
-            return Err(bad(format!("`{path}` is {} bytes (limit {MAX_READ_BYTES})", meta.len())));
-        }
+
         let mut bytes = Vec::new();
-        file.take(MAX_READ_BYTES).read_to_end(&mut bytes).map_err(|e| file_error("read", path, e))?;
+        file.read_to_end(&mut bytes).map_err(|e| file_error("read", path, e))?;
         Ok(bytes)
     }
 
@@ -75,6 +70,37 @@ impl AuthorizedWorkspace {
         let rel = relative_path(path)?;
         let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
         root.create_dir_all(&rel).map_err(|e| file_error("create", path, e))
+    }
+
+    /// Stage an immutable project asset without overwriting another package's resources.
+    pub fn write_resource(&self, path: &str, bytes: &[u8]) -> Result<(), AutomationError> {
+        let rel = relative_path(path)?;
+        let root = self.write.as_ref().ok_or_else(|| denied("write"))?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        match root.open_with(&rel, &options) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+                    let _ = root.remove_file(&rel);
+                    return Err(file_error("write", path, error));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let file = root.open(&rel).map_err(|error| file_error("read", path, error))?;
+                let metadata = file.metadata().map_err(|error| file_error("read", path, error))?;
+                if !metadata.is_file() || metadata.len() != bytes.len() as u64 {
+                    return Err(bad(format!("Resource filename collision: `{path}`")));
+                }
+
+                let mut existing = Vec::new();
+                file.take(bytes.len() as u64 + 1).read_to_end(&mut existing).map_err(|error| file_error("read", path, error))?;
+                if existing != bytes {
+                    return Err(bad(format!("Resource filename collision: `{path}`")));
+                }
+            }
+            Err(error) => return Err(file_error("write", path, error)),
+        }
+        Ok(())
     }
 }
 

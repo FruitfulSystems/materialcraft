@@ -13,6 +13,7 @@ pub(crate) struct GraphPropertyDraft {
 
 impl GraphPropertyDraft {
     pub fn commit(app: &mut MaterialCraftApp) {
+        super::FolderPropertyDraft::commit(app);
         let Some(draft) = app.graph_property_draft.take() else { return };
         if draft.text == draft.original || draft.target.get(&app.session).is_err() {
             return;

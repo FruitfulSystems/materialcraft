@@ -19,8 +19,6 @@ pub fn reader(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use std::io::Read;
-            const MAX_LINKED_FILE_BYTES: u64 = 256 << 20;
             let relative = reference.trim().replace('\\', "/");
             let plain = !relative.is_empty() && !relative.contains(':') && !relative.starts_with('/');
             if !plain || std::path::Path::new(&relative).components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
@@ -30,14 +28,11 @@ pub fn reader(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> + use<> {
             let folder = folder.as_ref()?;
             let file = std::fs::canonicalize(folder.join(&relative)).ok()?;
             let metadata = std::fs::metadata(&file).ok()?;
-            if !file.starts_with(folder) || !metadata.is_file() || metadata.len() > MAX_LINKED_FILE_BYTES {
+            if !file.starts_with(folder) || !metadata.is_file() {
                 return None;
             }
 
-            // Bound the read even if a linked file grows after the metadata check
-            let mut bytes = Vec::new();
-            std::fs::File::open(file).ok()?.take(MAX_LINKED_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
-            (bytes.len() as u64 <= MAX_LINKED_FILE_BYTES).then_some(bytes)
+            std::fs::read(file).ok()
         }
         #[cfg(target_arch = "wasm32")]
         None

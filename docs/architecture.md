@@ -17,7 +17,7 @@ L1  nodes     30 main-graph entries (NodeDefinition), 85 function operations, fo
 L2  eval      cooking: topological order, output sizes (relative to input / parent, absolute, preview
               cap), parameter resolution (defaults, overrides, bindings to exposed inputs), the
               content-addressed LRU cache, graph instances (sub-graphs, recursion-guarded)
-L2  formats   native .sbs packages, .mcmat portable materials, bitmap/SVG decode,
+L2  formats   native .sbs packages, .mcraft ZIP packages, .mcmat portable materials, bitmap/SVG decode,
               texture encode (PNG/JPEG/TGA/TIFF/BMP/WEBP/EXR/HDR), atomic writes
 L3  engine    Session (open packages, active graph, selection, 2D/3D view state, snapshot undo, cache),
               the command registry, inspect, sample materials and graph templates
@@ -225,10 +225,43 @@ while discrete edits always receive their own undo entry.
 
 ## Files
 
-SBS is the project format. The codec writes native filters, ports, parameters, function graphs,
-pattern graphs and resources directly, without a private payload. Unsupported imports produce
-warnings; unknown nodes remain placeholders. Library reference loading is not part of the current
-primitive workflow. `.mcraft` is no longer supported.
+SBS XML is the document representation. A native `.sbs` saves assets in an adjacent `resources/`
+directory and references them with relative paths. A `.mcraft` is a ZIP containing the fixed root
+entry `package.sbs` and `resources/`, with no manifest or private graph payload. Both formats open,
+save, reload and save copies independently. The same clean-room SBS codec writes native filters,
+ports, parameters, function graphs, pattern graphs and resources. Unsupported imports produce
+warnings; unknown nodes remain placeholders.
+
+`formats::project::ProjectFiles` builds either representation without changing the live package.
+Imports retain original bytes in snapshot history, including before the first save. Content-based
+asset filenames avoid overwriting resources shared by another SBS and allow the XML to be replaced
+last. Missing assets cause saving to fail. Existing unreferenced files are left in place. Archives
+are read in memory and validate paths, duplicate entries, symlinks and malformed data. Project I/O
+and resource imports impose no fixed file-size, resource-count or linked-package-count ceilings.
+Referenced packages are included under `resources/packages/`;
+unresolved installed-library aliases retain their `sbs://` references. Autosaves use `.mcraft`.
+
+Explorer shows its reserved Resources folder once it contains assets or subfolders. Its Import
+submenu accepts bitmaps or SVG vector graphics into the selected asset folder. Subfolders can be
+created, renamed and removed; graph creation and graph-folder moves into this tree are rejected.
+The root Resources name is reserved regardless of capitalization and cannot be renamed, copied, moved or
+removed. Import creates an asset; dragging it onto the canvas or choosing Add to graph creates the
+appropriate bitmap or SVG node. Drops from another open package copy the asset into the destination
+in one undo step. Imported native SBS groups retain their original resource placement for round-trip
+fidelity. Folder Properties exposes Identifier and Description; descriptions persist in native SBS
+group `desc` elements, including inside MCRAFT. The reserved root identifier is read-only.
+
+Bitmap imports support DDS, WebP, GIF, HDR, EXR, JPEG, PGM, PNG, TIFF, Targa and BMP. DDS uses the
+MIT OR Apache-2.0 `dds` decoder; GIF and ASCII/binary PGM use `image`. GIF loads its first frame;
+DDS loads its first surface at the largest mip level. Each bitmap format has its own picker filter,
+and vector import offers SVG only. Both pickers include All formats, restricted to their supported
+extensions, and descriptive names with extension patterns. Open offers SBS XML Package and
+MaterialCraft Project plus All formats; Save As offers those two formats separately.
+
+The browser downloads `.mcraft` directly. SBS downloads use a transport ZIP containing the named
+SBS and its adjacent resources; extract it to work with the native files. Both forms can be opened
+in the browser. A bare SBS can load embedded assets, but browser file pickers cannot automatically
+read adjacent files; use the SBS transport ZIP to include those assets.
 
 The SBS `read` and `write` modules expose codec entry points. `SbsReader` and `SbsWriter` own
 serialization state; focused helpers handle values, functions, patterns and canvas annotations.

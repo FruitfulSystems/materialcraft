@@ -25,15 +25,17 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         if crate::widgets::icon_button(ui, icon::FOLDER_OPEN, tr("Open package..."), false, 22.0).clicked() {
             crate::menus::invoke(app, ui.ctx(), "file.open");
         }
-        if crate::widgets::icon_button(ui, icon::FLOPPY_DISK, tr("Save package"), false, 22.0).clicked() {
-            crate::menus::invoke(app, ui.ctx(), "file.save");
-        }
-        if crate::widgets::icon_button(ui, icon::EXPORT, tr("Export outputs..."), false, 22.0).clicked() {
-            app.ui.windows.export = true;
-        }
-        if crate::widgets::icon_button(ui, icon::IMAGE, tr("Import bitmap..."), false, 22.0).clicked() {
-            crate::menus::invoke(app, ui.ctx(), "file.importBitmap");
-        }
+        ui.add_enabled_ui(app.session.has_package(), |ui| {
+            if crate::widgets::icon_button(ui, icon::FLOPPY_DISK, tr("Save package"), false, 22.0).clicked() {
+                crate::menus::invoke(app, ui.ctx(), "file.save");
+            }
+            if crate::widgets::icon_button(ui, icon::EXPORT, tr("Export outputs..."), false, 22.0).clicked() {
+                app.ui.windows.export = true;
+            }
+            if crate::widgets::icon_button(ui, icon::IMAGE, tr("Import bitmap..."), false, 22.0).clicked() {
+                crate::windows::import_resource(app, ui.ctx(), false);
+            }
+        });
     });
     ui.add_space(2.0);
     let context = ui.ctx().clone();
@@ -45,6 +47,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         assignment: None,
         movement: None,
         inspected_graph: None,
+        inspected_folder: None,
     };
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         for (document, package, path, modified) in tree.session.open_packages() {
@@ -55,15 +58,24 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let opened_node = tree.opened_node;
     let assignment = tree.assignment;
     let movement = tree.movement;
+    let inspected_folder = tree.inspected_folder;
     if let Some(target) = tree.inspected_graph {
         crate::properties::GraphPropertyDraft::commit(app);
         app.inspected_graph = Some(target);
+        app.inspected_folder = None;
+        app.ui.dock.focus(crate::docking::Panel::Properties);
+    }
+    if let Some(target) = inspected_folder {
+        crate::properties::GraphPropertyDraft::commit(app);
+        app.inspected_folder = Some(target);
+        app.inspected_graph = None;
         app.ui.dock.focus(crate::docking::Panel::Properties);
     }
     if let Some((document, index, node)) = opened_node {
         if !actions::activate(app, document) {
             return;
         }
+
         if index != app.session.graph && app.run("graph.open", json!({"graph": index})).is_none() {
             return;
         }
@@ -71,6 +83,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         app.pattern_editor = None;
         crate::properties::GraphPropertyDraft::commit(app);
         app.inspected_graph = None;
+        app.inspected_folder = None;
         app.function_editor = None;
         app.run("graph.annotation.select", json!({}));
         app.run("graph.select", json!({"ids": [node.0]}));

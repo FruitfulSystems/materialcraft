@@ -200,13 +200,15 @@ impl MaterialCraftMcp {
     }
 
     #[tool(
-        description = "Open an .sbs package (path relative to the read root). Returns the session; `package.warnings` lists what an SBS file holds that MaterialCraft can't read yet (missing nodes are kept as placeholders)."
+        description = "Open an .sbs or .mcraft package (path relative to the read root). Returns the session; `package.warnings` lists unsupported content (missing nodes are kept as placeholders)."
     )]
     async fn package_open(&self, Parameters(p): Parameters<PathParams>) -> Result<CallToolResult, McpError> {
         to_result(self.call("package.open", params(&p)).await)
     }
 
-    #[tool(description = "Save the package (path relative to the write root; omit to save to its own file). Saves native SBS (.sbs).")]
+    #[tool(
+        description = "Save the package (path relative to the write root; omit to save to its own file). Writes .sbs XML with adjacent resources/ or a self-contained .mcraft ZIP."
+    )]
     async fn package_save(&self, Parameters(p): Parameters<SaveParams>) -> Result<CallToolResult, McpError> {
         to_result(self.call("package.save", params(&p)).await)
     }

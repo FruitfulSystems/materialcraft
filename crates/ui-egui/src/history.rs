@@ -1,6 +1,10 @@
 use crate::MaterialCraftApp;
 
 pub(crate) fn document(app: &MaterialCraftApp) -> u64 {
+    if let Some((document, _)) = &app.inspected_folder {
+        return *document;
+    }
+
     app.inspected_graph.filter(|target| target.get(&app.session).is_ok()).map_or(app.session.document_id, |target| target.document)
 }
 

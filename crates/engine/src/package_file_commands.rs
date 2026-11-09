@@ -1,6 +1,6 @@
 use crate::{
     Result, Session, cmd,
-    commands::{CommandSpec, always, bad},
+    commands::{CommandSpec, bad, has_package},
 };
 use serde_json::{Value, json};
 
@@ -15,7 +15,15 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             |session| { session.path.as_ref().map(|_| ()).ok_or_else(|| "the package has no file to reload".into()) },
             reload
         ),
-        cmd!("file.saveCopyAs", "Save a copy as...", [], None, "{path} writes an SBS copy without changing the current path or saved state", always, save_copy),
+        cmd!(
+            "file.saveCopyAs",
+            "Save a copy as...",
+            [],
+            None,
+            "{path} writes an SBS or MaterialCraft copy without changing the current path or saved state",
+            has_package,
+            save_copy
+        ),
     ]
 }
 
@@ -23,12 +31,14 @@ fn reload(session: &mut Session, parameters: &Value) -> Result<Value> {
     if session.modified && parameters.get("discard").and_then(Value::as_bool) != Some(true) {
         return Err(bad("file.reload", "save the package or explicitly discard its edits"));
     }
+
     let path = session.path.clone().ok_or_else(|| bad("file.reload", "the package has no file to reload"))?;
     let bytes = read_package(&path)?;
     let linked = crate::file_cmds::linked_files(&path);
-    let mut read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &linked)?;
-    crate::linked_files::normalize_references(&mut read.pkg, &path);
-    read.pkg.dependencies = session.pkg.dependencies.clone();
+    let mut read = crate::file_cmds::read_package_bytes(&bytes, &path, &linked)?;
+    for (path, source) in &session.pkg.dependencies {
+        read.pkg.dependencies.entry(path.clone()).or_insert_with(|| source.clone());
+    }
     let safe_path = read.warnings.is_empty().then_some(path.clone());
     read.warnings.extend(crate::linked_files::load(&mut read.pkg));
 
@@ -45,13 +55,7 @@ fn read_package(path: &str) -> Result<Vec<u8>> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        std::fs::File::open(path).and_then(|file| file.take((256 << 20) + 1).read_to_end(&mut bytes)).map_err(|error| bad("file.reload", error.to_string()))?;
-        if bytes.len() > 256 << 20 {
-            return Err(bad("file.reload", "the package exceeds 256 MiB"));
-        }
-        Ok(bytes)
+        std::fs::read(path).map_err(|error| bad("file.reload", error.to_string()))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("file.reload", "reopen local browser files with the file picker"))
@@ -66,9 +70,9 @@ fn save_copy(session: &mut Session, parameters: &Value) -> Result<Value> {
     if path.contains("://") || session.open_packages().iter().any(|entry| entry.2 == Some(path.as_str())) {
         return Err(bad("file.saveCopyAs", "choose a local file that is not already open"));
     }
-    let bytes = crate::file_cmds::save_bytes_at(session, Some(&path))?;
-    materialcraft_formats::write_atomic(std::path::Path::new(&path), &bytes)?;
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+
+    let bytes = crate::file_cmds::write_package_at(session, &path)?;
+    Ok(json!({"path": path, "bytes": bytes}))
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -23,6 +23,8 @@ pub struct MaterialCraftApp {
     pub pattern_editor: Option<pattern::PatternEditor>,
     pub function_editor: Option<function::FunctionEditor>,
     pub(crate) inspected_graph: Option<materialcraft_engine::GraphTarget>,
+    pub(crate) inspected_folder: Option<(u64, String)>,
+    pub(crate) folder_property_draft: Option<crate::properties::FolderPropertyDraft>,
     pub(crate) graph_property_draft: Option<crate::properties::GraphPropertyDraft>,
     pub(crate) graph_parents: Vec<graph::graph_parent::GraphParent>,
     /// Synthetic input from the control channel, fed to egui on the next frames
@@ -47,7 +49,6 @@ pub struct MaterialCraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) dialogs: crate::native_dialogs::Dialogs,
     /// The held action waiting for the Save dialog the unsaved-changes prompt opened
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) awaiting_save: Option<crate::unsaved::Guarded>,
     /// The window buttons to draw when the app draws the window frame; `None` while the desktop draws it (desktop only)
     #[cfg(not(target_arch = "wasm32"))]
@@ -94,6 +95,8 @@ impl MaterialCraftApp {
             view2d: view2d::View2dState::default(),
             function_editor: None,
             inspected_graph: None,
+            inspected_folder: None,
+            folder_property_draft: None,
             graph_property_draft: None,
             graph_parents: Vec::new(),
             pattern_editor: None,
@@ -210,6 +213,8 @@ impl MaterialCraftApp {
             self.graph.inspected_node = None;
             self.inspected_graph = None;
             self.graph_property_draft = None;
+            self.inspected_folder = None;
+            self.folder_property_draft = None;
             self.graph_parents.clear();
             self.pattern_editor = None;
             self.function_editor = None;
@@ -226,6 +231,14 @@ impl MaterialCraftApp {
     }
 
     pub(crate) fn reconcile_editors(&mut self) {
+        if self
+            .inspected_folder
+            .as_ref()
+            .is_some_and(|(document, path)| !self.session.package(*document).is_ok_and(|package| package.folder_paths().contains(path)))
+        {
+            self.inspected_folder = None;
+            self.folder_property_draft = None;
+        }
         if self.inspected_graph.is_some_and(|target| target.get(&self.session).is_err()) {
             self.inspected_graph = None;
         }
@@ -252,17 +265,23 @@ impl MaterialCraftApp {
             self.next_autosave = now + period;
             return;
         }
+
         if now < self.next_autosave {
             return;
         }
+
         self.next_autosave = now + period;
         let dir = user_dir("autosave");
-        let path = dir.join(format!("{}.sbs", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));
+        let path = dir.join(format!("{}.mcraft", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));
         let pkg = self.session.pkg.clone();
         let spawned = std::thread::Builder::new().name("materialcraft-autosave".into()).spawn(move || {
             let result = std::fs::create_dir_all(&dir)
                 .map_err(|e| e.to_string())
-                .and_then(|_| materialcraft_engine::formats::sbs::write_sbs(&pkg).map_err(|e| e.to_string()))
+                .and_then(|_| {
+                    materialcraft_engine::formats::project::ProjectFiles::build(&pkg, "autosave.mcraft", true)
+                        .and_then(|files| files.zip())
+                        .map_err(|e| e.to_string())
+                })
                 .and_then(|bytes| materialcraft_engine::formats::write_atomic(&path, &bytes).map_err(|e| e.to_string()));
             match result {
                 Ok(()) => log::info!("autosaved {}", path.display()),

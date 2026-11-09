@@ -5,6 +5,10 @@ use std::sync::Arc;
 
 /// Decode image file bytes into a linear float image (8-bit color is sRGB-decoded; grayscale files stay grayscale)
 pub fn decode(bytes: &[u8], linear: bool) -> Result<Image> {
+    if bytes.starts_with(b"DDS ") {
+        return guard(|| crate::dds_image::decode(bytes, linear), || FormatError::Image("DDS decoder failed".into()));
+    }
+
     if std::str::from_utf8(bytes.get(..bytes.len().min(4096)).unwrap_or_default()).is_ok_and(|text| text.contains("<svg")) {
         return guard(|| crate::svg::decode(bytes), || FormatError::Image("SVG decoder failed".into()));
     }
@@ -30,6 +34,7 @@ pub fn decode(bytes: &[u8], linear: bool) -> Result<Image> {
     if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
         return Err(FormatError::Image(format!("{w}x{h} is outside 1..={MAX_SIDE} pixels")));
     }
+
     let img = guard(|| open()?.decode().map_err(image_error), failed)?;
     let gray = matches!(img.color(), image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16);
     let float = matches!(img.color(), image::ColorType::Rgb32F | image::ColorType::Rgba32F);
@@ -38,6 +43,7 @@ pub fn decode(bytes: &[u8], linear: bool) -> Result<Image> {
         let data: Vec<f32> = l.pixels().map(|p| p.0[0] as f32 / 65535.0).collect();
         return Ok(Image { w, h, kind: Kind::Gray, data: Arc::new(data) });
     }
+
     let mut data = img.into_rgba32f().into_raw();
     if !(float || linear) {
         for px in data.chunks_exact_mut(4) {

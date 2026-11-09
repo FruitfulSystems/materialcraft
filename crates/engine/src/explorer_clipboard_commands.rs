@@ -1,6 +1,6 @@
 use crate::{
     ExplorerClipboard, Result, Session, cmd,
-    commands::{CommandSpec, always, bad, strp},
+    commands::{CommandSpec, bad, has_package, strp},
     folder_path,
 };
 use materialcraft_core::{Package, Value as GraphValue};
@@ -9,14 +9,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("explorer.copy", "Copy Explorer item", [], None, "{graph? index, folder?} copies a graph, folder subtree, or package contents", always, copy),
+        cmd!("explorer.copy", "Copy Explorer item", [], None, "{graph? index, folder?} copies a graph, folder subtree, or package contents", has_package, copy),
         cmd!(
             "explorer.paste",
             "Paste Explorer item",
             [],
             None,
             "{folder?} pastes into a folder or the package root, with unique names",
-            |session| { if session.explorer_clipboard.is_some() { Ok(()) } else { Err("the Explorer clipboard is empty".into()) } },
+            |session| {
+                has_package(session)?;
+                if session.explorer_clipboard.is_some() { Ok(()) } else { Err("the Explorer clipboard is empty".into()) }
+            },
             paste
         ),
     ]
@@ -31,11 +34,13 @@ fn copy(session: &mut Session, parameters: &Value) -> Result<Value> {
     if graph.is_some() && folder.is_some() {
         return Err(bad("explorer.copy", "select one graph or folder"));
     }
+
     if let Some(index) = graph {
         session.pkg.graph(index)?;
     }
     if let Some(folder) = &folder {
         folder_path::require(&session.pkg, folder)?;
+        folder_path::require_graph_folder(folder)?;
     }
 
     session.explorer_clipboard =
@@ -46,6 +51,7 @@ fn copy(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "folder").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
+    folder_path::require_graph_folder(parent)?;
     let clipboard = session.explorer_clipboard.as_ref().ok_or_else(|| bad("explorer.paste", "the Explorer clipboard is empty"))?;
     let mut incoming = clipboard.source.clone();
     incoming.graphs = clipboard
@@ -76,6 +82,11 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
     let mut destination = session.pkg.clone();
     let mut folder_names = BTreeMap::new();
     for folder in &folders {
+        if folder_path::is_resources(folder) {
+            folder_names.insert(folder.clone(), folder.clone());
+            continue;
+        }
+
         let (source_parent, leaf) = folder.rsplit_once('/').unwrap_or(("", folder));
         let target_parent = folder_names.get(source_parent).map(String::as_str).unwrap_or(parent);
         let new = folder_path::join(target_parent, &folder_path::unique(&destination, target_parent, leaf));
@@ -84,6 +95,8 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
         folder_names.insert(folder.clone(), new);
     }
     incoming.folders = folder_names.values().cloned().collect();
+    incoming.folder_descriptions =
+        incoming.folder_descriptions.into_iter().filter_map(|(path, description)| folder_names.get(&path).map(|new| (new.clone(), description))).collect();
     let mut paths = BTreeMap::new();
     for graph in &mut incoming.graphs {
         let old = graph.sbs_path();
@@ -98,6 +111,7 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
             if !instance.package.is_empty() {
                 continue;
             }
+
             if let Some(new) = names.get(&instance.graph) {
                 instance.graph = new.clone();
             } else if clipboard.document != session.document_id {
@@ -146,6 +160,9 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
         let count = incoming.graphs.len();
         session.pkg.graphs.extend(incoming.graphs);
         session.pkg.folders.extend(incoming.folders);
+        for (path, description) in incoming.folder_descriptions {
+            session.pkg.folder_descriptions.entry(path).or_insert(description);
+        }
         session.pkg.resources.extend(incoming.resources);
         if count > 0 {
             session.graph = first;

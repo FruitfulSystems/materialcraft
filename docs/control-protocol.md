@@ -298,8 +298,11 @@ each has its own reader and writer (`crates/formats/src/material.rs` here), so k
 | `file.exportMaterial` | `{path, graph?, size? (px), values? {input: value}, inputs? {identifier: image path}}`: cook and write a `.mcmat`. TextureCraft runs `materialcraft-cli run source.sbs file.exportMaterial {...}` to re-cook at its texture set's resolution with its own values and baked mesh maps |
 | `file.sendToTextureCraft` | `{graph?}`: export into TextureCraft's library folder (`Documents/TextureCraft/library`), where its shelf lists it |
 | `graph.input.bind` / `graph.input.unbind` | `{identifier, resource? \| path?, linear?}` / `{identifier}`: a preview image for an input node (a mesh map exported from TextureCraft), saved in the package |
-| `file.open` | opens native `.sbs` packages, and a `.mcmat`'s source package, on its graph, with no file name. Returns `warnings`: what an SBS file holds that MaterialCraft can't read yet (missing nodes are kept as placeholders); also in `session.inspect` as `package.warnings` |
-| `file.save` | `{path?}`: native SBS; `.sbs` is appended when the path does not end in `.sbs` |
+| `file.open` | `{path}` opens `.sbs` XML or an independent `.mcraft` ZIP. Also opens a `.mcmat`'s source without a save path. Returns `warnings` for unsupported content; also in `session.inspect` as `package.warnings` |
+| `file.save` / `file.saveAs` / `file.saveCopyAs` | `{path?}` / `{path}` / `{path}`: `.sbs` writes XML and adjacent `resources/`; `.mcraft` writes a ZIP containing `package.sbs` and `resources/`. Unrecognized extensions get `.sbs` appended. Save Copy preserves the active path and modified state |
+| `file.importBitmap` / `file.importVector` | `{path, name?, folder?}` imports a supported bitmap / SVG into Resources or a subfolder without adding a node. Unsaved imports and their original bytes participate in undo. `session.inspect` reports resource name, folder, file, byte count and missing status |
+| `graph.resource.add` | `{resource, document?, at?}` places a resource from the source document on the active material graph. Cross-document drops copy the asset; resource and node creation undo together |
+| `folder.properties` / `folder.attributes` | `{folder, document?}` reads Identifier/Description; add `identifier?` and/or `description?` to edit. Folder attributes persist as native SBS group identifiers and descriptions. The reserved root Resources identifier cannot change |
 | `library.functions` | `{filter?}`: list reusable SBS functions with package URI, full graph path, typed ports and missing status |
 | `library.function.add` | `{graph, package? (default: sbs://functions.sbs), function?: FunctionGraphTarget, at?, snapToGrid?}`: insert a reference into the active Function or processor canvas |
 

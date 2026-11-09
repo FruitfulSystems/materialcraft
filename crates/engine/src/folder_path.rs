@@ -39,18 +39,50 @@ pub(crate) fn contains(parent: &str, path: &str) -> bool {
     path == parent || path.strip_prefix(parent).is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+pub(crate) fn is_resources(path: &str) -> bool {
+    path.split('/').next().is_some_and(|name| name.eq_ignore_ascii_case("Resources"))
+}
+
+pub(crate) fn require_graph_folder(path: &str) -> Result<()> {
+    // Resources is a reserved asset container; commands must enforce the same rule as Explorer
+    if is_resources(path) {
+        return Err(bad("explorer", "Resources is reserved for assets"));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn require_resource_folder(package: &Package, path: &str) -> Result<()> {
+    require(package, path)?;
+    if !is_resources(path) {
+        return Err(bad("explorer", "Assets belong in Resources or one of its subfolders"));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn require_mutable_folder(path: &str) -> Result<()> {
+    if path.eq_ignore_ascii_case("Resources") {
+        return Err(bad("explorer", "The root Resources folder is reserved"));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn unique(package: &Package, parent: &str, base: &str) -> String {
     let occupied = package.folder_paths();
     let free = |name: &str| {
-        !occupied.contains(&join(parent, name))
-            && !package.graphs.iter().any(|graph| graph.folder == parent && graph.name == name)
-            && !package.resources.iter().any(|resource| resource.folder == parent && resource.name == name)
+        !(parent.is_empty() && name.eq_ignore_ascii_case("Resources")
+            || occupied.contains(&join(parent, name))
+            || package.graphs.iter().any(|graph| graph.folder == parent && graph.name == name)
+            || package.resources.iter().any(|resource| resource.folder == parent && resource.name == name))
     };
     if free(base) {
         return base.to_string();
     }
 
     let numbered = base.rsplit_once('_').and_then(|(stem, number)| number.parse::<u64>().ok().map(|number| (stem, number)));
+
     // One more candidate than occupied items guarantees a free name without an unbounded search
     let attempts = occupied.len().saturating_add(package.graphs.len()).saturating_add(package.resources.len()).saturating_add(1);
     (1..=attempts)

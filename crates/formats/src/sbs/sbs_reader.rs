@@ -1,7 +1,7 @@
 use super::base_parameters::read_base_params;
 use super::component_usage;
 use super::connection::connect_all;
-use super::constant::{MAX_NODES, MAX_RESOURCES};
+use super::constant::MAX_NODES;
 use super::constant::{NODE_HALF_SIZE, SELF_DEPENDENCY};
 use super::embedded::decode_embedded;
 use super::filter_map::{BASE_PARAMS, FilterMap, HANDLED_PARAMS, filter_by_sbs_name};
@@ -27,7 +27,6 @@ pub(super) struct SbsReader<'text, 'warnings> {
     pub(super) graph_names: HashMap<String, String>,
     pub(super) resource_names: HashMap<String, String>,
     pub(super) node_count: usize,
-    pub(super) resource_bytes: usize,
 }
 
 impl<'text> SbsReader<'text, '_> {
@@ -62,11 +61,13 @@ impl<'text> SbsReader<'text, '_> {
                         }
 
                         pkg.folders.push(path.clone());
+                        if let Some(description) = child_value(item, "desc").filter(|text| !text.is_empty()) {
+                            pkg.folder_descriptions.insert(path.clone(), description.into());
+                        }
                         if let Some(group_content) = child_element(item, "content") {
                             pending.push((path, group_content));
                         }
                     }
-                    "resource" if pkg.resources.len() >= MAX_RESOURCES => self.warnings.add(format!("only the first {MAX_RESOURCES} resources were read")),
                     "resource" => self.read_resource(item, &identifier, &path, pkg, linked),
                     "mdl_graph" | "mdlGraph" => self.warnings.add(format!("MDL graph `{path}` is not supported")),
                     other => self.warnings.add(format!("package item <{other}> `{path}` is not supported")),
@@ -76,7 +77,6 @@ impl<'text> SbsReader<'text, '_> {
     }
 
     pub(super) fn read_resource(&mut self, item: XmlNode, identifier: &str, path: &str, pkg: &mut Package, linked: &dyn Fn(&str) -> Option<Vec<u8>>) {
-        let remaining = super::constant::MAX_PACKAGE_BYTES.saturating_sub(self.resource_bytes).min(super::constant::MAX_EMBEDDED_BYTES);
         let kind = child_value(item, "type").unwrap_or("bitmap");
         let format = child_value(item, "format").unwrap_or("png").trim().to_ascii_lowercase();
         let source = child_element(item, "source");
@@ -89,7 +89,7 @@ impl<'text> SbsReader<'text, '_> {
         let mut why_missing = String::new();
 
         if let Some(embedded) = source.and_then(|s| child_element(s, "binembedded")) {
-            match decode_embedded(child_value(embedded, "strdata").unwrap_or(""), remaining) {
+            match decode_embedded(child_value(embedded, "strdata").unwrap_or("")) {
                 Ok(data) => bytes = Some(data),
                 Err(e) => why_missing = format!("its embedded data is damaged ({e})"),
             }
@@ -102,6 +102,7 @@ impl<'text> SbsReader<'text, '_> {
                     why_missing = format!("it links to `{file}`, which is not available");
                     continue;
                 }
+
                 match linked(file) {
                     Some(data) => {
                         bytes = Some(data);
@@ -116,9 +117,7 @@ impl<'text> SbsReader<'text, '_> {
         let name = unique_name(&taken, if identifier.is_empty() { "resource" } else { identifier });
         self.resource_names.insert(path.to_string(), name.clone());
         match bytes {
-            Some(data) if data.len() > remaining => self.warnings.add(format!("resource `{path}` exceeds the remaining {remaining}-byte package budget")),
             Some(data) => {
-                self.resource_bytes += data.len();
                 let ext = if kind == "svg" { "svg".to_string() } else { format };
 
                 let mut resource = Resource::new(name.clone(), crate::safe_file_name(&format!("{name}.{ext}")), ResourceBytes::new(data));
@@ -136,6 +135,7 @@ impl<'text> SbsReader<'text, '_> {
             }
         }
     }
+
     pub(super) fn resolve_reference(&self, url: &str) -> (String, Option<String>) {
         let url = url.trim();
         let rest = url.strip_prefix("pkg:///").or_else(|| url.strip_prefix("pkg://")).unwrap_or(url);

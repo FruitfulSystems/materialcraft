@@ -7,7 +7,6 @@ use egui::{Color32, RichText, TextureHandle, Ui, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
-use materialcraft_engine::formats::material::MATERIAL_EXT;
 use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
@@ -97,6 +96,8 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     crate::unsaved::show(app, ctx);
     crate::explorer::dialogs(app, ctx);
+    #[cfg(target_arch = "wasm32")]
+    crate::web_files::save_dialog(app, ctx);
     #[cfg(not(target_arch = "wasm32"))]
     crate::updates_ui::show(app, ctx);
 }
@@ -509,8 +510,71 @@ pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, p
     });
 }
 
-/// Extensions File ▸ Open reads: SBS packages, and materials (their source package)
-pub const OPEN_EXTS: &[&str] = &["sbs", MATERIAL_EXT];
+/// Project formats offered by File ▸ Open.
+pub const OPEN_EXTS: &[&str] = &["sbs", "mcraft"];
+
+pub(crate) fn package_filters(open: bool, archive: bool) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut filters: Vec<(&str, &[&str])> = vec![("SBS XML Package (*.sbs)", &["sbs"]), ("MaterialCraft Project (*.mcraft)", &["mcraft"])];
+    if archive {
+        filters.reverse();
+    }
+    if open {
+        filters.insert(0, ("All formats (*.sbs *.mcraft)", OPEN_EXTS));
+    }
+    filters
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn package_dialog(open: bool, archive: bool) -> craft_dialogs::FileDialog {
+    let mut dialog = if open { craft_dialogs::FileDialog::open() } else { craft_dialogs::FileDialog::save() };
+    for (name, extensions) in package_filters(open, archive) {
+        dialog = dialog.filter(name, extensions);
+    }
+
+    dialog
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resource_dialog(vector: bool) -> craft_dialogs::FileDialog {
+    let mut dialog = craft_dialogs::FileDialog::open();
+    for (label, extensions) in resource_filters(vector) {
+        dialog = dialog.filter(label, extensions);
+    }
+
+    dialog
+}
+
+pub(crate) fn resource_filters(vector: bool) -> Vec<(String, &'static [&'static str])> {
+    use materialcraft_engine::formats::{BITMAP_FORMATS, VECTOR_FORMATS};
+    let formats = if vector { VECTOR_FORMATS } else { BITMAP_FORMATS };
+    formats
+        .iter()
+        .map(|(label, extensions)| {
+            let patterns = extensions.iter().map(|extension| format!("*.{extension}")).collect::<Vec<_>>().join(" ");
+            (format!("{label} ({patterns})"), *extensions)
+        })
+        .collect()
+}
+
+/// Import an asset into the active package without creating a graph node.
+pub fn import_resource(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: bool) {
+    import_resource_into(app, ctx, vector, "Resources");
+}
+
+pub(crate) fn import_resource_into(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: bool, folder: &str) {
+    if !app.session.has_package() {
+        return;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = ctx;
+        let then = crate::native_dialogs::Then::ImportResource { document: app.session.document_id, vector, folder: folder.to_string() };
+        crate::native_dialogs::ask(app, resource_dialog(vector), then);
+    }
+    #[cfg(target_arch = "wasm32")]
+    crate::web_files::import_resource(ctx, app.session.document_id, vector, folder);
+}
 
 /// After a package opened with warnings (an SBS file using nodes MaterialCraft lacks, say), bring the Console forward
 pub fn after_open(app: &mut MaterialCraftApp) {
@@ -523,15 +587,18 @@ pub fn after_open(app: &mut MaterialCraftApp) {
 
 /// File menu actions that need a file dialog. Returns true when handled
 pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) -> bool {
+    if matches!(id, "file.save" | "file.saveAs" | "file.saveCopyAs" | "file.importBitmap" | "file.importVector") && !app.session.has_package() {
+        return true;
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ctx;
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::native_dialogs::{self, Then};
-        use craft_dialogs::FileDialog;
         match id {
             "file.open" => {
-                native_dialogs::ask(app, FileDialog::open().filter("SBS or MaterialCraft package, or material", OPEN_EXTS), Then::OpenPackage);
+                native_dialogs::ask(app, package_dialog(true, false), Then::OpenPackage);
                 true
             }
             "file.save" if has_local_path(app) => {
@@ -558,7 +625,11 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             }
             "file.importBitmap" => {
                 let then = Then::ImportBitmap(native_dialogs::GraphRef::active(app));
-                native_dialogs::ask(app, FileDialog::open().filter("Images", materialcraft_engine::formats::IMAGE_EXTENSIONS), then);
+                native_dialogs::ask(app, resource_dialog(false), then);
+                true
+            }
+            "file.importVector" => {
+                import_resource(app, ctx, true);
                 true
             }
             _ => false,
@@ -568,8 +639,10 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     {
         match id {
             "file.open" => crate::web_files::open(ctx),
-            "file.importBitmap" => crate::web_files::import_bitmap(ctx),
-            "file.save" | "file.saveAs" => crate::web_files::save(app),
+            "file.importBitmap" => crate::web_files::import_bitmap(app, ctx),
+            "file.importVector" => import_resource(app, ctx, true),
+            "file.save" => crate::web_files::save(app),
+            "file.saveAs" => crate::web_files::save_as(app, false),
             "file.saveCopyAs" => crate::web_files::save_copy(app),
             "file.exportMaterial" => crate::web_files::export_material(app),
             _ => return false,

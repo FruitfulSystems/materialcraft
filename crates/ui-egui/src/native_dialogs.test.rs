@@ -25,6 +25,130 @@ fn temp(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn package_dialogs_keep_both_project_formats() {
+    for (command, open) in [("file.open", true), ("file.saveAs", false), ("file.saveCopyAs", false)] {
+        let mut app = app();
+
+        crate::windows::file_action(&mut app, &egui::Context::default(), command);
+        let asked = answer_all(&mut app, || Answer::Cancelled);
+
+        let Some(Request::File(dialog)) = asked.first() else { panic!("{asked:?}") };
+        let expected: Vec<_> =
+            crate::windows::package_filters(open, false).into_iter().map(|(name, extensions)| craft_dialogs::Filter::new(name, extensions)).collect();
+        assert_eq!(dialog.filters, expected, "{command}");
+    }
+}
+
+#[test]
+fn archive_save_dialog_keeps_the_mcraft_default() {
+    for command in ["file.saveAs", "file.saveCopyAs"] {
+        let mut app = app();
+        app.session.path = Some("project.mcraft".into());
+
+        crate::windows::file_action(&mut app, &egui::Context::default(), command);
+        let asked = answer_all(&mut app, || Answer::Cancelled);
+
+        let Some(Request::File(dialog)) = asked.first() else { panic!("{asked:?}") };
+        assert_eq!(dialog.file_name.as_deref(), Some(format!("{}.mcraft", app.session.pkg.name).as_str()));
+        assert_eq!(dialog.filters.first(), Some(&craft_dialogs::Filter::new("MaterialCraft Project (*.mcraft)", &["mcraft"])));
+    }
+}
+
+#[test]
+fn bitmap_dialog_keeps_the_supported_format_filters() {
+    let mut app = app();
+
+    crate::windows::file_action(&mut app, &egui::Context::default(), "file.importBitmap");
+    let asked = answer_all(&mut app, || Answer::Cancelled);
+
+    let Some(Request::File(dialog)) = asked.first() else { panic!("{asked:?}") };
+    let expected: Vec<_> = crate::windows::resource_filters(false).into_iter().map(|(name, extensions)| craft_dialogs::Filter::new(name, extensions)).collect();
+    assert_eq!(dialog.filters, expected);
+}
+
+#[test]
+fn a_picked_archive_saves_and_reopens_with_resources() {
+    for copy in [false, true] {
+        let mut app = app();
+        let image = png(&format!("archive-{copy}.png"));
+        app.run("file.importBitmap", json!({"path": image})).unwrap();
+        app.session.path = Some("original.mcraft".into());
+        let original = app.session.pkg.clone();
+        let path = temp(&format!("archive-{copy}.mcraft"));
+        let target = path.clone();
+
+        crate::windows::file_action(&mut app, &egui::Context::default(), if copy { "file.saveCopyAs" } else { "file.saveAs" });
+        answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
+
+        assert!(path.exists());
+        assert_eq!(app.session.modified, copy);
+        if copy {
+            assert_eq!(app.session.path.as_deref(), Some("original.mcraft"));
+            assert!(app.ui.recent.is_empty());
+        }
+
+        crate::windows::file_action(&mut app, &egui::Context::default(), "file.open");
+        let target = path.clone();
+        answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
+
+        assert_eq!(app.session.path.as_deref().map(std::path::PathBuf::from), std::fs::canonicalize(&path).ok());
+        assert_eq!(app.session.pkg.resources.len(), original.resources.len());
+        assert_eq!(app.session.pkg.resources.last().unwrap().bytes, original.resources.last().unwrap().bytes);
+        assert!(app.toasts.iter().all(|toast| !toast.error));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(image).unwrap();
+    }
+}
+
+#[test]
+fn resource_dialogs_keep_the_originating_package_and_folder() {
+    for vector in [false, true] {
+        for closed in [false, true] {
+            let mut app = app();
+            let document = app.session.document_id;
+            app.run("folder.create", json!({"parent": "Resources", "name": "Imported"})).unwrap();
+            let nodes = app.session.graph().unwrap().nodes.len();
+            let path = if vector {
+                let path = temp(&format!("resource-{closed}.svg"));
+                std::fs::write(&path, r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><path d="M0 0H4V4H0Z"/></svg>"#).unwrap();
+                path
+            } else {
+                png(&format!("resource-{closed}.png"))
+            };
+
+            crate::windows::import_resource_into(&mut app, &egui::Context::default(), vector, "Resources/Imported");
+            assert_eq!(app.dialogs.queued(), 1);
+            app.run("file.newPackage", json!({})).unwrap();
+            let other = app.session.document_id;
+            if closed {
+                app.run("package.close", json!({"document": document, "discard": true})).unwrap();
+            }
+            let target = path.clone();
+            let asked = answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
+
+            let Some(Request::File(dialog)) = asked.first() else { panic!("{asked:?}") };
+            let expected: Vec<_> =
+                crate::windows::resource_filters(vector).into_iter().map(|(name, extensions)| craft_dialogs::Filter::new(name, extensions)).collect();
+            assert_eq!(dialog.filters, expected);
+            assert!(app.session.package(other).unwrap().resources.is_empty());
+            if closed {
+                assert_eq!(app.session.document_id, other);
+                assert!(app.toasts.iter().any(|toast| toast.error));
+            } else {
+                assert_eq!(app.session.document_id, document);
+                assert_eq!(app.session.graph().unwrap().nodes.len(), nodes);
+                let resource = app.session.pkg.resources.last().unwrap();
+                assert_eq!(resource.folder, "Resources/Imported");
+                assert_eq!(resource.bytes.as_slice(), std::fs::read(&path).unwrap());
+                app.run("edit.undo", json!({})).unwrap();
+                assert!(app.session.pkg.resources.is_empty());
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+}
+
+#[test]
 fn save_as_writes_the_package_and_adds_it_to_recent() {
     let mut app = app();
     let path = temp("saved.sbs");

@@ -17,6 +17,7 @@ pub(super) struct ExplorerTree<'a> {
     pub assignment: Option<Value>,
     pub movement: Option<(ExplorerTarget, String)>,
     pub inspected_graph: Option<materialcraft_engine::GraphTarget>,
+    pub inspected_folder: Option<(u64, String)>,
 }
 
 impl ExplorerTree<'_> {
@@ -30,18 +31,31 @@ impl ExplorerTree<'_> {
             .collect();
         let package_warning = warnings.iter().filter(|warning| !warning.is_empty()).cloned().collect::<Vec<_>>().join("\n");
         let target = ExplorerTarget::Package { document };
-        let name = format!("{}{}", package.name, if modified { "*" } else { "" });
-        let id = ui.make_persistent_id((document, "package"));
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-            .show_header(ui, |ui| {
-                let response = self.row(ui, &target, package, &name, icon::PACKAGE, &package_warning, path.is_some());
-                if let Some(path) = path {
-                    response.on_hover_text(path);
-                }
-            })
-            .body(|ui| {
-                self.level(ui, document, package, &package.folder_paths(), "", &warnings, 0);
+        let name = path.and_then(|path| path.rsplit(['/', '\\']).next()).unwrap_or(&package.name);
+        let name = format!("{name}{}", if modified { "*" } else { "" });
+        let folders = package.folder_paths();
+
+        // The implicit Resources group is hidden until it contains assets or subfolders
+        let has_children =
+            !package.graphs.is_empty() || !package.resources.is_empty() || folders.iter().any(|folder| !folder.eq_ignore_ascii_case("Resources"));
+        let mut header = |ui: &mut Ui| {
+            let response = self.row(ui, &target, package, &name, icon::PACKAGE, &package_warning, path.is_some());
+            if let Some(path) = path {
+                response.on_hover_text(path);
+            }
+        };
+        if !has_children {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                header(ui);
             });
+            return;
+        }
+
+        let id = ui.make_persistent_id((document, "package"));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true).show_header(ui, header).body(|ui| {
+            self.level(ui, document, package, &folders, "", &warnings, 0);
+        });
     }
 
     fn level(&mut self, ui: &mut Ui, document: u64, package: &Package, folders: &BTreeSet<String>, parent: &str, warnings: &[String], depth: usize) {
@@ -51,6 +65,13 @@ impl ExplorerTree<'_> {
         }
 
         for folder in folders.iter().filter(|path| path.rsplit_once('/').map_or("", |(parent, _)| parent) == parent) {
+            if folder.eq_ignore_ascii_case("Resources")
+                && !package.resources.iter().any(|resource| resource.folder == *folder || resource.folder.starts_with(&format!("{folder}/")))
+                && !folders.iter().any(|path| path.starts_with(&format!("{folder}/")))
+            {
+                continue;
+            }
+
             let target = ExplorerTarget::Folder { document, path: folder.clone() };
             let name = folder.rsplit('/').next().unwrap_or(folder);
             let id = ui.make_persistent_id((document, "folder", folder));
@@ -63,7 +84,8 @@ impl ExplorerTree<'_> {
         for resource in package.resources.iter().filter(|resource| resource.folder == parent) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                tree_row::show(ui, &resource.name, icon::IMAGE, false, resource.bytes.is_empty().then_some("Missing resource"));
+                let target = ExplorerTarget::Resource { document, name: resource.name.clone() };
+                self.row(ui, &target, package, &resource.name, icon::IMAGE, if resource.bytes.is_empty() { "Missing resource" } else { "" }, false);
             });
         }
         for (index, graph) in package.graphs.iter().enumerate().filter(|(_, graph)| graph.folder == parent) {
@@ -125,6 +147,9 @@ impl ExplorerTree<'_> {
             if let ExplorerTarget::Graph { document, index } = target {
                 self.inspected_graph = Some(materialcraft_engine::GraphTarget { document: *document, graph: *index });
             }
+            if let ExplorerTarget::Folder { document, path } = target {
+                self.inspected_folder = Some((*document, path.clone()));
+            }
         }
         if response.double_clicked() && matches!(target, ExplorerTarget::Graph { .. }) {
             self.action = Some((target.clone(), "graph.open"));
@@ -144,18 +169,22 @@ impl ExplorerTree<'_> {
                         egui::DragAndDrop::set_payload(ui.ctx(), GraphDragPayload { document: *document, name: graph.sbs_path() });
                     }
                 }
-                ExplorerTarget::Folder { .. } => egui::DragAndDrop::set_payload(ui.ctx(), target.clone()),
-                ExplorerTarget::Package { .. } | ExplorerTarget::Node { .. } => {}
+                ExplorerTarget::Folder { .. } if !target.is_resources_root() => egui::DragAndDrop::set_payload(ui.ctx(), target.clone()),
+                ExplorerTarget::Resource { .. } => egui::DragAndDrop::set_payload(ui.ctx(), target.clone()),
+                _ => {}
             }
         }
-        if let Some(parent) = target.folder(package) {
-            if let Some(payload) = response.dnd_release_payload::<GraphDragPayload>()
+        if !matches!(target, ExplorerTarget::Resource { .. })
+            && let Some(parent) = target.folder(package)
+        {
+            if !target.is_resources()
+                && let Some(payload) = crate::widgets::dnd_release::<GraphDragPayload>(&response)
                 && payload.document == target.document()
                 && let Some((index, _)) = package.graph_by_name(&payload.name)
             {
                 self.movement = Some((ExplorerTarget::Graph { document: payload.document, index }, parent.clone()));
             }
-            if let Some(payload) = response.dnd_release_payload::<ExplorerTarget>()
+            if let Some(payload) = crate::widgets::dnd_release::<ExplorerTarget>(&response)
                 && payload.document() == target.document()
             {
                 self.movement = Some((payload.as_ref().clone(), parent));

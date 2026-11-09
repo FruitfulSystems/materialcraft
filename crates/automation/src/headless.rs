@@ -9,9 +9,11 @@ use materialcraft_render::{Lighting, Maps, Relief, Scene, Settings, VIEW_TRIANGL
 use serde_json::{Value, json};
 
 use crate::budgets::{HQ_TRIANGLES, MAX_LOCAL_RENDER_SIDE, MAX_PNG_SIDE, check_png, encode_png};
-use crate::workspace::{MAX_READ_BYTES, authorize_command};
+use crate::workspace::authorize_command;
 use crate::{AutomationError, bad};
 pub use crate::{Filesystem, RenderOptions, Rendered};
+
+const MAX_EXPORTED_MATERIAL_BYTES: u64 = 256 << 20;
 
 pub struct Headless {
     pub session: Session,
@@ -24,13 +26,7 @@ pub struct Headless {
 fn read_file(fs: &Filesystem, path: &str) -> Result<Vec<u8>, AutomationError> {
     match fs {
         Filesystem::Denied => Err(bad("file access is not granted: start the server with --read-root <dir>")),
-        Filesystem::TrustedLocal => {
-            let len = std::fs::metadata(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?.len();
-            if len > MAX_READ_BYTES {
-                return Err(bad(format!("{path} is {len} bytes (limit {MAX_READ_BYTES})")));
-            }
-            std::fs::read(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))
-        }
+        Filesystem::TrustedLocal => std::fs::read(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}"))),
         Filesystem::Workspace(w) => w.read(path),
     }
 }
@@ -100,9 +96,17 @@ impl Headless {
         batch_reply(results, None)
     }
 
-    /// Open an `.sbs` package (or a `.mcmat` material's source), reading linked bitmaps under the same access rules
+    /// Open an `.sbs` or `.mcraft` package (or a `.mcmat` material's source), using the granted file access
     pub fn open(&mut self, path: &str) -> Result<Value, AutomationError> {
         let bytes = self.read(path)?;
+
+        // Workspace save paths stay relative to their granted roots
+        let document = self.session.open_packages().into_iter().find(|entry| entry.2 == Some(path)).map(|entry| entry.0);
+        if let Some(document) = document {
+            self.session.activate_document(document)?;
+            return Ok(self.inspect());
+        }
+
         let folder = path.replace('\\', "/").rsplit_once('/').map(|(folder, _)| format!("{folder}/")).unwrap_or_default();
         let fs = &self.fs;
         let linked = |relative: &str| -> Option<Vec<u8>> {
@@ -112,25 +116,62 @@ impl Headless {
             if !plain || !inside {
                 return None;
             }
+
             read_file(fs, &format!("{folder}{relative}")).ok()
         };
 
         file_cmds::open_bytes_linked(&mut self.session, &bytes, Some(path.to_string()), &linked)?;
+        if self.session.path.is_some() {
+            self.session.path = Some(path.to_string());
+        }
+
         Ok(self.inspect())
     }
 
-    /// Save to `path` (`.sbs` appended without a package extension) or the package's own file; native SBS
+    /// Save SBS with adjacent resources, or an independent MaterialCraft archive.
     pub fn save(&mut self, path: Option<&str>) -> Result<Value, AutomationError> {
         let path = match path {
             Some(p) => file_cmds::package_path(p),
             None => self.session.path.clone().ok_or_else(|| bad("the package has no file yet (new, or opened from another program): give a `path`"))?,
         };
 
-        let bytes = file_cmds::save_bytes(&self.session)?;
-        self.write(&path, &bytes)?;
+        let files = file_cmds::save_files_at(&self.session, &path)?;
+        let bytes = if file_cmds::is_mcraft(&path) {
+            let bytes = files.zip().map_err(|error| bad(error.to_string()))?;
+            self.write(&path, &bytes)?;
+            bytes.len()
+        } else {
+            match &self.fs {
+                Filesystem::Denied => return Err(bad("file access is not granted")),
+                Filesystem::TrustedLocal => {
+                    materialcraft_engine::formats::project::write_files(Path::new(&path), &files).map_err(|error| bad(error.to_string()))?
+                }
+                Filesystem::Workspace(workspace) => {
+                    workspace.check_write(&path)?;
+                    let parent = path.rsplit_once('/').map_or(String::new(), |(parent, _)| format!("{parent}/"));
+                    for name in files.files.keys().filter(|name| *name != &files.entry) {
+                        workspace.check_write(&format!("{parent}{name}"))?;
+                    }
+                    workspace.create_dir_all(&format!("{parent}resources"))?;
+                    for (name, bytes) in &files.files {
+                        if name == &files.entry {
+                            continue;
+                        }
+
+                        let target = format!("{parent}{name}");
+                        if let Some((directory, _)) = target.rsplit_once('/') {
+                            workspace.create_dir_all(directory)?;
+                        }
+                        workspace.write_resource(&target, bytes.as_slice())?;
+                    }
+                    workspace.write(&path, files.xml().map_err(|error| bad(error.to_string()))?)?;
+                }
+            }
+            files.xml().map_err(|error| bad(error.to_string()))?.len()
+        };
         self.session.path = Some(path.clone());
         self.session.modified = false;
-        Ok(json!({"path": path, "bytes": bytes.len()}))
+        Ok(json!({"path": path, "bytes": bytes}))
     }
 
     /// Embed an image file as a bitmap resource
@@ -165,11 +206,13 @@ impl Headless {
             Filesystem::Workspace(w) => w.check_write(&path)?,
             Filesystem::TrustedLocal => {}
         }
+
         let (gi, options) = material_cmds::material_request(&self.session, "material.export", p)?;
         let bytes = material_cmds::material_bytes(&self.session, gi, &options)?;
-        if bytes.len() as u64 > MAX_READ_BYTES {
-            return Err(bad(format!("the material is {} bytes (limit {MAX_READ_BYTES}); export a smaller `size`", bytes.len())));
+        if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
+            return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); export a smaller `size`", bytes.len())));
         }
+
         self.write(&path, &bytes)?;
         Ok(json!({"path": path, "bytes": bytes.len()}))
     }

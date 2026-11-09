@@ -7,11 +7,27 @@ pub(super) fn activate(app: &mut MaterialCraftApp, document: u64) -> bool {
 }
 
 pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: ExplorerTarget, command: &str) {
+    if command == "graph.resource.add" {
+        let mut parameters = target.parameters();
+        parameters["document"] = json!(target.document());
+        crate::properties::GraphPropertyDraft::commit(app);
+        if app.run(command, parameters).is_some() {
+            app.inspected_folder = None;
+            app.inspected_graph = None;
+        }
+        return;
+    }
+
     if !activate(app, target.document()) {
         return;
     }
+
     let Some(folder) = target.folder(&app.session.pkg) else { return };
     match command {
+        "file.importBitmap" | "file.importVector" => {
+            let folder = if target.is_resources() { folder.as_str() } else { "Resources" };
+            crate::windows::import_resource_into(app, ctx, command == "file.importVector", folder);
+        }
         "ui.newGraph" | "ui.newFunctionGraph" => {
             let (kind, name) = if command == "ui.newFunctionGraph" { ("function", "Untitled_Function_Graph_1") } else { ("material", "Untitled_Graph_1") };
             if app.run("file.new", json!({"folder": folder, "kind": kind, "name": name, "template": "empty"})).is_some() {
@@ -23,6 +39,8 @@ pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: Ex
                 .run(command, json!({"parent": folder, "name": "Untitled_Folder_1"}))
                 .and_then(|result| result.get("folder").and_then(|path| path.as_str()).map(str::to_string))
             {
+                app.inspected_folder = Some((target.document(), path.clone()));
+                app.inspected_graph = None;
                 app.ui.explorer.selected = Some(ExplorerTarget::Folder { document: target.document(), path });
             }
         }
