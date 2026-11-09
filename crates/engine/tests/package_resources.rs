@@ -4,6 +4,27 @@ use serde_json::json;
 const SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>"#;
 
 #[test]
+fn imports_remain_undoable_in_packages_with_many_resources() {
+    use materialcraft_engine::core::{Resource, ResourceBytes};
+    let mut package = Package::new("Resources");
+    let bytes = ResourceBytes::new(SVG.to_vec());
+    for index in 0..4096 {
+        package.resources.push(Resource::new(format!("Shape_{index}"), "shape.svg", bytes.clone()));
+    }
+    let mut session = Session::new(package);
+
+    file_cmds::add_resource(&mut session, "new.svg", SVG.to_vec(), Some("New")).unwrap();
+
+    assert_eq!(session.pkg.resources.len(), 4097);
+    assert_eq!(session.pkg.resource("New").unwrap().bytes, bytes);
+
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+
+    assert_eq!(session.pkg.resources.len(), 4096);
+    assert!(session.pkg.resource("New").is_none());
+}
+
+#[test]
 fn resource_nodes_use_the_source_package_and_undo_as_one_edit() {
     use materialcraft_engine::core::Value;
     let mut session = Session::new(Package::new("Source"));

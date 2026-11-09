@@ -258,11 +258,13 @@ fn linked_resources_load_through_the_callback() {
 fn embedded_data_round_trips_and_checks_its_length() {
     let data: Vec<u8> = (0..5000u32).map(|i| (i * 7 % 251) as u8).collect();
     let encoded = encode_embedded(&data).unwrap();
-    assert_eq!(decode_embedded(&encoded, super::constant::MAX_EMBEDDED_BYTES).unwrap(), data);
+
+    assert_eq!(decode_embedded(&encoded).unwrap(), data);
 
     let mut raw = base64_engine().decode(&encoded).unwrap();
     raw[3] ^= 1;
-    assert!(decode_embedded(&base64_engine().encode(raw), super::constant::MAX_EMBEDDED_BYTES).unwrap_err().contains("declared"));
+
+    assert!(decode_embedded(&base64_engine().encode(raw)).unwrap_err().contains("declared"));
 }
 
 #[test]

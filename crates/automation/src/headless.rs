@@ -9,9 +9,11 @@ use materialcraft_render::{Lighting, Maps, Relief, Scene, Settings, VIEW_TRIANGL
 use serde_json::{Value, json};
 
 use crate::budgets::{HQ_TRIANGLES, MAX_LOCAL_RENDER_SIDE, MAX_PNG_SIDE, check_png, encode_png};
-use crate::workspace::{MAX_READ_BYTES, authorize_command};
+use crate::workspace::authorize_command;
 use crate::{AutomationError, bad};
 pub use crate::{Filesystem, RenderOptions, Rendered};
+
+const MAX_EXPORTED_MATERIAL_BYTES: u64 = 256 << 20;
 
 pub struct Headless {
     pub session: Session,
@@ -24,13 +26,7 @@ pub struct Headless {
 fn read_file(fs: &Filesystem, path: &str) -> Result<Vec<u8>, AutomationError> {
     match fs {
         Filesystem::Denied => Err(bad("file access is not granted: start the server with --read-root <dir>")),
-        Filesystem::TrustedLocal => {
-            let len = std::fs::metadata(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))?.len();
-            if len > MAX_READ_BYTES {
-                return Err(bad(format!("{path} is {len} bytes (limit {MAX_READ_BYTES})")));
-            }
-            std::fs::read(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}")))
-        }
+        Filesystem::TrustedLocal => std::fs::read(path).map_err(|e| AutomationError::Io(format!("cannot read {path}: {e}"))),
         Filesystem::Workspace(w) => w.read(path),
     }
 }
@@ -210,11 +206,13 @@ impl Headless {
             Filesystem::Workspace(w) => w.check_write(&path)?,
             Filesystem::TrustedLocal => {}
         }
+
         let (gi, options) = material_cmds::material_request(&self.session, "material.export", p)?;
         let bytes = material_cmds::material_bytes(&self.session, gi, &options)?;
-        if bytes.len() as u64 > MAX_READ_BYTES {
-            return Err(bad(format!("the material is {} bytes (limit {MAX_READ_BYTES}); export a smaller `size`", bytes.len())));
+        if bytes.len() as u64 > MAX_EXPORTED_MATERIAL_BYTES {
+            return Err(bad(format!("the material is {} bytes (limit {MAX_EXPORTED_MATERIAL_BYTES}); export a smaller `size`", bytes.len())));
         }
+
         self.write(&path, &bytes)?;
         Ok(json!({"path": path, "bytes": bytes.len()}))
     }

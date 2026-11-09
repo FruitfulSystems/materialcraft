@@ -1,4 +1,4 @@
-use super::{MAX_BYTES, MAX_ENTRIES, MAX_PACKAGES, SBS_ENTRY, bad, references, remap};
+use super::{SBS_ENTRY, bad, references, remap};
 use crate::{Result, sbs};
 use materialcraft_core::{Package, ResourceBytes};
 use std::collections::{BTreeMap, BTreeSet};
@@ -37,10 +37,6 @@ impl ProjectFiles {
                 return Err(bad(format!("Cannot package missing dependency `{path}`")));
             };
 
-            if names.len() >= MAX_PACKAGES - 1 {
-                return Err(bad("Too many dependent SBS packages"));
-            }
-
             names.insert(path, format!("resources/packages/{}.sbs", names.len() + 1));
             pending.extend(references(source));
         }
@@ -62,11 +58,6 @@ impl ProjectFiles {
         for (source, file) in &names {
             let package = package.dependencies.get(source).ok_or_else(|| bad("Package dependency disappeared"))?;
             result.add_package(package, file, &names)?;
-        }
-
-        let total_bytes = result.files.values().try_fold(0_u64, |sum, bytes| sum.checked_add(bytes.len() as u64)).ok_or_else(|| bad("Package is too large"))?;
-        if total_bytes > MAX_BYTES || result.files.len().saturating_add(1) > MAX_ENTRIES {
-            return Err(bad("Package exceeds the 256 MiB or 4096-file limit"));
         }
 
         Ok(result)
@@ -124,16 +115,14 @@ impl ProjectFiles {
         for (name, bytes) in &self.files {
             let is_text = name.ends_with(".sbs") || name.ends_with(".svg");
             let compression_method = if is_text { zip::CompressionMethod::Deflated } else { zip::CompressionMethod::Stored };
-            writer.start_file(name, zip::write::SimpleFileOptions::default().compression_method(compression_method)).map_err(|error| bad(error.to_string()))?;
+
+            // ZIP64 prevents a separate 4 GiB entry ceiling
+            let options = zip::write::SimpleFileOptions::default().compression_method(compression_method).large_file(true);
+            writer.start_file(name, options).map_err(|error| bad(error.to_string()))?;
             writer.write_all(bytes.as_slice()).map_err(|error| bad(error.to_string()))?;
         }
 
-        let bytes = writer.finish().map_err(|error| bad(error.to_string()))?.into_inner();
-        if bytes.len() as u64 > MAX_BYTES {
-            return Err(bad("MaterialCraft archive exceeds 256 MiB"));
-        }
-
-        Ok(bytes)
+        Ok(writer.finish().map_err(|error| bad(error.to_string()))?.into_inner())
     }
 
     pub fn xml(&self) -> Result<&[u8]> {

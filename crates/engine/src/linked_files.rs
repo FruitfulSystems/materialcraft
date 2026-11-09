@@ -51,26 +51,19 @@ pub(crate) fn load(package: &mut Package) -> Vec<String> {
     let mut pending = references(package);
     let mut visited = BTreeSet::new();
     let mut warnings = Vec::new();
-    let mut remaining = 256_u64 << 20;
     while let Some(path) = pending.pop() {
         if !visited.insert(path.clone()) {
             continue;
         }
-        if visited.len() > 64 {
-            warnings.push("Linked packages exceed the 64-file limit".into());
-            break;
-        }
+
         if let Some(source) = package.dependencies.get(&path) {
             pending.extend(references(source));
             continue;
         }
+
         let mut read = || -> std::result::Result<Package, String> {
             if path.starts_with("sbs://") {
                 let bytes = materialcraft_formats::sbs::library::read(&path)?;
-                if bytes.len() as u64 > remaining {
-                    return Err("linked package exceeds the remaining file budget".into());
-                }
-                remaining -= bytes.len() as u64;
                 let read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &crate::file_cmds::linked_files(&path)).map_err(|error| error.to_string())?;
                 warnings.extend(read.warnings);
                 return Ok(read.pkg);
@@ -79,22 +72,7 @@ pub(crate) fn load(package: &mut Package) -> Vec<String> {
             return Err("external file is unavailable in the browser".into());
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let size = std::fs::metadata(&path).map_err(|error| error.to_string())?.len();
-                if size > remaining {
-                    return Err("linked package exceeds the remaining file budget".into());
-                }
-                // Bound the read even if the file grows after the metadata check
-                use std::io::Read;
-                let mut bytes = Vec::new();
-                std::fs::File::open(&path)
-                    .map_err(|error| error.to_string())?
-                    .take(remaining + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                if bytes.len() as u64 > remaining {
-                    return Err("linked package exceeds the remaining file budget".into());
-                }
-                remaining -= bytes.len() as u64;
+                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
                 let read = materialcraft_formats::sbs::read_sbs(&bytes, &path, &crate::file_cmds::linked_files(&path)).map_err(|error| error.to_string())?;
                 warnings.extend(read.warnings);
                 Ok(read.pkg)

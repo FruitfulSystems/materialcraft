@@ -64,7 +64,6 @@ pub fn read(uri: &str) -> Result<Vec<u8>, String> {
     let relative = relative_path(uri)?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::io::Read;
         let root = root();
         if root.exists() || std::env::var_os("MATERIALCRAFT_SBS_DIR").is_some() {
             let root = root.canonicalize().map_err(|error| error.to_string())?;
@@ -72,14 +71,11 @@ pub fn read(uri: &str) -> Result<Vec<u8>, String> {
             if !file.starts_with(&root) {
                 return Err("SBS library symlink escapes its asset directory".into());
             }
-            let mut bytes = Vec::new();
-            std::fs::File::open(file).map_err(|error| error.to_string())?.take((256 << 20) + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-            if bytes.len() > 256 << 20 {
-                return Err("SBS library asset exceeds 256 MiB".into());
-            }
-            return Ok(bytes);
+
+            return std::fs::read(file).map_err(|error| error.to_string());
         }
     }
+
     // Installed and browser builds use the same bundled asset when no disk asset root exists
     match relative {
         "functions.sbs" => Ok(include_bytes!("../../../../assets/sbs/functions.sbs").to_vec()),

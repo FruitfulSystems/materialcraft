@@ -236,8 +236,9 @@ warnings; unknown nodes remain placeholders.
 Imports retain original bytes in snapshot history, including before the first save. Content-based
 asset filenames avoid overwriting resources shared by another SBS and allow the XML to be replaced
 last. Missing assets cause saving to fail. Existing unreferenced files are left in place. Archives
-are read in memory, validate paths and duplicates, and cap expanded bytes at 256 MiB, entries at
-4096 and linked packages at 64. Referenced packages are included under `resources/packages/`;
+are read in memory and validate paths, duplicate entries, symlinks and malformed data. Project I/O
+and resource imports impose no fixed file-size, resource-count or linked-package-count ceilings.
+Referenced packages are included under `resources/packages/`;
 unresolved installed-library aliases retain their `sbs://` references. Autosaves use `.mcraft`.
 
 Explorer shows its reserved Resources folder once it contains assets or subfolders. Its Import

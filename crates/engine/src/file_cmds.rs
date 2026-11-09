@@ -249,13 +249,7 @@ pub fn open_file(s: &mut Session, path: &str) -> Result<()> {
         return open_bytes_linked(s, &bytes, Some(path.into()), &linked_files(path));
     }
 
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    std::fs::File::open(path).and_then(|file| file.take((256 << 20) + 1).read_to_end(&mut bytes)).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
-    if bytes.len() > 256 << 20 {
-        return Err(bad("file.open", "Package exceeds 256 MiB"));
-    }
-
+    let bytes = std::fs::read(path).map_err(|e| bad("file.open", format!("{path}: {e}")))?;
     open_bytes_linked(s, &bytes, Some(path.to_string()), &linked_files(path))
 }
 
@@ -402,10 +396,6 @@ pub fn add_resource_into(s: &mut Session, file: &str, bytes: Vec<u8>, name: Opti
     crate::folder_path::require_resource_folder(&s.pkg, folder)?;
     let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension);
     validate_resource_extension(file, extension.eq_ignore_ascii_case("svg"))?;
-    if bytes.len() > 64 << 20 || s.pkg.resources.len() >= 4096 {
-        return Err(bad("file.importBitmap", "Resources are limited to 64 MiB per file and 4096 files per package"));
-    }
-
     materialcraft_formats::decode(&bytes, false)?;
     s.edit("Import resource", |s| {
         let file_name = materialcraft_formats::safe_file_name(file);
@@ -455,13 +445,9 @@ pub(crate) fn push_resource(pkg: &mut Package, file: &str, bytes: Vec<u8>, name:
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn import_resource_file(s: &mut Session, p: &J, vector: bool) -> Result<J> {
-    use std::io::Read;
     let path = strp(p, "path").ok_or_else(|| bad("file.importBitmap", "`path` is required"))?;
     validate_resource_extension(path, vector)?;
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .and_then(|file| file.take((64 << 20) + 1).read_to_end(&mut bytes))
-        .map_err(|e| bad("file.importBitmap", format!("{path}: {e}")))?;
+    let bytes = std::fs::read(path).map_err(|e| bad("file.importBitmap", format!("{path}: {e}")))?;
     let file = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("bitmap.png").to_string();
     let name = add_resource_into(s, &file, bytes, strp(p, "name"), strp(p, "folder").unwrap_or("Resources"))?;
     let def = if file.to_ascii_lowercase().ends_with(".svg") { "svg" } else { "bitmap" };

@@ -124,18 +124,63 @@ fn missing_resources_cannot_be_silently_saved_away() {
 }
 
 #[test]
-fn rejects_symlinks_and_excessive_entry_counts() {
+fn rejects_symlinks() {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     writer.add_symlink("resources/link", "/outside", zip::write::SimpleFileOptions::default()).unwrap();
 
     assert!(project::read(&writer.finish().unwrap().into_inner(), "bad.mcraft").is_err());
+}
 
-    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+#[test]
+fn resource_counts_do_not_truncate_saved_packages() {
+    let mut original = Package::new("Resources");
+    let bytes = ResourceBytes::new(SVG.to_vec());
     for index in 0..4097 {
-        writer.start_file(format!("resources/{index}"), zip::write::SimpleFileOptions::default()).unwrap();
+        original.resources.push(Resource::new(format!("Shape_{index}"), "shape.svg", bytes.clone()));
     }
 
-    assert!(project::read(&writer.finish().unwrap().into_inner(), "bad.mcraft").is_err());
+    for archive in [false, true] {
+        let files = ProjectFiles::build(&original, "resources.sbs", archive).unwrap();
+        let read = project::read(&files.zip().unwrap(), "resources.mcraft").unwrap();
+
+        assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+        assert_eq!(read.pkg.resources.len(), original.resources.len());
+        assert_eq!(read.pkg.resource("Shape_4096").unwrap().bytes, bytes);
+    }
+}
+
+#[test]
+fn archives_preserve_all_linked_packages() {
+    let mut original = Package::new("Dependencies");
+    let mut graph = Graph::new("Material");
+    let mut source = Package::new("Source");
+    source.graphs.push(Graph::new("Material"));
+    let source = std::sync::Arc::new(source);
+    for index in 0..65 {
+        let path = format!("/source/{index}.sbs");
+        let node = graph.add_node("graph_instance", [0.0; 2]);
+        graph.node_mut(node).unwrap().instance = Some(GraphInstance {
+            label: String::new(),
+            package: path.clone(),
+            graph: "Material".into(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            defaults: Default::default(),
+        });
+        original.dependencies.insert(path, source.clone());
+    }
+    original.graphs.push(graph);
+
+    let files = ProjectFiles::build(&original, "dependencies.mcraft", true).unwrap();
+    let read = project::read(&files.zip().unwrap(), "dependencies.mcraft").unwrap();
+
+    assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+    assert_eq!(read.pkg.dependencies.len(), original.dependencies.len() + 1);
+
+    for node in &read.pkg.graphs[0].nodes {
+        let instance = node.instance.as_ref().unwrap();
+        assert!(read.pkg.dependencies[&instance.package].graph_by_name(&instance.graph).is_some());
+    }
 }
 
 #[test]

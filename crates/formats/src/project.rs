@@ -13,9 +13,6 @@ use std::io::{Cursor, Read};
 
 pub const EXT: &str = "mcraft";
 pub const SBS_ENTRY: &str = "package.sbs";
-const MAX_BYTES: u64 = 256 << 20;
-const MAX_ENTRIES: usize = 4096;
-const MAX_PACKAGES: usize = 64;
 
 fn bad(message: impl Into<String>) -> FormatError {
     FormatError::BadPackage(message.into())
@@ -78,25 +75,14 @@ fn resolve(owner: &str, reference: &str) -> Result<String> {
 }
 
 pub fn read(bytes: &[u8], identity: &str) -> Result<sbs::SbsRead> {
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(bad("MaterialCraft archive exceeds 256 MiB"));
-    }
-
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| bad(error.to_string()))?;
-    if zip.len() > MAX_ENTRIES {
-        return Err(bad("MaterialCraft archive exceeds 4096 entries"));
-    }
-
     let mut files = BTreeMap::new();
     let mut seen = BTreeSet::new();
-    let mut remaining = MAX_BYTES;
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|error| bad(error.to_string()))?;
         let name = entry.name().to_string();
         let path = name.trim_end_matches('/');
         if path.is_empty()
-            || path.len() > 4096
-            || path.split('/').count() > 64
             || path.contains('\\')
             || resolve("", path)? != path
             || !seen.insert(path.to_ascii_lowercase())
@@ -109,13 +95,8 @@ pub fn read(bytes: &[u8], identity: &str) -> Result<sbs::SbsRead> {
             continue;
         }
 
-        if entry.size() > remaining {
-            return Err(bad("Expanded archive exceeds 256 MiB"));
-        }
-
         let mut content = Vec::new();
-        (&mut entry).take(remaining + 1).read_to_end(&mut content).map_err(|error| bad(error.to_string()))?;
-        remaining = remaining.checked_sub(content.len() as u64).ok_or_else(|| bad("Expanded archive exceeds 256 MiB"))?;
+        entry.read_to_end(&mut content).map_err(|error| bad(error.to_string()))?;
         files.insert(name, content);
     }
     let roots: Vec<_> = files.keys().filter(|name| !name.contains('/') && name.to_ascii_lowercase().ends_with(".sbs")).cloned().collect();
@@ -128,24 +109,15 @@ pub fn read(bytes: &[u8], identity: &str) -> Result<sbs::SbsRead> {
     let mut packages = BTreeMap::new();
     let mut pending = vec![root.clone()];
     let mut warnings = Vec::new();
-    let mut resource_budget = MAX_BYTES;
     while let Some(file) = pending.pop() {
         if packages.contains_key(&file) {
             continue;
-        }
-
-        if packages.len() >= MAX_PACKAGES {
-            return Err(bad("Too many archived SBS packages"));
         }
 
         let content = files.get(&file).ok_or_else(|| bad(format!("Missing archived package `{file}`")))?;
         let reader = |reference: &str| resolve(&file, reference).ok().and_then(|path| files.get(&path).cloned());
         let mut read = sbs::read_sbs(content, &file, &reader)?;
 
-        // Several packages can reference the same archive asset; bound the loaded copies too
-        for resource in &read.pkg.resources {
-            resource_budget = resource_budget.checked_sub(resource.bytes.len() as u64).ok_or_else(|| bad("Loaded resources exceed 256 MiB"))?;
-        }
         warnings.append(&mut read.warnings);
         let mut names = BTreeMap::new();
         for reference in references(&read.pkg) {

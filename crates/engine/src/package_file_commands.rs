@@ -55,13 +55,7 @@ fn read_package(path: &str) -> Result<Vec<u8>> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        std::fs::File::open(path).and_then(|file| file.take((256 << 20) + 1).read_to_end(&mut bytes)).map_err(|error| bad("file.reload", error.to_string()))?;
-        if bytes.len() > 256 << 20 {
-            return Err(bad("file.reload", "the package exceeds 256 MiB"));
-        }
-        Ok(bytes)
+        std::fs::read(path).map_err(|error| bad("file.reload", error.to_string()))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("file.reload", "reopen local browser files with the file picker"))
