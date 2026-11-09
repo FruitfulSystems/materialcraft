@@ -113,6 +113,22 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
+| `library.tree` | `{filter?, category? (Top or Top/Sub), canvas? (material\|function\|pattern)}`: the Library panel's category tree and its entries. Each entry has `id`, `label`, `category`, `type` (`node`, `comment`, `frame`, `pin`, `instance`, `operation`, `functionInstance`, `pattern`, `bitmap`), the `canvas` that takes it, `missing` when MaterialCraft lacks the library package it needs, and `warning` when it can be added but is incomplete |
+| `library.add` | `{entry, at?, snapToGrid?, function?: FunctionGraphTarget}`: add a `library.tree` entry to the open graph (function entries to a Function canvas; FX-Map nodes use `graph.pattern.edit`). Entries with `missing` refuse with the reason |
+| `library.reload` | `{}`: read the SBS library folder again |
+| `graph.cook` | `{full?, graph?: index}`: cook now and return per-node timings and errors; another material graph of the package cooks at full size into the cache |
+
+## Node library
+
+Every `.sbs` file in the library folder (`assets/sbs`, or `MATERIALCRAFT_SBS_DIR`; installed and
+browser builds use the bundled `all_nodes.sbs` and `functions.sbs`) loads once per process. A
+package whose graphs group nodes in titled frames lays the library out: a frame titled
+`Top - Sub` (or `Top`) is a category of the Library tree, and every node inside it becomes an
+entry there. Function frames name only the sub-category: under Function nodes when they hold
+native operations, under Functions otherwise. The older category name "SDF functions" reads as
+MCF functions. Other packages lend their graphs: a placed instance becomes available as soon as
+its package is in the folder, and unplaced graphs go to their attribute category, or Functions
+for function graphs.
 
 ## Linked packages
 

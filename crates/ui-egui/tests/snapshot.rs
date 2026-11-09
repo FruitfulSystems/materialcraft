@@ -13,6 +13,9 @@ mod function_variables;
 #[path = "snapshot/embedded_graphs.rs"]
 mod embedded_graphs;
 
+#[path = "snapshot/library.rs"]
+mod library;
+
 use std::time::Duration;
 
 use egui::vec2;
@@ -647,7 +650,9 @@ fn explorer_open_targets_the_clicked_graph() {
     settle(&mut h, 5);
     h.get_by_label("Export target").click_secondary();
     settle(&mut h, 3);
-    h.get(By::new().role(egui::accesskit::Role::Button).label("Open")).click();
+    // Explorer menu items name their shortcut after the label
+    let open = format!("Open {}", materialcraft_ui_egui::menus::shortcut_label(&h.ctx, "Enter"));
+    h.get(By::new().role(egui::accesskit::Role::Button).label(&open)).click();
     settle(&mut h, 3);
     assert_eq!(h.state().session.graph, 1);
     assert!(!h.state().ui.windows.export);

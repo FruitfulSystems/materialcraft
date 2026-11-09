@@ -12,6 +12,7 @@ mod group_layout;
 mod image_input;
 mod input_bridge;
 pub mod library;
+mod library_layout;
 mod node_identifiers;
 mod node_parameter;
 mod output;
@@ -29,6 +30,7 @@ mod warnings;
 mod xml;
 
 pub use constant::SBS_EXT;
+pub use library_layout::{LayoutFrame, LayoutItem, read_layout};
 pub use read::{is_sbs, read_sbs};
 pub use sbs_read::SbsRead;
 pub use write::write_sbs;

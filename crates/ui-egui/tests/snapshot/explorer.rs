@@ -13,7 +13,7 @@ fn explorer_can_close_the_last_package_and_all_packages() {
     settle(&mut harness, 4);
     harness.get(By::new().role(Role::TreeItem).label("Untitled package")).click_secondary();
     settle(&mut harness, 3);
-    harness.get(By::new().role(Role::Button).label("Close")).click();
+    harness.get(By::new().role(Role::Button).label("Close package")).click();
     settle(&mut harness, 4);
 
     assert!(harness.state().session.open_packages().is_empty());
@@ -86,8 +86,8 @@ fn explorer_empty_packages_have_no_disclosure() {
 
     harness.get(By::new().role(Role::TreeItem).label("Empty package")).click_secondary();
     settle(&mut harness, 3);
-    for label in ["Import", "New", "Save As", "Close"] {
-        assert!(harness.query(By::new().role(Role::Button).label(label)).is_some());
+    for label in ["Import", "New", "Save as...", "Close package"] {
+        assert!(harness.query_all(By::new().role(Role::Button).label_contains(label)).next().is_some(), "{label}");
     }
     harness.key_press(egui::Key::Escape);
     settle(&mut harness, 3);
@@ -357,17 +357,57 @@ fn explorer_folder_tree_and_context_menus() {
 
     for (label, expected, screenshot) in [
         ("Tools", vec!["New", "Copy", "Paste", "Rename", "Remove"], "explorer-folder-menu"),
-        ("Explorer menus*", vec!["Import", "New", "Reload", "Save", "Save As", "Save A Copy As", "Copy", "Paste", "Close"], "explorer-package-menu"),
-        ("Helper", vec!["Open", "Copy", "Paste", "Remove", "Rename"], "explorer-function-menu"),
-        ("Surface", vec!["Open", "Copy", "Paste", "Remove", "Rename"], "explorer-graph-menu"),
+        (
+            "Explorer menus*",
+            vec![
+                "New",
+                "Import",
+                "Link",
+                "Reload",
+                "Save",
+                "Save as...",
+                "Save a copy as...",
+                "Export material...",
+                "Export with dependencies...",
+                "Send to",
+                "Copy",
+                "Paste",
+                "Close package",
+                "Compute outputs",
+                "Show in folder...",
+                "Dependency manager...",
+                "Open dependencies",
+            ],
+            "explorer-package-menu",
+        ),
+        (
+            "Helper",
+            vec!["Open", "Copy", "Paste", "Remove", "Rename", "View outputs in 3D view", "Compute outputs", "Export outputs..."],
+            "explorer-function-menu",
+        ),
+        (
+            "Surface",
+            vec!["Open", "Copy", "Paste", "Remove", "Rename", "View outputs in 3D view", "Compute outputs", "Export outputs..."],
+            "explorer-graph-menu",
+        ),
     ] {
         harness.get(tree(label)).click_secondary();
         settle(&mut harness, 3);
         for label in expected {
-            assert!(harness.query(By::new().label(label)).is_some(), "{screenshot}: {label}");
+            assert!(harness.query_all(By::new().label_contains(label)).next().is_some(), "{screenshot}: {label}");
         }
-        for label in ["Duplicate", "Delete", "Link"] {
+        for label in ["Duplicate", "Delete"] {
             assert!(harness.query(button(label)).is_none(), "{screenshot}: unexpected {label}");
+        }
+        if screenshot == "explorer-package-menu" {
+            for unavailable in ["Export with dependencies...", "Dependency manager...", "Show in folder..."] {
+                assert!(harness.get(button(unavailable)).accesskit_node().is_disabled(), "{unavailable}");
+            }
+        }
+        // A Function Graph has no image outputs to view, compute or export
+        if matches!(screenshot, "explorer-function-menu" | "explorer-graph-menu") {
+            let disabled = harness.get(button("Compute outputs")).accesskit_node().is_disabled();
+            assert_eq!(disabled, screenshot == "explorer-function-menu", "{screenshot}");
         }
 
         assert!(harness.get(button("Paste")).accesskit_node().is_disabled());

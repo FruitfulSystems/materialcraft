@@ -6,4 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct ExplorerState {
     pub selected: Option<ExplorerTarget>,
     pub rename: Option<(ExplorerTarget, String)>,
+    /// The pointer was over the Explorer last frame, so Enter, F2 and Delete act on its selection
+    #[serde(skip)]
+    pub hovered: bool,
 }

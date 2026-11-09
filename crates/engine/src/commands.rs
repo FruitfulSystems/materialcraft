@@ -60,6 +60,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::explorer_clipboard_commands::specs());
         v.extend(crate::graph_instance_commands::specs());
         v.extend(crate::function_library_commands::specs());
+        v.extend(crate::node_library_commands::specs());
         v.extend(crate::node_info_commands::specs());
         v.extend(crate::atomic_sample_commands::specs());
         v.extend(crate::material_cmds::specs());

@@ -20,6 +20,7 @@ mod graph_properties;
 mod linked_instances;
 mod linked_resources;
 mod material_preview;
+mod node_library;
 mod normal_maps;
 mod open_documents;
 mod optimization_perf;

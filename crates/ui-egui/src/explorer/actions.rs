@@ -55,14 +55,86 @@ pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: Ex
         "package.close" | "file.reload" => {
             crate::unsaved::guard(app, crate::unsaved::Guarded::Package { document: target.document(), reload: command == "file.reload" })
         }
-        "file.save" | "file.saveAs" | "file.saveCopyAs" => {
+        "file.save" | "file.saveAs" | "file.saveCopyAs" | "file.exportMaterial" | "file.sendToTextureCraft" => {
             crate::windows::file_action(app, ctx, command);
         }
+        crate::menus::EXPLORER_COMPUTE => compute_outputs(app, &target),
+        crate::menus::EXPLORER_VIEW_OUTPUTS => {
+            if let ExplorerTarget::Graph { index, .. } = target
+                && app.run("view.3d.outputs", json!({"graph": index})).is_some()
+            {
+                app.ui.dock.focus(crate::docking::Panel::View3d);
+            }
+        }
+        crate::menus::EXPLORER_EXPORT_OUTPUTS => {
+            if let ExplorerTarget::Graph { index, .. } = target
+                && (index == app.session.graph || app.run("graph.open", json!({"graph": index})).is_some())
+            {
+                app.ui.windows.export = true;
+            }
+        }
+        crate::menus::EXPLORER_SHOW_IN_FOLDER => show_in_folder(app),
+        crate::menus::EXPLORER_OPEN_DEPENDENCIES => open_dependencies(app),
         _ => {
             app.run(command, target.parameters());
         }
     }
 }
+
+/// A dependency that is another package file on disk (not a library package or an unsaved one)
+pub(super) fn is_package_file(path: &str) -> bool {
+    !path.starts_with("sbs://") && !path.starts_with("unsaved:") && !path.is_empty()
+}
+
+/// Cook the graph's outputs, or every graph of the package with outputs, at full size
+fn compute_outputs(app: &mut MaterialCraftApp, target: &ExplorerTarget) {
+    let graphs: Vec<usize> = match target {
+        ExplorerTarget::Graph { index, .. } => vec![*index],
+        _ => app.session.pkg.graphs.iter().enumerate().filter(|(_, graph)| graph.function.is_none()).map(|(index, _)| index).collect(),
+    };
+    let (mut milliseconds, mut errors) = (0.0, 0);
+    for index in &graphs {
+        let Some(result) = app.run("graph.cook", json!({"graph": index, "full": true})) else { return };
+        milliseconds += result["ms"].as_f64().unwrap_or(0.0);
+        errors += result["nodes"].as_array().map_or(0, |nodes| nodes.iter().filter(|node| !node["error"].is_null()).count());
+    }
+    let summary = crate::i18n::trf("Computed {count} graph(s) in {ms} ms", &[("count", &graphs.len()), ("ms", &format!("{milliseconds:.0}"))]);
+    if errors > 0 {
+        app.toast(format!("{summary}; {}", crate::i18n::trf("{count} node(s) failed: see the graph", &[("count", &errors)])), true);
+    } else {
+        app.toast(summary, false);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn package_path(app: &MaterialCraftApp) -> Option<String> {
+    app.session.open_packages().into_iter().find(|entry| entry.0 == app.session.document_id).and_then(|entry| entry.2.map(str::to_string))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn show_in_folder(app: &mut MaterialCraftApp) {
+    let Some(path) = package_path(app) else { return };
+    if let Err(error) = craft_update::process::reveal(std::path::Path::new(&path)) {
+        app.toast(format!("{}: {error}", tr("Could not show the package file")), true);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn show_in_folder(_: &mut MaterialCraftApp) {}
+
+/// Open every package file the active package links, next to it in the Explorer
+#[cfg(not(target_arch = "wasm32"))]
+fn open_dependencies(app: &mut MaterialCraftApp) {
+    let document = app.session.document_id;
+    let paths: Vec<String> = app.session.pkg.dependencies.keys().filter(|path| is_package_file(path)).cloned().collect();
+    for path in paths {
+        crate::windows::open_path(app, &path);
+    }
+    activate(app, document);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_dependencies(_: &mut MaterialCraftApp) {}
 
 pub(super) fn rename_dialog(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let Some((target, mut name)) = app.ui.explorer.rename.clone() else { return };

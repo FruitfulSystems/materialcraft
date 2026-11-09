@@ -247,7 +247,7 @@ pub(super) fn handle(
     {
         let graph_position = camera.to_graph(position);
         let at = [graph_position.x - NODE_W * 0.5, graph_position.y - 20.0];
-        app.run("graph.node.add", json!({"def": payload.0, "at": at}));
+        app.run("library.add", json!({"entry": payload.0, "at": at}));
     }
 
     // Keys over the canvas

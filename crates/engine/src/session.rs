@@ -157,6 +157,8 @@ pub struct Session {
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
+    /// The node library loaded from the SBS library folder
+    pub library: Arc<crate::node_library::NodeLibrary>,
     pub(crate) history: crate::document_history::DocumentHistory,
     group: Option<(Snapshot, bool)>,
     decoded: Arc<Mutex<HashMap<(u64, bool), Image>>>,
@@ -164,11 +166,9 @@ pub struct Session {
 
 impl Session {
     pub fn new(mut pkg: Package) -> Session {
-        let library = crate::function_library::load();
-        if let Ok(library) = &library {
-            for (path, package) in &library.packages {
-                pkg.dependencies.entry(path.clone()).or_insert_with(|| package.clone());
-            }
+        let library = crate::node_library::NodeLibrary::shared();
+        for (path, package) in &library.packages {
+            pkg.dependencies.entry(path.clone()).or_insert_with(|| package.clone());
         }
         let mut session = Session {
             environment: Default::default(),
@@ -201,19 +201,19 @@ impl Session {
             cook_epoch: 0,
             cache: Arc::new(Mutex::new(Cache::default())),
             custom_mesh: None,
+            library: Default::default(),
             history: Default::default(),
             group: None,
             decoded: Arc::new(Mutex::new(HashMap::new())),
         };
         session.refresh_links();
-        match library {
-            Ok(library) => {
-                for warning in library.warnings {
-                    session.warn(warning);
-                }
-            }
-            Err(error) => session.warn(format!("Missing function library: {error}")),
+        for warning in &library.warnings {
+            session.warn(warning.clone());
         }
+        if !library.packages.contains_key(crate::function_library::STANDARD_PACKAGE) {
+            session.warn(format!("Missing function library: {} did not load", crate::function_library::STANDARD_PACKAGE));
+        }
+        session.library = library;
         session
     }
 

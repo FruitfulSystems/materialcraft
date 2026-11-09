@@ -27,19 +27,67 @@ pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 pub(crate) const EXPLORER_NEW: &[(&str, &str)] = &[("Graph", "ui.newGraph"), ("Function Graph", "ui.newFunctionGraph"), ("Folder", "folder.create")];
 pub(crate) const EXPLORER_IMPORT: &[(&str, &str)] = &[("Bitmap", "file.importBitmap"), ("Vector graphics", "file.importVector")];
 pub(crate) const EXPLORER_RESOURCE: &[(&str, &str)] = &[("Add to graph", "graph.resource.add")];
-pub(crate) const EXPLORER_PACKAGE: &[(&str, &str)] = &[
-    ("Reload", "file.reload"),
-    ("Save", "file.save"),
-    ("Save As", "file.saveAs"),
-    ("Save A Copy As", "file.saveCopyAs"),
-    ("Copy", "explorer.copy"),
-    ("Paste", "explorer.paste"),
-    ("Close", "package.close"),
+/// A row of an Explorer context menu
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ExplorerRow {
+    /// A label, the action id (empty: not available yet) and the shortcut shown beside it
+    Item(&'static str, &'static str, Option<&'static str>),
+    /// A submenu of (label, action id); an empty id is not available yet
+    Sub(&'static str, &'static [(&'static str, &'static str)]),
+    Separator,
+}
+use ExplorerRow::{Item, Separator, Sub};
+
+/// Linking keeps a resource outside the package; MaterialCraft only embeds resources so far
+pub(crate) const EXPLORER_LINK: &[(&str, &str)] = &[("Bitmap", ""), ("Vector graphics", "")];
+pub(crate) const EXPLORER_SEND_TO: &[(&str, &str)] = &[("TextureCraft", "file.sendToTextureCraft")];
+/// Explorer actions that wrap engine commands or the operating system: computing every output,
+/// showing the package file and opening the packages it depends on
+pub(crate) const EXPLORER_COMPUTE: &str = "ui.explorer.computeOutputs";
+pub(crate) const EXPLORER_SHOW_IN_FOLDER: &str = "ui.explorer.showInFolder";
+pub(crate) const EXPLORER_OPEN_DEPENDENCIES: &str = "ui.explorer.openDependencies";
+pub(crate) const EXPLORER_VIEW_OUTPUTS: &str = "ui.explorer.viewOutputs";
+pub(crate) const EXPLORER_EXPORT_OUTPUTS: &str = "ui.explorer.exportOutputs";
+pub(crate) const EXPLORER_PACKAGE: &[ExplorerRow] = &[
+    Sub("New", EXPLORER_NEW),
+    Sub("Import", EXPLORER_IMPORT),
+    Sub("Link", EXPLORER_LINK),
+    Separator,
+    Item("Reload", "file.reload", None),
+    Item("Save", "file.save", Some("Ctrl+S")),
+    Item("Save as...", "file.saveAs", Some("Ctrl+Shift+S")),
+    Item("Save a copy as...", "file.saveCopyAs", None),
+    Separator,
+    Item("Export material...", "file.exportMaterial", None),
+    Item("Export with dependencies...", "", None),
+    Sub("Send to", EXPLORER_SEND_TO),
+    Separator,
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Close package", "package.close", None),
+    Separator,
+    Item("Compute outputs", EXPLORER_COMPUTE, None),
+    Item("Show in folder...", EXPLORER_SHOW_IN_FOLDER, None),
+    Item("Dependency manager...", "", None),
+    Item("Open dependencies", EXPLORER_OPEN_DEPENDENCIES, None),
 ];
-pub(crate) const EXPLORER_FOLDER: &[(&str, &str)] =
-    &[("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Rename", "folder.rename"), ("Remove", "folder.remove")];
-pub(crate) const EXPLORER_GRAPH: &[(&str, &str)] =
-    &[("Open", "graph.open"), ("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Remove", "graph.delete"), ("Rename", "graph.rename")];
+pub(crate) const EXPLORER_FOLDER: &[ExplorerRow] = &[
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Remove", "folder.remove", Some("Delete")),
+    Item("Rename", "folder.rename", Some("F2")),
+];
+pub(crate) const EXPLORER_GRAPH: &[ExplorerRow] = &[
+    Item("Open", "graph.open", Some("Enter")),
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Remove", "graph.delete", Some("Delete")),
+    Item("Rename", "graph.rename", Some("F2")),
+    Separator,
+    Item("View outputs in 3D view", EXPLORER_VIEW_OUTPUTS, None),
+    Item("Compute outputs", EXPLORER_COMPUTE, None),
+    Item("Export outputs...", EXPLORER_EXPORT_OUTPUTS, None),
+];
 
 /// The menu catalog (the target menu tree with our ids)
 pub const CATALOG: &[MenuItem] = &[
@@ -350,6 +398,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
 
     let modality = Modality::capture(app, ctx);
+    if !modality.is_blocked() && crate::explorer::shortcuts(app, ctx) {
+        return;
+    }
     if !modality.is_blocked() {
         crate::graph::wire_actions::shortcuts(app, ctx);
     }
@@ -588,6 +639,50 @@ mod tests {
         app.ui.windows.unsaved = None;
         invoke(&mut app, &ctx, "ui.export");
         assert!(app.ui.windows.export);
+    }
+
+    #[test]
+    fn explorer_keys_act_on_its_selection_only_while_hovered() {
+        use crate::explorer::ExplorerTarget;
+        let mut app = app();
+        app.run("file.new", serde_json::json!({"template": "empty", "name": "Second"})).unwrap();
+        let graphs = app.session.pkg.graphs.len();
+        let document = app.session.document_id;
+        app.ui.explorer.selected = Some(ExplorerTarget::Graph { document, index: 0 });
+
+        // Away from the Explorer, F2 and Delete keep their graph shortcuts
+        dispatched(egui::Key::F2, egui::Modifiers::NONE, &mut app);
+        assert!(app.ui.explorer.rename.is_none());
+
+        app.ui.explorer.hovered = true;
+        dispatched(egui::Key::Enter, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph, 0);
+        dispatched(egui::Key::F2, egui::Modifiers::NONE, &mut app);
+        assert!(matches!(app.ui.explorer.rename, Some((ExplorerTarget::Graph { index: 0, .. }, _))));
+        app.ui.explorer.rename = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.pkg.graphs.len(), graphs - 1);
+        dispatched(egui::Key::Z, egui::Modifiers::COMMAND, &mut app);
+        assert_eq!(app.session.pkg.graphs.len(), graphs, "removing a graph undoes");
+    }
+
+    #[test]
+    fn explorer_menus_name_only_actions_that_exist() {
+        for rows in [EXPLORER_PACKAGE, EXPLORER_FOLDER, EXPLORER_GRAPH] {
+            for row in rows {
+                let ids: Vec<&str> = match row {
+                    ExplorerRow::Item(_, id, _) => vec![id],
+                    ExplorerRow::Sub(_, entries) => entries.iter().map(|(_, id)| *id).collect(),
+                    ExplorerRow::Separator => Vec::new(),
+                };
+                for id in ids.into_iter().filter(|id| !id.is_empty()) {
+                    assert!(implemented(id) || id.starts_with("ui.explorer.") || id.starts_with("explorer."), "{id}");
+                }
+                if let ExplorerRow::Item(label, _, Some(shortcut)) = row {
+                    assert!(parse_shortcut(shortcut).is_some(), "{label}: {shortcut}");
+                }
+            }
+        }
     }
 
     #[test]

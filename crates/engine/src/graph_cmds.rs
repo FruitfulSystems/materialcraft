@@ -22,7 +22,15 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             })
         }),
         cmd!("graph.format", "Output format", [], None, "{format: u8|u16|f16|f32, graph?, document?}", always, format),
-        cmd!("graph.cook", "Compute graph", [], None, "{full?: bool} cooks now; returns per-node timings and errors", has_graph, cook),
+        cmd!(
+            "graph.cook",
+            "Compute graph",
+            [],
+            None,
+            "{full?: bool, graph?: index (another graph of the package cooks at full size into the cache)} cooks now; returns per-node timings and errors",
+            has_graph,
+            cook
+        ),
         cmd!("graph.pin.add", "Add Navigation pin", [], None, "{name?, at? [x, y]}", has_graph, pin_add),
         cmd!("graph.pin.delete", "Delete pin", [], None, "{id}", has_graph, pin_delete),
         cmd!(
@@ -153,8 +161,19 @@ fn format(s: &mut Session, p: &J) -> Result<J> {
 }
 
 fn cook(s: &mut Session, p: &J) -> Result<J> {
-    let cooked = if boolp(p, "full") == Some(true) { s.cook_full(s.graph) } else { s.cook().clone() };
-    let g = s.graph()?;
+    let index = match p.get("graph").filter(|graph| !graph.is_null()) {
+        None => s.graph,
+        Some(graph) => {
+            let index = graph.as_u64().and_then(|index| usize::try_from(index).ok()).ok_or_else(|| bad("graph.cook", "`graph` is a graph index"))?;
+            let graph = s.pkg.graph(index)?;
+            if graph.function.is_some() {
+                return Err(bad("graph.cook", "a Function Graph has no outputs to compute"));
+            }
+            index
+        }
+    };
+    let cooked = if index != s.graph || boolp(p, "full") == Some(true) { s.cook_full(index) } else { s.cook().clone() };
+    let g = s.pkg.graph(index)?;
     Ok(json!({
         "ms": cooked.ms,
         "nodes": cooked.nodes.iter().map(|(id, r)| {
