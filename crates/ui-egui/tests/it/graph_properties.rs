@@ -153,7 +153,10 @@ fn close_with_focused_graph_text(native_close: bool) {
     if native_close {
         let mut input = egui::RawInput::default();
         input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().events.push(egui::ViewportEvent::Close);
-        let output = egui::Context::default().run_ui(input, |ui| materialcraft_ui_egui::unsaved::handle_close(harness.state_mut(), ui.ctx()));
+        let mut output = egui::Context::default().run_ui(input, |ui| materialcraft_ui_egui::unsaved::handle_close(harness.state_mut(), ui.ctx()));
+
+        // This close-event frame has no renderer to consume texture updates
+        output.textures_delta.clear();
         assert!(output.viewport_output[&egui::ViewportId::ROOT].commands.contains(&egui::ViewportCommand::CancelClose));
     } else {
         materialcraft_ui_egui::unsaved::guard(harness.state_mut(), materialcraft_ui_egui::unsaved::Guarded::Quit);
