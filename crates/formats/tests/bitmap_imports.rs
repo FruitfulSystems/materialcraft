@@ -9,7 +9,8 @@ fn bitmap_filters_are_specific_and_match_supported_extensions() {
     for excluded in ["svg", "psd", "psb", "surface", "raw", "jng", "wbmp", "*"] {
         assert!(!extensions.contains(excluded));
     }
-    assert!(BITMAP_FORMATS.iter().all(|(label, _)| !label.to_lowercase().contains("all")));
+    assert_eq!(BITMAP_FORMATS[0], ("All formats", BITMAP_EXTENSIONS));
+    assert_eq!(materialcraft_formats::VECTOR_FORMATS[0], ("All formats", materialcraft_formats::VECTOR_EXTENSIONS));
 }
 
 #[test]

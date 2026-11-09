@@ -32,11 +32,7 @@ impl GraphTarget {
     }
 
     pub fn package(self, session: &Session) -> Result<&Package> {
-        if self.document == session.document_id {
-            return Ok(&session.pkg);
-        }
-
-        session.documents.get(&self.document).map(|document| &document.pkg).ok_or_else(|| bad("graph", "the inspected package is no longer open"))
+        session.package(self.document)
     }
 
     pub fn get(self, session: &Session) -> Result<&Graph> {
@@ -53,16 +49,6 @@ impl GraphTarget {
     }
 
     fn edit_with_key<T>(self, session: &mut Session, label: &str, key: Option<&str>, edit: impl FnOnce(&mut Package) -> Result<T>) -> Result<T> {
-        if self.document == session.document_id {
-            return match key {
-                Some(key) => session.edit_merged(key, label, |session| edit(&mut session.pkg)),
-                None => session.edit(label, |session| edit(&mut session.pkg)),
-            };
-        }
-
-        let document = session.documents.get_mut(&self.document).ok_or_else(|| bad("graph", "the inspected package is no longer open"))?;
-        let result = document.edit(label, key, session.history_prefs.undo_limit as usize, edit)?;
-        session.refresh_links();
-        Ok(result)
+        session.edit_package(self.document, label, key, edit)
     }
 }

@@ -240,15 +240,22 @@ are read in memory, validate paths and duplicates, and cap expanded bytes at 256
 4096 and linked packages at 64. Referenced packages are included under `resources/packages/`;
 unresolved installed-library aliases retain their `sbs://` references. Autosaves use `.mcraft`.
 
-Explorer always shows a reserved Resources folder. Its Import submenu accepts bitmaps or SVG
-vector graphics; it cannot contain new graphs or generic folders, be renamed, copied, moved or
-removed. Import creates an asset; its Add to graph action creates the appropriate bitmap or SVG
-node. Imported native SBS groups retain their original resource placement for round-trip fidelity.
+Explorer shows its reserved Resources folder once it contains assets or subfolders. Its Import
+submenu accepts bitmaps or SVG vector graphics into the selected asset folder. Subfolders can be
+created, renamed and removed; graph creation and graph-folder moves into this tree are rejected.
+The root Resources name is reserved regardless of capitalization and cannot be renamed, copied, moved or
+removed. Import creates an asset; dragging it onto the canvas or choosing Add to graph creates the
+appropriate bitmap or SVG node. Drops from another open package copy the asset into the destination
+in one undo step. Imported native SBS groups retain their original resource placement for round-trip
+fidelity. Folder Properties exposes Identifier and Description; descriptions persist in native SBS
+group `desc` elements, including inside MCRAFT. The reserved root identifier is read-only.
 
 Bitmap imports support DDS, WebP, GIF, HDR, EXR, JPEG, PGM, PNG, TIFF, Targa and BMP. DDS uses the
 MIT OR Apache-2.0 `dds` decoder; GIF and ASCII/binary PGM use `image`. GIF loads its first frame;
 DDS loads its first surface at the largest mip level. Each bitmap format has its own picker filter,
-and vector import offers SVG only. Neither picker adds wildcard or aggregate filters.
+and vector import offers SVG only. Both pickers include All formats, restricted to their supported
+extensions, and descriptive names with extension patterns. Open offers SBS XML Package and
+MaterialCraft Project plus All formats; Save As offers those two formats separately.
 
 The browser downloads `.mcraft` directly. SBS downloads use a transport ZIP containing the named
 SBS and its adjacent resources; extract it to work with the native files. Both forms can be opened

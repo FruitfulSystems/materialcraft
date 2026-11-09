@@ -47,7 +47,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Import bitmap...",
             ["File"],
             None,
-            "{path, name?} imports an image into the package Resources folder; returns its name without adding a graph node",
+            "{path, name?, folder?} imports an image into Resources or its subfolders; returns its name without adding a graph node",
             always,
             import_bitmap
         ),
@@ -383,13 +383,48 @@ fn export(_: &mut Session, _: &J) -> Result<J> {
 
 /// Embed image bytes as a resource; returns the resource name
 pub fn add_resource(s: &mut Session, file: &str, bytes: Vec<u8>, name: Option<&str>) -> Result<String> {
+    add_resource_into(s, file, bytes, name, "Resources")
+}
+
+/// Import original image bytes into an existing asset folder in one undo step.
+pub fn add_resource_into(s: &mut Session, file: &str, bytes: Vec<u8>, name: Option<&str>, folder: &str) -> Result<String> {
+    crate::folder_path::require_resource_folder(&s.pkg, folder)?;
     let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension);
     validate_resource_extension(file, extension.eq_ignore_ascii_case("svg"))?;
     if bytes.len() > 64 << 20 || s.pkg.resources.len() >= 4096 {
         return Err(bad("file.importBitmap", "Resources are limited to 64 MiB per file and 4096 files per package"));
     }
     materialcraft_formats::decode(&bytes, false)?;
-    s.edit("Import resource", |s| Ok(push_resource(&mut s.pkg, file, bytes, name)))
+    s.edit("Import resource", |s| {
+        let file_name = materialcraft_formats::safe_file_name(file);
+        let base = name.unwrap_or_else(|| file_name.rsplit_once('.').map_or(file_name.as_str(), |(stem, _)| stem));
+        crate::folder_path::name(base)?;
+        let name = resource_name(&s.pkg, folder, base);
+        let name = push_resource(&mut s.pkg, file, bytes, Some(&name));
+        if let Some(resource) = s.pkg.resources.iter_mut().find(|resource| resource.name == name) {
+            resource.folder = folder.into();
+        }
+        Ok(name)
+    })
+}
+
+pub(crate) fn resource_name(package: &Package, folder: &str, base: &str) -> String {
+    let occupied: std::collections::BTreeSet<_> = package
+        .resources
+        .iter()
+        .map(|resource| resource.name.clone())
+        .chain(
+            package
+                .folder_paths()
+                .into_iter()
+                .filter_map(|path| path.rsplit_once('/').filter(|(parent, _)| *parent == folder).map(|(_, name)| name.to_string())),
+        )
+        .chain(package.graphs.iter().filter(|graph| graph.folder == folder).map(|graph| graph.name.clone()))
+        .collect();
+    (0..=occupied.len())
+        .map(|index| if index == 0 { base.to_string() } else { format!("{base}_{index}") })
+        .find(|name| !occupied.contains(name))
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Add `bytes` to `pkg` as a resource named `name` (or after `file`), made unique; returns the name
@@ -416,7 +451,7 @@ pub(crate) fn import_resource_file(s: &mut Session, p: &J, vector: bool) -> Resu
         .and_then(|file| file.take((64 << 20) + 1).read_to_end(&mut bytes))
         .map_err(|e| bad("file.importBitmap", format!("{path}: {e}")))?;
     let file = std::path::Path::new(path).file_name().and_then(|f| f.to_str()).unwrap_or("bitmap.png").to_string();
-    let name = add_resource(s, &file, bytes, strp(p, "name"))?;
+    let name = add_resource_into(s, &file, bytes, strp(p, "name"), strp(p, "folder").unwrap_or("Resources"))?;
     let def = if file.to_ascii_lowercase().ends_with(".svg") { "svg" } else { "bitmap" };
     Ok(json!({"name": name, "use": {"command": "graph.node.add", "params": {"def": def, "params": {"resource": name}}}}))
 }

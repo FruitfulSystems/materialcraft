@@ -47,3 +47,18 @@ mod import_tests {
         assert_eq!(app.session.history().len(), base);
     }
 }
+#[test]
+fn project_dialogs_offer_separate_formats_and_import_filters_show_full_names() {
+    use super::{package_filters, resource_filters};
+    let saved = package_filters(false, false);
+    assert_eq!(saved, vec![("SBS XML Package (*.sbs)", &["sbs"][..]), ("MaterialCraft Project (*.mcraft)", &["mcraft"][..])]);
+    assert_eq!(package_filters(false, true)[0], saved[1]);
+    let opened = package_filters(true, false);
+    assert_eq!(opened[0], ("All formats (*.sbs *.mcraft)", &["sbs", "mcraft"][..]));
+    assert_eq!(&opened[1..], &saved);
+    let bitmap = resource_filters(false);
+    assert_eq!(bitmap[0].1, materialcraft_engine::formats::BITMAP_EXTENSIONS);
+    assert!(bitmap.iter().any(|(label, _)| label == "Portable Network Graphics (*.png)"));
+    assert!(bitmap.iter().any(|(label, _)| label == "JPEG - JFIF Compliant (*.jpg *.jif *.jpeg *.jpe)"));
+    assert_eq!(resource_filters(true)[1].0, "Scalable Vector Graphics (*.svg)");
+}

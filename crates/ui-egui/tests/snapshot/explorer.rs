@@ -3,6 +3,141 @@ use egui::accesskit::Role;
 
 #[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_resources_drag_into_the_graph() {
+    use materialcraft_engine::{core::Value, file_cmds, formats};
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
+    app.run("file.newPackage", json!({"name": "Drag resources"})).unwrap();
+    app.run("file.new", json!({"template": "empty"})).unwrap();
+    app.session.preview_size = Some(16);
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>"#;
+    file_cmds::add_resource(&mut app.session, "Mask.svg", svg.to_vec(), None).unwrap();
+    let bitmap = formats::encode(&formats::decode(svg, false).unwrap(), "png", formats::Depth::U8, true).unwrap();
+    file_cmds::add_resource(&mut app.session, "Paint.png", bitmap, None).unwrap();
+    app.ui.dock.close(materialcraft_ui_egui::docking::Panel::Library);
+    let document = app.session.document_id;
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 6);
+
+    for (index, (name, definition)) in [("Mask", "svg"), ("Paint", "bitmap")].into_iter().enumerate() {
+        let start = harness.get(By::new().role(Role::TreeItem).label(name)).rect().center();
+        let end = harness.state().graph.view.center() + egui::vec2(index as f32 * 200.0 - 100.0, 0.0);
+        harness.event(egui::Event::PointerMoved(start));
+        harness.step();
+        harness.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        harness.step();
+        for position in [start + egui::vec2(12.0, 0.0), end] {
+            harness.event(egui::Event::PointerMoved(position));
+            harness.step();
+        }
+        harness.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        settle(&mut harness, 8);
+
+        let session = &harness.state().session;
+        assert_eq!(session.document_id, document);
+        let graph = session.graph().unwrap();
+        assert_eq!(graph.nodes.len(), index + 1, "dragging {name} must add exactly one node");
+        let node = graph.nodes.last().unwrap();
+        assert_eq!(node.def, definition);
+        assert_eq!(node.params["resource"], Value::Text(name.into()));
+        assert!(session.cooked.nodes[&node.id].error.is_none());
+        let bounds = harness.state().graph.rects.iter().find(|(id, _)| *id == node.id).unwrap().1;
+        assert!((bounds.center().x - end.x).abs() < 2.0, "the node must land at the pointer");
+        harness.state_mut().run("edit.undo", json!({})).unwrap();
+        assert_eq!(harness.state().session.graph().unwrap().nodes.len(), index);
+        assert_eq!(harness.state().session.pkg.resources.len(), 2);
+        harness.state_mut().run("edit.redo", json!({})).unwrap();
+        settle(&mut harness, 5);
+    }
+    save(&mut harness, &directory, "explorer-resource-drops");
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_resources_folder_is_hidden_until_an_asset_is_imported() {
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut harness = harness(MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default()), 1600.0, 960.0);
+    settle(&mut harness, 4);
+    let resources = || By::new().role(Role::TreeItem).label("Resources");
+    assert!(harness.query(resources()).is_none());
+    save(&mut harness, &directory, "explorer-empty-resources-hidden");
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
+    materialcraft_engine::file_cmds::add_resource(&mut harness.state_mut().session, "Mask.svg", svg.to_vec(), None).unwrap();
+    settle(&mut harness, 4);
+    assert!(harness.query(resources()).is_some());
+    harness.state_mut().run("edit.undo", json!({})).unwrap();
+    settle(&mut harness, 4);
+    assert!(harness.query(resources()).is_none());
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
+fn explorer_folder_properties_and_saved_package_names() {
+    let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
+    app.session.pkg.name = "Untitled".into();
+    app.run("folder.create", json!({"name": "Tools"})).unwrap();
+    app.run("folder.create", json!({"parent": "Resources", "name": "Masks"})).unwrap();
+    let mut harness = harness(app, 1600.0, 960.0);
+    settle(&mut harness, 5);
+    let tree = |name| By::new().role(Role::TreeItem).label(name);
+    let input = |name| By::new().role(Role::TextInput).label(name);
+    assert!(harness.query(tree("Untitled*")).is_some());
+
+    let position = harness.get(tree("Resources")).rect().center();
+    super::click_canvas(&mut harness, position);
+    assert_eq!(harness.get(input("Identifier")).value().as_deref(), Some("Resources"));
+    let position = harness.get(input("Description")).rect().center();
+    super::click_canvas(&mut harness, position);
+    harness.get(input("Description")).type_text("Original texture assets");
+    settle(&mut harness, 2);
+    let position = harness.get(tree("Tools")).rect().center();
+    super::click_canvas(&mut harness, position);
+    assert_eq!(harness.state().session.pkg.folder_descriptions["Resources"], "Original texture assets");
+    let position = harness.get(input("Description")).rect().center();
+    super::click_canvas(&mut harness, position);
+    harness.get(input("Description")).type_text("Reusable graph helpers");
+    settle(&mut harness, 2);
+    // Saving while a field still has focus must commit its draft.
+    harness.state_mut().run("file.saveAs", json!({"path": directory.join("Folder attributes.sbs")})).unwrap();
+    settle(&mut harness, 4);
+    assert_eq!(harness.state().session.pkg.folder_descriptions["Tools"], "Reusable graph helpers");
+    assert!(harness.query(tree("Folder attributes.sbs")).is_some());
+    save(&mut harness, &directory, "explorer-folder-properties");
+    harness.state_mut().run("file.saveAs", json!({"path": directory.join("Folder attributes.mcraft")})).unwrap();
+    settle(&mut harness, 4);
+    assert!(harness.query(tree("Folder attributes.mcraft")).is_some());
+
+    let position = harness.get(tree("Resources")).rect().center();
+    super::click_canvas(&mut harness, position);
+    save(&mut harness, &directory, "explorer-resources-properties");
+    harness.get(tree("Resources")).click_secondary();
+    settle(&mut harness, 2);
+    harness.get(By::new().role(Role::Button).label("New")).click();
+    settle(&mut harness, 2);
+    for name in ["Graph", "Function Graph"] {
+        assert!(harness.query(By::new().role(Role::Button).label(name)).is_none());
+    }
+    save(&mut harness, &directory, "explorer-resources-new-folder");
+    harness.get(By::new().role(Role::Button).label("Folder")).click();
+    settle(&mut harness, 4);
+    assert!(harness.state().session.pkg.folder_paths().contains("Resources/Untitled_Folder_1"));
+    assert_eq!(harness.get(input("Identifier")).value().as_deref(), Some("Untitled_Folder_1"));
+    let position = harness.get(input("Identifier")).rect().center();
+    super::click_canvas(&mut harness, position);
+    harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get(input("Identifier")).type_text("Textures");
+    settle(&mut harness, 2);
+    let position = harness.get(tree("Tools")).rect().center();
+    super::click_canvas(&mut harness, position);
+    assert!(harness.state().session.pkg.folder_paths().contains("Resources/Textures"));
+}
+
+#[test]
+#[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
 fn explorer_selection_does_not_open_documents_or_graphs() {
     let directory = std::path::PathBuf::from(std::env::var_os("MC_SNAPSHOT_DIR").unwrap());
     std::fs::create_dir_all(&directory).unwrap();
@@ -98,7 +233,7 @@ fn explorer_folder_tree_and_context_menus() {
 
     harness.get(tree("Resources")).click_secondary();
     settle(&mut harness, 3);
-    for label in ["New", "Copy", "Paste", "Rename", "Remove"] {
+    for label in ["Copy", "Paste", "Rename", "Remove"] {
         assert!(harness.query(button(label)).is_none(), "Resources must not offer {label}");
     }
     harness.get(By::new().label("Import")).click();

@@ -10,16 +10,26 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         cmd!("folder.create", "New folder", [], None, "{parent?, name?} creates an empty folder", always, create),
         cmd!("folder.rename", "Rename folder", [], None, "{folder, name} renames a folder and updates local graph references", always, rename),
         cmd!("folder.remove", "Remove folder", [], None, "{folder} removes a folder and its contents, with undo", always, remove),
-        cmd!("explorer.move", "Move Explorer item", [], None, "{graph? index, folder?, parent?} moves a graph or folder within its package", always, move_item),
+        cmd!(
+            "explorer.move",
+            "Move Explorer item",
+            [],
+            None,
+            "{graph? index, folder?, resource?, parent?} moves a graph, folder or resource within its package",
+            always,
+            move_item
+        ),
     ]
 }
 
 fn create(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "parent").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
-    folder_path::require_graph_folder(parent)?;
     let name = folder_path::name(strp(parameters, "name").unwrap_or("Untitled_Folder"))?;
-    folder_path::require_graph_folder(&folder_path::join(parent, name))?;
+    folder_path::require_mutable_folder(&folder_path::join(parent, name))?;
+    if session.pkg.folder_paths().len() >= 16384 {
+        return Err(bad("folder.create", "A package supports at most 16384 folders"));
+    }
     let path = folder_path::join(parent, &folder_path::unique(&session.pkg, parent, name));
     folder_path::validate(&path)?;
     session.edit("New folder", |session| {
@@ -31,7 +41,7 @@ fn create(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn source<'a>(session: &Session, parameters: &'a Value) -> Result<&'a str> {
     let path = strp(parameters, "folder").filter(|path| !path.is_empty()).ok_or_else(|| bad("folder", "folder is required"))?;
     folder_path::require(&session.pkg, path)?;
-    folder_path::require_graph_folder(path)?;
+    folder_path::require_mutable_folder(path)?;
     Ok(path)
 }
 
@@ -43,48 +53,57 @@ fn rename(session: &mut Session, parameters: &Value) -> Result<Value> {
 }
 
 fn relocate_folder(session: &mut Session, old: &str, new: &str) -> Result<Value> {
+    session.edit("Move or rename folder", |session| relocate_in_package(&mut session.pkg, old, new))
+}
+
+pub(crate) fn relocate_in_package(package: &mut materialcraft_core::Package, old: &str, new: &str) -> Result<Value> {
+    folder_path::require(package, old)?;
     folder_path::validate(new)?;
-    folder_path::require_graph_folder(old)?;
-    folder_path::require_graph_folder(new)?;
+    folder_path::require_mutable_folder(old)?;
+    folder_path::require_mutable_folder(new)?;
+    if folder_path::is_resources(old) != folder_path::is_resources(new) {
+        return Err(bad("folder", "Asset folders must stay within Resources, and graph folders outside it"));
+    }
     if old == new {
         return Ok(json!({"folder": new}));
     }
     if folder_path::contains(old, new)
-        || session.pkg.folder_paths().contains(new)
-        || session.pkg.graphs.iter().any(|graph| graph.sbs_path() == new)
-        || session.pkg.resources.iter().any(|resource| resource.sbs_path() == new)
+        || package.folder_paths().contains(new)
+        || package.graphs.iter().any(|graph| graph.sbs_path() == new)
+        || package.resources.iter().any(|resource| resource.sbs_path() == new)
     {
         return Err(bad("folder", "the destination already exists or is inside the source folder"));
     }
 
     let replace = |path: &str| format!("{new}{}", path.strip_prefix(old).unwrap_or(""));
-    let folders = session.pkg.folder_paths().into_iter().map(|path| if folder_path::contains(old, &path) { replace(&path) } else { path }).collect::<Vec<_>>();
+    let folders = package.folder_paths().into_iter().map(|path| if folder_path::contains(old, &path) { replace(&path) } else { path }).collect::<Vec<_>>();
     for folder in &folders {
         folder_path::validate(folder)?;
     }
-    let paths = session
-        .pkg
+    let paths = package
         .graphs
         .iter()
         .filter(|graph| folder_path::contains(old, &graph.folder))
         .map(|graph| (graph.sbs_path(), folder_path::join(&replace(&graph.folder), &graph.name)))
         .collect();
-    let names = crate::graph_references::with_leaf_names(&session.pkg, &paths);
-    session.edit("Move or rename folder", |session| {
-        for graph in &mut session.pkg.graphs {
-            if folder_path::contains(old, &graph.folder) {
-                graph.folder = replace(&graph.folder);
-            }
+    let names = crate::graph_references::with_leaf_names(package, &paths);
+    for graph in &mut package.graphs {
+        if folder_path::contains(old, &graph.folder) {
+            graph.folder = replace(&graph.folder);
         }
-        session.pkg.folders = folders;
-        for resource in &mut session.pkg.resources {
-            if folder_path::contains(old, &resource.folder) {
-                resource.folder = replace(&resource.folder);
-            }
+    }
+    package.folders = folders;
+    package.folder_descriptions = std::mem::take(&mut package.folder_descriptions)
+        .into_iter()
+        .map(|(path, description)| (if folder_path::contains(old, &path) { replace(&path) } else { path }, description))
+        .collect();
+    for resource in &mut package.resources {
+        if folder_path::contains(old, &resource.folder) {
+            resource.folder = replace(&resource.folder);
         }
-        crate::graph_references::remap(&mut session.pkg, &names);
-        Ok(json!({"folder": new}))
-    })
+    }
+    crate::graph_references::remap(package, &names);
+    Ok(json!({"folder": new}))
 }
 
 fn remove(session: &mut Session, parameters: &Value) -> Result<Value> {
@@ -101,6 +120,7 @@ fn remove(session: &mut Session, parameters: &Value) -> Result<Value> {
             }
         }
         session.pkg.resources.retain(|resource| !folder_path::contains(folder, &resource.folder));
+        session.pkg.folder_descriptions.retain(|path, _| !folder_path::contains(folder, path));
         session.graph = session.graph.min(session.pkg.graphs.len().saturating_sub(1));
         session.selection.clear();
         session.annotation_selection = None;
@@ -113,8 +133,25 @@ fn remove(session: &mut Session, parameters: &Value) -> Result<Value> {
 fn move_item(session: &mut Session, parameters: &Value) -> Result<Value> {
     let parent = strp(parameters, "parent").unwrap_or("");
     folder_path::require(&session.pkg, parent)?;
-    folder_path::require_graph_folder(parent)?;
+    if let Some(name) = strp(parameters, "resource") {
+        folder_path::require_resource_folder(&session.pkg, parent)?;
+        let resource = session.pkg.resource(name).ok_or_else(|| bad("explorer.move", "Resource not found"))?;
+        if resource.folder == parent {
+            return Ok(json!({"resource": name}));
+        }
+        let path = folder_path::join(parent, name);
+        if session.pkg.folder_paths().contains(&path) {
+            return Err(bad("explorer.move", "The destination already contains a folder with this name"));
+        }
+        return session.edit("Move resource", |session| {
+            if let Some(resource) = session.pkg.resources.iter_mut().find(|resource| resource.name == name) {
+                resource.folder = parent.into();
+            }
+            Ok(json!({"resource": name}))
+        });
+    }
     if let Some(index) = parameters.get("graph").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok()) {
+        folder_path::require_graph_folder(parent)?;
         let graph = session.pkg.graph(index)?;
         let new = folder_path::join(parent, &graph.name);
         if graph.folder == parent {

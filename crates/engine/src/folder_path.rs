@@ -51,10 +51,26 @@ pub(crate) fn require_graph_folder(path: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn require_resource_folder(package: &Package, path: &str) -> Result<()> {
+    require(package, path)?;
+    if !is_resources(path) {
+        return Err(bad("explorer", "Assets belong in Resources or one of its subfolders"));
+    }
+    Ok(())
+}
+
+pub(crate) fn require_mutable_folder(path: &str) -> Result<()> {
+    if path.eq_ignore_ascii_case("Resources") {
+        return Err(bad("explorer", "The root Resources folder is reserved"));
+    }
+    Ok(())
+}
+
 pub(crate) fn unique(package: &Package, parent: &str, base: &str) -> String {
     let occupied = package.folder_paths();
     let free = |name: &str| {
-        !occupied.contains(&join(parent, name))
+        !(parent.is_empty() && name.eq_ignore_ascii_case("Resources"))
+            && !occupied.contains(&join(parent, name))
             && !package.graphs.iter().any(|graph| graph.folder == parent && graph.name == name)
             && !package.resources.iter().any(|resource| resource.folder == parent && resource.name == name)
     };

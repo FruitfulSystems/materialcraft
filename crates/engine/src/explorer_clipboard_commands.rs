@@ -90,6 +90,8 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
         folder_names.insert(folder.clone(), new);
     }
     incoming.folders = folder_names.values().cloned().collect();
+    incoming.folder_descriptions =
+        incoming.folder_descriptions.into_iter().filter_map(|(path, description)| folder_names.get(&path).map(|new| (new.clone(), description))).collect();
     let mut paths = BTreeMap::new();
     for graph in &mut incoming.graphs {
         let old = graph.sbs_path();
@@ -152,6 +154,9 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
         let count = incoming.graphs.len();
         session.pkg.graphs.extend(incoming.graphs);
         session.pkg.folders.extend(incoming.folders);
+        for (path, description) in incoming.folder_descriptions {
+            session.pkg.folder_descriptions.entry(path).or_insert(description);
+        }
         session.pkg.resources.extend(incoming.resources);
         if count > 0 {
             session.graph = first;

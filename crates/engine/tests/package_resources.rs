@@ -4,13 +4,131 @@ use serde_json::json;
 const SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>"#;
 
 #[test]
+fn resource_nodes_use_the_source_package_and_undo_as_one_edit() {
+    use materialcraft_engine::core::Value;
+    let mut session = Session::new(Package::new("Source"));
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    file_cmds::add_resource(&mut session, "mask.svg", SVG.to_vec(), Some("Mask")).unwrap();
+    let source = session.document_id;
+    execute(&mut session, "graph.resource.add", &json!({"resource": "Mask", "at": [120, 80]})).unwrap();
+    assert_eq!(session.pkg.resources.len(), 1);
+    assert_eq!(session.graph().unwrap().nodes[0].pos, [120.0, 80.0]);
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert!(session.graph().unwrap().nodes.is_empty());
+
+    execute(&mut session, "file.newPackage", &json!({"name": "Destination"})).unwrap();
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    let destination = session.document_id;
+    file_cmds::add_resource(&mut session, "other.svg", SVG.to_vec(), Some("Mask")).unwrap();
+    execute(&mut session, "graph.resource.add", &json!({"document": source, "resource": "Mask"})).unwrap();
+    assert_eq!(session.document_id, destination);
+    let node = &session.graph().unwrap().nodes[0];
+    assert_eq!(node.def, "svg");
+    assert_eq!(node.params["resource"], Value::Text("Mask_1".into()));
+    assert_eq!(session.pkg.resource("Mask_1").unwrap().bytes.as_slice(), SVG);
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert_eq!(session.pkg.resources.len(), 1);
+    assert!(session.graph().unwrap().nodes.is_empty());
+    assert_eq!(session.package(source).unwrap().resources.len(), 1);
+    let before = session.pkg.clone();
+    for parameters in [json!({"resource": "missing"}), json!({"document": u64::MAX, "resource": "Mask"})] {
+        assert!(execute(&mut session, "graph.resource.add", &parameters).is_err());
+        assert_eq!(session.pkg, before);
+    }
+}
+
+#[test]
+fn asset_subfolders_and_attributes_persist_in_both_project_formats() {
+    let root = std::env::temp_dir().join(format!("materialcraft-resource-folders-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut session = Session::new(Package::new("Folders"));
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    execute(&mut session, "folder.create", &json!({"parent": "Resources", "name": "Masks"})).unwrap();
+    execute(&mut session, "folder.create", &json!({"parent": "Resources/Masks", "name": "Empty"})).unwrap();
+    execute(&mut session, "folder.attributes", &json!({"folder": "Resources", "description": "Imported assets"})).unwrap();
+    let description = "Masks & <shapes>\nSecond line: café";
+    execute(&mut session, "folder.attributes", &json!({"folder": "Resources/Masks", "description": description})).unwrap();
+    file_cmds::add_resource_into(&mut session, "mask.svg", SVG.to_vec(), Some("Mask"), "Resources/Masks").unwrap();
+    execute(&mut session, "graph.resource.add", &json!({"resource": "Mask"})).unwrap();
+    execute(&mut session, "folder.attributes", &json!({"folder": "Resources/Masks", "identifier": "Shapes"})).unwrap();
+    assert!(!session.pkg.folder_descriptions.contains_key("Resources/Masks"));
+    assert_eq!(session.pkg.resource("Mask").unwrap().folder, "Resources/Shapes");
+    assert_eq!(session.pkg.folder_descriptions["Resources/Shapes"], description);
+    execute(&mut session, "explorer.move", &json!({"resource": "Mask", "parent": "Resources/Shapes/Empty"})).unwrap();
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert_eq!(session.pkg.resource("Mask").unwrap().folder, "Resources/Shapes");
+
+    for extension in ["sbs", "mcraft"] {
+        let path = root.join(format!("folders.{extension}"));
+        execute(&mut session, "file.saveAs", &json!({"path": path})).unwrap();
+        let mut reopened = Session::new(Package::new("Empty"));
+        file_cmds::open_file(&mut reopened, path.to_str().unwrap()).unwrap();
+        assert_eq!(reopened.pkg.folder_descriptions, session.pkg.folder_descriptions);
+        assert!(reopened.pkg.folder_paths().contains("Resources/Shapes/Empty"));
+        assert_eq!(reopened.pkg.resource("Mask").unwrap().folder, "Resources/Shapes");
+        assert_eq!(reopened.pkg.resource("Mask").unwrap().bytes.as_slice(), SVG);
+    }
+    execute(&mut session, "folder.remove", &json!({"folder": "Resources/Shapes"})).unwrap();
+    assert!(!session.pkg.folder_descriptions.contains_key("Resources/Shapes"));
+    assert!(session.pkg.resources.is_empty());
+    execute(&mut session, "edit.undo", &json!({})).unwrap();
+    assert_eq!(session.pkg.folder_descriptions["Resources/Shapes"], description);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resources_root_is_unique_and_its_subtree_stays_asset_only() {
+    let mut session = Session::new(Package::new("Reserved"));
+    execute(&mut session, "file.new", &json!({"template": "empty"})).unwrap();
+    execute(&mut session, "folder.create", &json!({"name": "Tools"})).unwrap();
+    execute(&mut session, "folder.create", &json!({"parent": "Resources", "name": "Images"})).unwrap();
+    for name in ["Resources", "resources", "RESOURCES"] {
+        for (command, parameters) in [
+            ("folder.create", json!({"name": name})),
+            ("folder.rename", json!({"folder": "Tools", "name": name})),
+            ("folder.attributes", json!({"folder": "Tools", "identifier": name})),
+        ] {
+            assert!(execute(&mut session, command, &parameters).is_err(), "{command}: {parameters}");
+        }
+    }
+    for (command, parameters) in [
+        ("file.new", json!({"folder": "Resources/Images"})),
+        ("explorer.move", json!({"graph": 0, "parent": "Resources/Images"})),
+        ("explorer.move", json!({"folder": "Tools", "parent": "Resources"})),
+        ("explorer.move", json!({"folder": "Resources/Images", "parent": ""})),
+        ("folder.attributes", json!({"folder": "Resources", "identifier": "Assets"})),
+    ] {
+        assert!(execute(&mut session, command, &parameters).is_err(), "{command}: {parameters}");
+    }
+    assert!(file_cmds::add_resource_into(&mut session, "mask.svg", SVG.to_vec(), None, "Tools").is_err());
+    assert_eq!(file_cmds::add_resource(&mut session, "Images.svg", SVG.to_vec(), None).unwrap(), "Images_1");
+}
+
+#[test]
+fn folder_attributes_target_inactive_packages_without_switching_the_canvas() {
+    let mut session = Session::new(Package::new("Source"));
+    execute(&mut session, "folder.create", &json!({"name": "Tools"})).unwrap();
+    let source = session.document_id;
+    execute(&mut session, "file.newPackage", &json!({"name": "Active"})).unwrap();
+    let active = session.document_id;
+    execute(&mut session, "folder.attributes", &json!({"document": source, "folder": "Tools", "identifier": "Helpers", "description": "Utility graphs"}))
+        .unwrap();
+    assert_eq!(session.document_id, active);
+    let properties = execute(&mut session, "folder.properties", &json!({"document": source, "folder": "Helpers"})).unwrap();
+    assert_eq!(properties["description"], "Utility graphs");
+    execute(&mut session, "edit.undo", &json!({"document": source})).unwrap();
+    assert!(session.package(source).unwrap().folder_paths().contains("Tools"));
+    assert!(session.package(source).unwrap().folder_descriptions.is_empty());
+    assert_eq!(session.document_id, active);
+}
+
+#[test]
 fn resources_is_reserved_for_assets() {
     let mut session = Session::new(Package::new("Resources test"));
     assert!(session.pkg.folder_paths().contains("Resources"));
     for (command, params) in [
         ("file.new", json!({"folder": "Resources"})),
         ("folder.create", json!({"name": "Resources"})),
-        ("folder.create", json!({"parent": "Resources", "name": "Graphs"})),
         ("folder.rename", json!({"folder": "Resources", "name": "Other"})),
         ("folder.remove", json!({"folder": "Resources"})),
         ("explorer.move", json!({"folder": "Resources", "parent": ""})),

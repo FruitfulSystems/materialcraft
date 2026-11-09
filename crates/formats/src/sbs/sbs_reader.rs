@@ -62,6 +62,9 @@ impl<'text> SbsReader<'text, '_> {
                         }
 
                         pkg.folders.push(path.clone());
+                        if let Some(description) = child_value(item, "desc").filter(|text| !text.is_empty()) {
+                            pkg.folder_descriptions.insert(path.clone(), description.into());
+                        }
                         if let Some(group_content) = child_element(item, "content") {
                             pending.push((path, group_content));
                         }

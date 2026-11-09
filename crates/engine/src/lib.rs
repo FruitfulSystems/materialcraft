@@ -7,6 +7,7 @@ mod explorer_clipboard;
 mod explorer_clipboard_commands;
 mod folder_commands;
 mod folder_path;
+mod folder_property_commands;
 pub use explorer_clipboard::ExplorerClipboard;
 mod function_library;
 mod function_library_commands;

@@ -56,4 +56,8 @@ impl ExplorerTarget {
     pub fn is_resources(&self) -> bool {
         matches!(self, Self::Folder { path, .. } if path.split('/').next().is_some_and(|part| part.eq_ignore_ascii_case("Resources")))
     }
+
+    pub fn is_resources_root(&self) -> bool {
+        matches!(self, Self::Folder { path, .. } if path.eq_ignore_ascii_case("Resources"))
+    }
 }

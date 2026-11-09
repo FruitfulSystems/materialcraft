@@ -75,6 +75,29 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
 }
 
 impl Session {
+    pub fn package(&self, document: u64) -> Result<&Package> {
+        if document == self.document_id {
+            return Ok(&self.pkg);
+        }
+        self.documents.get(&document).map(|document| &document.pkg).ok_or_else(|| bad("package", "The inspected package is no longer open"))
+    }
+
+    pub(crate) fn edit_package<T>(&mut self, document: u64, label: &str, key: Option<&str>, edit: impl FnOnce(&mut Package) -> Result<T>) -> Result<T> {
+        if key.is_none() {
+            self.finish_edit();
+        }
+        if document == self.document_id {
+            return match key {
+                Some(key) => self.edit_merged(key, label, |session| edit(&mut session.pkg)),
+                None => self.edit(label, |session| edit(&mut session.pkg)),
+            };
+        }
+        let document = self.documents.get_mut(&document).ok_or_else(|| bad("package", "The inspected package is no longer open"))?;
+        let result = document.edit(label, key, self.history_prefs.undo_limit as usize, edit)?;
+        self.refresh_links();
+        Ok(result)
+    }
+
     pub fn activate_document(&mut self, id: u64) -> Result<()> {
         if id == self.document_id {
             return Ok(());

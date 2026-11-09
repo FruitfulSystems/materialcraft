@@ -45,6 +45,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         assignment: None,
         movement: None,
         inspected_graph: None,
+        inspected_folder: None,
     };
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         for (document, package, path, modified) in tree.session.open_packages() {
@@ -55,9 +56,17 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let opened_node = tree.opened_node;
     let assignment = tree.assignment;
     let movement = tree.movement;
+    let inspected_folder = tree.inspected_folder;
     if let Some(target) = tree.inspected_graph {
         crate::properties::GraphPropertyDraft::commit(app);
         app.inspected_graph = Some(target);
+        app.inspected_folder = None;
+        app.ui.dock.focus(crate::docking::Panel::Properties);
+    }
+    if let Some(target) = inspected_folder {
+        crate::properties::GraphPropertyDraft::commit(app);
+        app.inspected_folder = Some(target);
+        app.inspected_graph = None;
         app.ui.dock.focus(crate::docking::Panel::Properties);
     }
     if let Some((document, index, node)) = opened_node {
@@ -71,6 +80,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         app.pattern_editor = None;
         crate::properties::GraphPropertyDraft::commit(app);
         app.inspected_graph = None;
+        app.inspected_folder = None;
         app.function_editor = None;
         app.run("graph.annotation.select", json!({}));
         app.run("graph.select", json!({"ids": [node.0]}));

@@ -11,6 +11,9 @@ pub struct Package {
     /// Explicit SBS group paths, including folders without graphs
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Descriptions of SBS groups, keyed by their full folder path.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub folder_descriptions: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub resources: Vec<Resource>,
     /// Resolved source packages shared by cooks; SBS stores their file references instead
@@ -27,7 +30,15 @@ fn version() -> u32 {
 
 impl Package {
     pub fn new(name: &str) -> Package {
-        Package { name: name.into(), graphs: Vec::new(), folders: Vec::new(), resources: Vec::new(), version: 1, dependencies: Default::default() }
+        Package {
+            name: name.into(),
+            graphs: Vec::new(),
+            folders: Vec::new(),
+            folder_descriptions: Default::default(),
+            resources: Vec::new(),
+            version: 1,
+            dependencies: Default::default(),
+        }
     }
 
     pub fn folder_paths(&self) -> std::collections::BTreeSet<String> {

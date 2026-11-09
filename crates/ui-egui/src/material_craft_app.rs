@@ -23,6 +23,8 @@ pub struct MaterialCraftApp {
     pub pattern_editor: Option<pattern::PatternEditor>,
     pub function_editor: Option<function::FunctionEditor>,
     pub(crate) inspected_graph: Option<materialcraft_engine::GraphTarget>,
+    pub(crate) inspected_folder: Option<(u64, String)>,
+    pub(crate) folder_property_draft: Option<crate::properties::FolderPropertyDraft>,
     pub(crate) graph_property_draft: Option<crate::properties::GraphPropertyDraft>,
     pub(crate) graph_parents: Vec<graph::graph_parent::GraphParent>,
     /// Synthetic input from the control channel, fed to egui on the next frames
@@ -75,6 +77,8 @@ impl MaterialCraftApp {
             view2d: view2d::View2dState::default(),
             function_editor: None,
             inspected_graph: None,
+            inspected_folder: None,
+            folder_property_draft: None,
             graph_property_draft: None,
             graph_parents: Vec::new(),
             pattern_editor: None,
@@ -181,6 +185,8 @@ impl MaterialCraftApp {
             self.graph.inspected_node = None;
             self.inspected_graph = None;
             self.graph_property_draft = None;
+            self.inspected_folder = None;
+            self.folder_property_draft = None;
             self.graph_parents.clear();
             self.pattern_editor = None;
             self.function_editor = None;
@@ -197,6 +203,14 @@ impl MaterialCraftApp {
     }
 
     pub(crate) fn reconcile_editors(&mut self) {
+        if self
+            .inspected_folder
+            .as_ref()
+            .is_some_and(|(document, path)| !self.session.package(*document).is_ok_and(|package| package.folder_paths().contains(path)))
+        {
+            self.inspected_folder = None;
+            self.folder_property_draft = None;
+        }
         if self.inspected_graph.is_some_and(|target| target.get(&self.session).is_err()) {
             self.inspected_graph = None;
         }

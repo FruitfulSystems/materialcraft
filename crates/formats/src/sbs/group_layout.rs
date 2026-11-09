@@ -51,7 +51,11 @@ fn write_folder(
     prefix: &str,
     name: &str,
 ) -> Result<()> {
-    let _ = write!(out, "<group><identifier v=\"{}\"/><uid v=\"{}\"/><content>", xml_escape(name), writer.next_uid());
+    let _ = write!(out, "<group><uid v=\"{}\"/><identifier v=\"{}\"/>", writer.next_uid(), xml_escape(name));
+    if let Some(description) = package.folder_descriptions.get(&format!("{prefix}{name}")).filter(|text| !text.is_empty()) {
+        let _ = write!(out, "<desc v=\"{}\"/>", xml_escape(description));
+    }
+    out.push_str("<content>");
     write_level(out, package, writer, self_uid, folders, &format!("{prefix}{name}"))?;
     out.push_str("</content></group>");
     Ok(())

@@ -220,6 +220,19 @@ pub(super) fn handle(
         app.run("graph.instance.add", json!({"document": payload.document, "graph": payload.name, "at": [at.x - NODE_W * 0.5, at.y - 20.0]}));
     }
 
+    // Imported resource drops
+    if let Some(payload) = crate::widgets::dnd_release::<crate::explorer::ExplorerTarget>(canvas)
+        && let crate::explorer::ExplorerTarget::Resource { document, name } = payload.as_ref()
+        && let Some(position) = pointer
+    {
+        let at = camera.to_graph(position);
+        crate::properties::GraphPropertyDraft::commit(app);
+        if app.run("graph.resource.add", json!({"document": document, "resource": name, "at": [at.x - NODE_W * 0.5, at.y - 20.0]})).is_some() {
+            app.inspected_folder = None;
+            app.inspected_graph = None;
+        }
+    }
+
     // Library drops
     if let Some(payload) = crate::widgets::dnd_release::<LibraryDrag>(canvas)
         && let Some(position) = pointer

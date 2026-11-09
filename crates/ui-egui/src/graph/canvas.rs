@@ -17,6 +17,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     if ui.rect_contains_pointer(ui.available_rect_before_wrap()) && ui.input(|input| input.pointer.primary_pressed() || input.pointer.secondary_pressed()) {
         crate::properties::GraphPropertyDraft::commit(app);
         app.inspected_graph = None;
+        app.inspected_folder = None;
     }
 
     app.reconcile_editors();

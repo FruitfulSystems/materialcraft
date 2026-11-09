@@ -4,12 +4,12 @@ use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
 /// What a picked file is for
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum Pick {
     Package,
     Bitmap,
-    Resource { document: u64, vector: bool },
+    Resource { document: u64, vector: bool, folder: String },
     Mesh,
 }
 
@@ -20,11 +20,11 @@ static INBOX: Mutex<Vec<(String, Vec<u8>, Pick)>> = Mutex::new(Vec::new());
 pub fn poll(app: &mut MaterialCraftApp) {
     let picked = std::mem::take(&mut *INBOX.lock().unwrap_or_else(PoisonError::into_inner));
     for (name, bytes, pick) in picked {
-        if let Pick::Resource { document, vector } = pick {
+        if let Pick::Resource { document, vector, folder } = pick {
             if let Err(error) = materialcraft_engine::file_cmds::validate_resource_extension(&name, vector) {
                 app.toast(error.to_string(), true);
             } else {
-                import_resource_bytes(app, document, &name, bytes);
+                import_resource_bytes(app, document, &name, bytes, &folder);
             }
         } else if pick == Pick::Mesh {
             mesh(app, &name, &bytes);
@@ -34,12 +34,12 @@ pub fn poll(app: &mut MaterialCraftApp) {
     }
 }
 
-fn import_resource_bytes(app: &mut MaterialCraftApp, document: u64, name: &str, bytes: Vec<u8>) {
+fn import_resource_bytes(app: &mut MaterialCraftApp, document: u64, name: &str, bytes: Vec<u8>, folder: &str) {
     // A browser picker can finish after the user activates or closes its originating package.
     if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
         return;
     }
-    match materialcraft_engine::file_cmds::add_resource(&mut app.session, name, bytes, None) {
+    match materialcraft_engine::file_cmds::add_resource_into(&mut app.session, name, bytes, None, folder) {
         Ok(name) => app.toast(format!("{} {name}", tr("Imported")), false),
         Err(error) => app.toast(error.to_string(), true),
     }
@@ -174,7 +174,20 @@ mod web {
 
     /// File ▸ Open: a package, picked in the browser
     pub fn open(ctx: &egui::Context) {
-        pick(ctx, "Package or material", &["sbs", "mcraft", "mcmat", "zip"], Pick::Package);
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut dialog = rfd::AsyncFileDialog::new();
+            for (label, extensions) in crate::windows::package_filters(true, false) {
+                dialog = dialog.add_filter(label, extensions);
+            }
+            // Browser SBS downloads wrap the XML and adjacent resources in a transport ZIP.
+            dialog = dialog.add_filter("SBS Package Download (*.zip)", &["zip"]);
+            if let Some(file) = dialog.pick_file().await {
+                let bytes = file.read().await;
+                INBOX.lock().unwrap_or_else(PoisonError::into_inner).push((file.file_name(), bytes, Pick::Package));
+            }
+            ctx.request_repaint();
+        });
     }
 
     /// 3D view ▸ Scene ▸ Load mesh
@@ -187,20 +200,16 @@ mod web {
         pick_image(ctx, Pick::Bitmap, false);
     }
 
-    pub fn import_resource(ctx: &egui::Context, document: u64, vector: bool) {
-        pick_image(ctx, Pick::Resource { document, vector }, vector);
+    pub fn import_resource(ctx: &egui::Context, document: u64, vector: bool, folder: &str) {
+        pick_image(ctx, Pick::Resource { document, vector, folder: folder.into() }, vector);
     }
 
     fn pick_image(ctx: &egui::Context, kind: Pick, vector: bool) {
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let mut dialog = rfd::AsyncFileDialog::new();
-            if vector {
-                dialog = dialog.add_filter("SVG", materialcraft_engine::formats::VECTOR_EXTENSIONS);
-            } else {
-                for (label, extensions) in materialcraft_engine::formats::BITMAP_FORMATS {
-                    dialog = dialog.add_filter(*label, extensions);
-                }
+            for (label, extensions) in crate::windows::resource_filters(vector) {
+                dialog = dialog.add_filter(label, extensions);
             }
             if let Some(file) = dialog.pick_file().await {
                 let bytes = file.read().await;
@@ -235,8 +244,11 @@ mod web {
         egui::Window::new(tr("Save package")).collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
             ui.label(tr("Name"));
             ui.text_edit_singleline(&mut name);
-            ui.radio_value(&mut archive, false, tr("SBS with resources (.zip download)"));
-            ui.radio_value(&mut archive, true, tr("MaterialCraft package (.mcraft)"));
+            ui.radio_value(&mut archive, false, tr("SBS XML Package (*.sbs)"));
+            ui.radio_value(&mut archive, true, tr("MaterialCraft Project (*.mcraft)"));
+            if !archive {
+                ui.label(tr("Downloads the SBS and resources together in a ZIP."));
+            }
             accept = ui.button(tr("Download")).clicked();
         });
         app.ui.windows.package_save = open.then_some((document, name.clone(), archive, copy));
@@ -375,13 +387,13 @@ mod tests {
         app.run("file.newPackage", serde_json::json!({"name": "Other"})).unwrap();
         let other = app.session.document_id;
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
-        import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec());
+        import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec(), "Resources");
         assert_eq!(app.session.document_id, original);
         assert_eq!(app.session.pkg.resources.len(), 1);
         assert!(app.session.pkg.graphs.iter().all(|graph| graph.nodes.iter().all(|node| node.def != "svg")));
         app.run("package.close", serde_json::json!({"discard": true})).unwrap();
         assert_eq!(app.session.document_id, other);
-        import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec());
+        import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec(), "Resources");
         assert!(app.session.pkg.resources.is_empty(), "a closed picker target must not import into a different package");
     }
 }

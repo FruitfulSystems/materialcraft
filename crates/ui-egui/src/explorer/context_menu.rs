@@ -14,13 +14,13 @@ pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, relo
                 }
             }
         });
-        if resources {
-            return action;
-        }
     }
     if matches!(target, ExplorerTarget::Package { .. } | ExplorerTarget::Folder { .. }) {
         ui.menu_button(tr("New"), |ui| {
             for (label, command) in menus::EXPLORER_NEW {
+                if resources && *command != "folder.create" {
+                    continue;
+                }
                 if ui.button(tr(label)).clicked() {
                     action = Some(*command);
                     ui.close();
@@ -28,6 +28,17 @@ pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, paste: bool, relo
             }
         });
         ui.separator();
+    }
+    if resources {
+        if !target.is_resources_root() {
+            for (label, command) in [("Rename", "folder.rename"), ("Remove", "folder.remove")] {
+                if ui.button(tr(label)).clicked() {
+                    action = Some(command);
+                    ui.close();
+                }
+            }
+        }
+        return action;
     }
     let entries = match target {
         ExplorerTarget::Package { .. } => menus::EXPLORER_PACKAGE,

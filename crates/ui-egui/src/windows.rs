@@ -7,6 +7,7 @@ use egui::{Color32, RichText, TextureHandle, Ui, vec2};
 use egui_phosphor::regular as icon;
 use materialcraft_engine::core::FunctionGraph;
 use materialcraft_engine::core::NodeId;
+#[cfg(not(target_arch = "wasm32"))]
 use materialcraft_engine::formats::material::MATERIAL_EXT;
 use serde_json::{Value, json};
 
@@ -511,34 +512,66 @@ pub fn function_summary(app: &mut MaterialCraftApp, ui: &mut Ui, node: NodeId, p
     });
 }
 
-/// Extensions File ▸ Open reads: SBS packages, and materials (their source package)
-pub const OPEN_EXTS: &[&str] = &["sbs", "mcraft", MATERIAL_EXT];
+/// Project formats offered by File ▸ Open.
+pub const OPEN_EXTS: &[&str] = &["sbs", "mcraft"];
+
+pub(crate) fn package_filters(open: bool, archive: bool) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut filters: Vec<(&str, &[&str])> = vec![("SBS XML Package (*.sbs)", &["sbs"]), ("MaterialCraft Project (*.mcraft)", &["mcraft"])];
+    if archive {
+        filters.reverse();
+    }
+    if open {
+        filters.insert(0, ("All formats (*.sbs *.mcraft)", OPEN_EXTS));
+    }
+    filters
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-fn resource_dialog(vector: bool) -> rfd::FileDialog {
-    use materialcraft_engine::formats::{BITMAP_FORMATS, VECTOR_EXTENSIONS};
+fn package_dialog(open: bool, archive: bool) -> rfd::FileDialog {
     let mut dialog = rfd::FileDialog::new();
-    if vector {
-        return dialog.add_filter("SVG", VECTOR_EXTENSIONS);
-    }
-    for (label, extensions) in BITMAP_FORMATS {
-        dialog = dialog.add_filter(*label, extensions);
+    for (name, extensions) in package_filters(open, archive) {
+        dialog = dialog.add_filter(name, extensions);
     }
     dialog
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn resource_dialog(vector: bool) -> rfd::FileDialog {
+    let mut dialog = rfd::FileDialog::new();
+    for (label, extensions) in resource_filters(vector) {
+        dialog = dialog.add_filter(label, extensions);
+    }
+    dialog
+}
+
+pub(crate) fn resource_filters(vector: bool) -> Vec<(String, &'static [&'static str])> {
+    use materialcraft_engine::formats::{BITMAP_FORMATS, VECTOR_FORMATS};
+    let formats = if vector { VECTOR_FORMATS } else { BITMAP_FORMATS };
+    formats
+        .iter()
+        .map(|(label, extensions)| {
+            let patterns = extensions.iter().map(|extension| format!("*.{extension}")).collect::<Vec<_>>().join(" ");
+            (format!("{label} ({patterns})"), *extensions)
+        })
+        .collect()
+}
+
 /// Import an asset into the active package without creating a graph node.
 pub fn import_resource(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: bool) {
+    import_resource_into(app, ctx, vector, "Resources");
+}
+
+pub(crate) fn import_resource_into(app: &mut MaterialCraftApp, ctx: &egui::Context, vector: bool, folder: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = ctx;
         if let Some(path) = resource_dialog(vector).pick_file() {
             let command = if vector { "file.importVector" } else { "file.importBitmap" };
-            app.run(command, json!({"path": path.display().to_string()}));
+            app.run(command, json!({"path": path.display().to_string(), "folder": folder}));
         }
     }
     #[cfg(target_arch = "wasm32")]
-    crate::web_files::import_resource(ctx, app.session.document_id, vector);
+    crate::web_files::import_resource(ctx, app.session.document_id, vector, folder);
 }
 
 /// After a package opened with warnings (an SBS file using nodes MaterialCraft lacks, say), bring the Console forward
@@ -558,7 +591,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     {
         match id {
             "file.open" => {
-                if let Some(p) = rfd::FileDialog::new().add_filter("SBS or MaterialCraft package, or material", OPEN_EXTS).pick_file() {
+                if let Some(p) = package_dialog(true, false).pick_file() {
                     open_path(app, &p.display().to_string());
                 }
                 true
@@ -574,7 +607,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             "file.save" | "file.saveAs" | "file.saveCopyAs" => {
                 let ext = if app.session.path.as_deref().is_some_and(materialcraft_engine::file_cmds::is_mcraft) { "mcraft" } else { "sbs" };
                 let name = format!("{}.{ext}", materialcraft_engine::formats::safe_file_name(&app.session.pkg.name));
-                if let Some(p) = rfd::FileDialog::new().set_file_name(name).add_filter("SBS or MaterialCraft package", &["sbs", "mcraft"]).save_file() {
+                if let Some(p) = package_dialog(false, ext == "mcraft").set_file_name(name).save_file() {
                     let path = materialcraft_engine::file_cmds::package_path(&p.display().to_string());
                     if app.run(if id == "file.saveCopyAs" { id } else { "file.save" }, json!({"path": path})).is_some() {
                         if id != "file.saveCopyAs" {
