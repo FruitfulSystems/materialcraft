@@ -81,5 +81,7 @@ fn both_formats_save_and_reopen_using_separate_workspace_capabilities() {
     assert!(app.save(Some("../escape.sbs")).is_err());
     assert!(!root.join("escape.sbs").exists());
 
+    // Release workspace directory handles before Windows removes the test tree
+    drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
