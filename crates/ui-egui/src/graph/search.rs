@@ -5,7 +5,10 @@ use egui_phosphor::regular as icon;
 use materialcraft_engine::core::NodeId;
 use serde_json::json;
 
-pub(super) fn open_search(app: &mut MaterialCraftApp, at: Pos2, connect: Option<(NodeId, String)>) {
+pub(super) fn open_search(app: &mut MaterialCraftApp, ctx: &egui::Context, at: Pos2, connect: Option<(NodeId, String)>) {
+    if crate::shell::modality::Modality::capture(app, ctx).is_blocked() {
+        return;
+    }
     app.graph.search = Some(NodeSearch { at, text: String::new(), sel: 0, connect, focus: true });
 }
 
@@ -27,6 +30,7 @@ pub(super) fn matches(text: &str) -> Vec<&'static materialcraft_engine::nodes::N
 }
 
 pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
+    let blocked = crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked();
     let Some(s) = app.graph.search.as_mut() else { return };
 
     let tk = Tokens::get(ui.ctx());
@@ -36,12 +40,16 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
     egui::Area::new(egui::Id::unique("node-search")).fixed_pos(screen).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(260.0);
+            if blocked {
+                ui.disable();
+                s.focus = true;
+            }
             let mut reveal_selection = s.focus;
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(icon::MAGNIFYING_GLASS).color(tk.text_dim));
                 let r = ui.add(egui::TextEdit::singleline(&mut s.text).hint_text(tr("Search nodes...")).desired_width(220.0));
                 crate::widgets::name(&r, egui::Role::SearchInput, "Search nodes");
-                if s.focus {
+                if s.focus && !blocked {
                     r.request_focus();
                     s.focus = false;
                 }
@@ -52,7 +60,8 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
             });
             let list = matches(&s.text);
             let (up, down, enter, esc) = ui.input(|i| {
-                (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape))
+                let pressed = |key| !blocked && i.key_pressed(key);
+                (pressed(egui::Key::ArrowUp), pressed(egui::Key::ArrowDown), pressed(egui::Key::Enter), pressed(egui::Key::Escape))
             });
             if down {
                 s.sel = (s.sel + 1).min(list.len().saturating_sub(1));
@@ -86,7 +95,8 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
             });
         });
     });
-    let clicked_out = ui.input(|i| i.pointer.any_pressed())
+    let clicked_out = !blocked
+        && ui.input(|i| i.pointer.any_pressed())
         && ui.ctx().pointer_interact_pos().is_some_and(|p| !ui.ctx().layer_id_at(p).is_some_and(|l| l.id == egui::Id::unique("node-search")));
     if let Some(def) = pick.filter(|_| !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()) {
         let s = app.graph.search.take();

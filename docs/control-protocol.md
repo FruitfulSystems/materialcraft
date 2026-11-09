@@ -41,7 +41,7 @@ when resaving a file from an older release. `formatVersion` identifies the SBS s
 | `material.export {path, graph?, size?, values?}` | headless | write a portable `.mcmat` below the write root |
 | `render {view?, width?, height?, yaw?, pitch?, scene?, node?, port?, full?, tiling?, hq?, displacement?}` | headless | PNG (base64) of the 3D view or of one node; `hq` is the beauty render (displaced mesh, ray-traced AO, shadowed key light, 3×3 supersampling), `displacement` its depth in scene radii |
 | `ui.inspect` | app | UI state, the graph view rectangle, every node's screen rectangle, every port's identifier, display label and screen position, fps, toasts |
-| `ui.menu.list` / `ui.menu.invoke {id}` | app | the menu catalog; behave like a click. While a dialog or prompt is open (an app dialog, the unsaved-changes prompt, a file dialog, or the update prompt or result window; not Home or the Shortcuts list), an item lists as disabled and `ui.menu.invoke` returns an error. Behind a file dialog, the items that show a file dialog stay enabled and bring it forward |
+| `ui.menu.list` / `ui.menu.invoke {id}` | app | the menu catalog; behave like a click. While a dialog or prompt is open (an app dialog, the unsaved-changes prompt, a file dialog, or the update prompt or result window; not Home, the Shortcuts list or the notice that an update installed), an item lists as disabled and `ui.menu.invoke` returns an error. When a file dialog is the only one open, the items that show a file dialog stay enabled and bring it forward |
 | `ui.set {...}` | app | recursively merge fields into the UI state |
 | `ui.input {events}` | app | synthetic input, below |
 | `view.screenshot {view?: "3d"\|"2d"}` | app | PNG of the 3D or 2D view |

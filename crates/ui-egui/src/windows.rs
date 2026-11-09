@@ -395,6 +395,9 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Samples")).strong());
                 ui.horizontal_wrapped(|ui| {
+                    if !free {
+                        ui.disable();
+                    }
                     for (id, label) in materialcraft_engine::samples::TEMPLATES.iter().filter(|(id, _)| !matches!(*id, "empty" | "pbr")) {
                         let (r, resp) = ui.allocate_exact_size(vec2(92.0, 116.0), egui::Sense::click());
                         crate::widgets::name(&resp, egui::Role::ListItem, label);

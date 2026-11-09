@@ -11,20 +11,22 @@ pub(crate) fn show(app: &MaterialCraftApp, ui: &mut Ui, entries: impl IntoIterat
     let previous = ui.ctx().data_mut(|data| data.get_temp::<(u64, Option<char>)>(filter_id));
     let mut filter = previous.filter(|(last_frame, _)| frame <= last_frame.saturating_add(1)).and_then(|(_, letter)| letter);
 
-    ui.input(|input| {
-        for event in &input.events {
-            let Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
-            if modifiers.ctrl || modifiers.alt || modifiers.command {
-                continue;
-            }
+    if !blocked {
+        ui.input(|input| {
+            for event in &input.events {
+                let Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
+                if modifiers.ctrl || modifiers.alt || modifiers.command {
+                    continue;
+                }
 
-            if *key == Key::Backspace {
-                filter = None;
-            } else if key.name().len() == 1 {
-                filter = key.name().chars().next().map(|letter| letter.to_ascii_lowercase());
+                if *key == Key::Backspace {
+                    filter = None;
+                } else if key.name().len() == 1 {
+                    filter = key.name().chars().next().map(|letter| letter.to_ascii_lowercase());
+                }
             }
-        }
-    });
+        });
+    }
 
     let mut selected = None;
     let enter = filter.is_some() && ui.input(|input| input.key_pressed(Key::Enter));
@@ -93,6 +95,24 @@ mod tests {
             .collect();
 
         assert!(rows.windows(2).all(|pair| pair[0] < pair[1]), "catalog order must survive rendering: {rows:?}");
+    }
+
+    #[test]
+    fn letters_typed_behind_a_prompt_do_not_become_the_filter() {
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, app: &mut crate::MaterialCraftApp| {
+                super::show(app, ui, [("svg", "SVG", "Atomic nodes"), ("grayscale", "Grayscale conversion", "Atomic nodes")]);
+            },
+            app(),
+        );
+        harness.run_steps(3);
+        harness.state_mut().ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        harness.run_steps(3);
+        harness.key_press(egui::Key::S);
+        harness.run_steps(3);
+        harness.state_mut().ui.windows.unsaved = None;
+        harness.run_steps(3);
+        assert!(!harness.get(By::new().role(egui::accesskit::Role::Button).label("Grayscale conversion")).accesskit_node().is_disabled());
     }
 
     #[test]

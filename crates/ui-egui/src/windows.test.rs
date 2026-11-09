@@ -70,6 +70,15 @@ mod home_modality_tests {
         assert_eq!(harness.state().session.pkg.graphs.len(), graphs);
         assert!(harness.state().ui.windows.home);
     }
+
+    #[test]
+    fn sample_tiles_are_disabled_only_behind_a_dialog() {
+        let (_, sample) = materialcraft_engine::samples::TEMPLATES.iter().find(|(id, _)| !matches!(*id, "empty" | "pbr")).unwrap();
+        let tile = By::new().role(egui::accesskit::Role::ListItem).label(sample);
+        assert!(!harness(|_| {}).get(tile).accesskit_node().is_disabled());
+        let tile = By::new().role(egui::accesskit::Role::ListItem).label(sample);
+        assert!(harness(|app| app.ui.windows.about = true).get(tile).accesskit_node().is_disabled());
+    }
 }
 
 #[cfg(test)]

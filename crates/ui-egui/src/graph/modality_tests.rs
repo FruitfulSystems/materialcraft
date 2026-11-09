@@ -102,3 +102,51 @@ fn enter_in_the_node_search_waits_behind_a_prompt() {
     frames.run(vec![press(Key::Enter)], Modifiers::NONE);
     assert_eq!(frames.app.session.graph().unwrap().nodes.len(), nodes + 1, "Enter works once the prompt is answered");
 }
+
+#[test]
+fn the_node_search_takes_no_keys_behind_a_prompt() {
+    let mut frames = canvas("graph");
+    frames.run(vec![press(Key::Space)], Modifiers::NONE);
+    frames.run(Vec::new(), Modifiers::NONE);
+    assert!(frames.app.graph.search.is_some());
+
+    frames.app.ui.windows.unsaved = Some(Guarded::Quit);
+    frames.run(Vec::new(), Modifiers::NONE);
+    frames.run(vec![press(Key::ArrowDown)], Modifiers::NONE);
+    assert_eq!(frames.app.graph.search.as_ref().unwrap().sel, 0, "arrows wait behind the prompt");
+    frames.run(vec![Event::Text("x".into())], Modifiers::NONE);
+    assert_eq!(frames.app.graph.search.as_ref().unwrap().text, "", "typing waits behind the prompt");
+
+    frames.run(vec![press(Key::Escape)], Modifiers::NONE);
+    assert!(frames.app.graph.search.is_some(), "Escape answers the prompt and leaves the search open");
+
+    frames.app.ui.windows.unsaved = None;
+    frames.run(Vec::new(), Modifiers::NONE);
+    frames.run(Vec::new(), Modifiers::NONE);
+    frames.run(vec![Event::Text("n".into())], Modifiers::NONE);
+    assert_eq!(frames.app.graph.search.as_ref().unwrap().text, "n", "the search has the keyboard once the prompt is answered");
+    frames.run(vec![press(Key::Escape)], Modifiers::NONE);
+    assert!(frames.app.graph.search.is_none(), "Escape closes the search once the prompt is answered");
+}
+
+#[test]
+fn a_double_click_does_not_open_the_node_search_behind_a_prompt() {
+    let double_click = |frames: &mut Frames| {
+        let pos = corner(frames);
+        frames.time += 1.0;
+        frames.run(vec![Event::PointerMoved(pos)], Modifiers::NONE);
+        for pressed in [true, false, true, false] {
+            frames.run(vec![Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        }
+    };
+    let mut frames = canvas("graph");
+    frames.app.ui.windows.unsaved = Some(Guarded::Quit);
+    frames.run(Vec::new(), Modifiers::NONE);
+    double_click(&mut frames);
+    assert!(frames.app.graph.search.is_none());
+
+    frames.app.ui.windows.unsaved = None;
+    frames.run(Vec::new(), Modifiers::NONE);
+    double_click(&mut frames);
+    assert!(frames.app.graph.search.is_some(), "a double-click opens the search once the prompt is answered");
+}

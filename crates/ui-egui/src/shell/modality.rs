@@ -58,11 +58,14 @@ pub(crate) enum Modality {
 }
 
 impl Modality {
-    /// Reads the app's own state before egui's modal layer, which reports the previous frame
+    /// Reads the app's own state before egui's modal layer, which reports the previous frame. A
+    /// file dialog is reported only when nothing else blocks input
     pub(crate) fn capture(app: &MaterialCraftApp, ctx: &egui::Context) -> Modality {
         match open_blocker(app) {
             Some(blocker) => Modality::Blocked(blocker),
             None if ctx.memory(|memory| memory.top_modal_layer()).is_some() => Modality::Blocked(Blocker::Modal),
+            #[cfg(not(target_arch = "wasm32"))]
+            None if app.dialogs.is_open() || app.dialogs.queued() > 0 => Modality::Blocked(Blocker::FileDialog),
             None => Modality::Free,
         }
     }
@@ -86,13 +89,8 @@ fn open_blocker(app: &MaterialCraftApp) -> Option<Blocker> {
         return Some(Blocker::UnsavedPrompt);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        if app.dialogs.is_open() || app.dialogs.queued() > 0 {
-            return Some(Blocker::FileDialog);
-        }
-        if crate::updates_ui::blocks_input(app) {
-            return Some(Blocker::Update);
-        }
+    if crate::updates_ui::blocks_input(app) {
+        return Some(Blocker::Update);
     }
     #[cfg(any(test, target_arch = "wasm32"))]
     if windows.package_save.is_some() {

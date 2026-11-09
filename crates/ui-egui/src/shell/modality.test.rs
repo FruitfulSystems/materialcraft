@@ -68,6 +68,34 @@ fn a_blocker_lets_only_its_own_commands_through() {
 }
 
 #[test]
+fn a_file_dialog_frees_its_commands_only_when_nothing_else_blocks() {
+    let queued = |app: &mut MaterialCraftApp| app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+
+    let mut preferences = app();
+    queued(&mut preferences);
+    preferences.ui.windows.preferences = true;
+    assert_eq!(capture(&preferences), Modality::Blocked(Blocker::Dialog));
+    assert!(!capture(&preferences).allows("file.open"));
+
+    let mut update = app();
+    queued(&mut update);
+    crate::updates_ui::open_prompt_for_test(&mut update);
+    assert_eq!(capture(&update), Modality::Blocked(Blocker::Update));
+
+    let mut modal = app();
+    queued(&mut modal);
+    let ctx = egui::Context::default();
+    ctx.run_ui(egui::RawInput::default(), |ui| {
+        egui::Modal::new(egui::Id::unique("modal")).show(ui.ctx(), |_| {});
+    })
+    .textures_delta
+    .clear();
+    let mut answer = Modality::Free;
+    ctx.run_ui(egui::RawInput::default(), |ui| answer = Modality::capture(&modal, ui.ctx())).textures_delta.clear();
+    assert_eq!(answer, Modality::Blocked(Blocker::Modal));
+}
+
+#[test]
 fn a_modal_layer_from_the_previous_frame_blocks() {
     let app = app();
     let ctx = egui::Context::default();

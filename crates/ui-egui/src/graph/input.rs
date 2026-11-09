@@ -134,7 +134,7 @@ pub(super) fn handle(
                         } else if let Some(position) = pointer
                             && rect.contains(position)
                         {
-                            open_search(app, camera.to_graph(position), Some(from));
+                            open_search(app, &context, camera.to_graph(position), Some(from));
                         }
                     }
                 }
@@ -196,7 +196,7 @@ pub(super) fn handle(
                 app.run("graph.wire.insertDot", json!({"to": wire.0.0, "toPort": wire.1, "at": [at.x, at.y]}));
                 app.graph.selected_wires.clear();
             }
-            None => open_search(app, camera.to_graph(position), None),
+            None => open_search(app, &context, camera.to_graph(position), None),
         }
     }
 
@@ -258,7 +258,7 @@ pub(super) fn handle(
         if (space || tab)
             && let Some(position) = pointer
         {
-            open_search(app, camera.to_graph(position), None);
+            open_search(app, &context, camera.to_graph(position), None);
         }
         if GraphCamera::frame_key(ui, rect) {
             let selected = !app.session.selection.is_empty();
