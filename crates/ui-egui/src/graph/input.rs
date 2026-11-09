@@ -56,6 +56,8 @@ pub(super) fn handle(
                 } else if let Some(connection) = app.session.graph().ok().and_then(|graph| graph.input_of(port.node, &port.port).cloned()) {
                     app.graph.drag =
                         Some(GraphDrag::Wire { from: (connection.from, connection.from_port.clone()), detached: Some((port.node, port.port.clone())) });
+                } else {
+                    app.graph.drag = Some(GraphDrag::InputWire { to: (port.node, port.port.clone()) });
                 }
             } else if let Some((id, _)) = comments.iter().rev().find(|(_, bounds)| bounds.contains(position)) {
                 super::annotation_input::begin_comment(app, *id);
@@ -116,7 +118,7 @@ pub(super) fn handle(
                 }
             }
             GraphDrag::Wire { from, detached } => {
-                let target = pointer.and_then(|position| nearest_port(&app.graph.ports, position, 12.0)).filter(|port| !port.output).cloned();
+                let target = drop_target(&app.graph.ports, pointer, false);
                 match target {
                     Some(target) => {
                         let mut parameters = json!({"from": from.0.0, "fromPort": from.1, "to": target.node.0, "toPort": target.port});
@@ -135,6 +137,12 @@ pub(super) fn handle(
                             open_search(app, camera.to_graph(position), Some(from));
                         }
                     }
+                }
+            }
+            GraphDrag::InputWire { to } => {
+                // Dropped anywhere but on another node's output, the input stays unconnected
+                if let Some(source) = drop_target(&app.graph.ports, pointer, true).filter(|source| source.node != to.0) {
+                    app.run("graph.connect", json!({"from": source.node.0, "fromPort": source.port, "to": to.0.0, "toPort": to.1}));
                 }
             }
             GraphDrag::Frame { .. } | GraphDrag::Comment { .. } => super::annotation_input::finish(app, drag),
@@ -244,4 +252,9 @@ pub(super) fn handle(
             frame(app, rect, selected);
         }
     }
+}
+
+/// The port a wire dropped at `pointer` lands on: the nearest port within reach, if it is an output (`output`) or an input
+fn drop_target(ports: &[PortHit], pointer: Option<egui::Pos2>, output: bool) -> Option<PortHit> {
+    pointer.and_then(|position| nearest_port(ports, position, 12.0)).filter(|port| port.output == output).cloned()
 }
