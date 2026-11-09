@@ -44,10 +44,11 @@ pub(crate) fn is_resources(path: &str) -> bool {
 }
 
 pub(crate) fn require_graph_folder(path: &str) -> Result<()> {
-    // Resources is a reserved asset container; commands must enforce the same rule as Explorer.
+    // Resources is a reserved asset container; commands must enforce the same rule as Explorer
     if is_resources(path) {
         return Err(bad("explorer", "Resources is reserved for assets"));
     }
+
     Ok(())
 }
 
@@ -56,6 +57,7 @@ pub(crate) fn require_resource_folder(package: &Package, path: &str) -> Result<(
     if !is_resources(path) {
         return Err(bad("explorer", "Assets belong in Resources or one of its subfolders"));
     }
+
     Ok(())
 }
 
@@ -63,6 +65,7 @@ pub(crate) fn require_mutable_folder(path: &str) -> Result<()> {
     if path.eq_ignore_ascii_case("Resources") {
         return Err(bad("explorer", "The root Resources folder is reserved"));
     }
+
     Ok(())
 }
 
@@ -79,6 +82,7 @@ pub(crate) fn unique(package: &Package, parent: &str, base: &str) -> String {
     }
 
     let numbered = base.rsplit_once('_').and_then(|(stem, number)| number.parse::<u64>().ok().map(|number| (stem, number)));
+
     // One more candidate than occupied items guarantees a free name without an unbounded search
     let attempts = occupied.len().saturating_add(package.graphs.len()).saturating_add(package.resources.len()).saturating_add(1);
     (1..=attempts)

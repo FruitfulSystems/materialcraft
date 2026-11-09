@@ -96,6 +96,7 @@ impl AuthorizedWorkspace {
                 if !metadata.is_file() || metadata.len() != bytes.len() as u64 {
                     return Err(bad(format!("Resource filename collision: `{path}`")));
                 }
+
                 let mut existing = Vec::new();
                 file.take(bytes.len() as u64 + 1).read_to_end(&mut existing).map_err(|error| file_error("read", path, error))?;
                 if existing != bytes {

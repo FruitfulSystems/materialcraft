@@ -237,9 +237,11 @@ impl MaterialCraftApp {
             self.next_autosave = now + period;
             return;
         }
+
         if now < self.next_autosave {
             return;
         }
+
         self.next_autosave = now + period;
         let dir = user_dir("autosave");
         let path = dir.join(format!("{}.mcraft", materialcraft_engine::formats::safe_file_name(&self.session.pkg.name)));

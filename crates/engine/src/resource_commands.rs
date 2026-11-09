@@ -33,6 +33,7 @@ fn add_node(session: &mut Session, parameters: &Value) -> Result<Value> {
     if session.graph()?.function.is_some() {
         return Err(bad(command, "Resources can only be added to a material graph"));
     }
+
     let name = strp(parameters, "resource").ok_or_else(|| bad(command, "resource is required"))?;
     let document = match parameters.get("document") {
         None | Some(Value::Null) => session.document_id,
@@ -48,12 +49,14 @@ fn add_node(session: &mut Session, parameters: &Value) -> Result<Value> {
     if resource.bytes.is_empty() {
         return Err(bad(command, "The source resource is missing"));
     }
+
     let definition = if resource.file.to_ascii_lowercase().ends_with(".svg") { "svg" } else { "bitmap" };
     let copy = document != session.document_id;
     if copy {
         if session.pkg.resources.len() >= 4096 || resource.bytes.len() > 64 << 20 {
             return Err(bad(command, "Resources are limited to 64 MiB per file and 4096 files per package"));
         }
+
         resource.folder = "Resources".into();
         resource.source.clear();
         resource.name = crate::file_cmds::resource_name(&session.pkg, "Resources", &resource.name);
@@ -77,5 +80,6 @@ fn import_vector(session: &mut Session, parameters: &Value) -> Result<Value> {
     if !path.to_ascii_lowercase().ends_with(".svg") {
         return Err(bad("file.importVector", "Choose an SVG file"));
     }
+
     crate::file_cmds::import_resource_file(session, parameters, true)
 }

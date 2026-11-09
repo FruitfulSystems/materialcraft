@@ -15,32 +15,42 @@ fn explorer_can_close_the_last_package_and_all_packages() {
     settle(&mut harness, 3);
     harness.get(By::new().role(Role::Button).label("Close")).click();
     settle(&mut harness, 4);
+
     assert!(harness.state().session.open_packages().is_empty());
     assert_eq!(harness.query_all(By::new().role(Role::TreeItem)).count(), 0);
     assert!(harness.get(By::new().label("Save package")).accesskit_node().is_disabled());
+
     save(&mut harness, &directory, "explorer-no-open-projects");
 
     harness.get_by_label("New graph...").click();
     settle(&mut harness, 3);
     harness.get_by_label("Create").click();
     settle(&mut harness, 5);
+
     assert_eq!(harness.state().session.open_packages().len(), 1);
     assert!(harness.state().session.graph().is_ok());
+
     harness.state_mut().run("file.newPackage", json!({"name": "Second"})).unwrap();
     let context = harness.ctx.clone();
     materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "ui.closeAll");
     settle(&mut harness, 3);
+
     assert!(harness.state().ui.windows.unsaved.is_some());
+
     harness.get_by_label("Cancel").click();
     settle(&mut harness, 3);
+
     assert_eq!(harness.state().session.open_packages().len(), 2);
+
     materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "ui.closeAll");
     settle(&mut harness, 3);
     harness.get_by_label("Discard").click();
     settle(&mut harness, 5);
+
     assert!(harness.state().session.open_packages().is_empty());
     assert_eq!(harness.query_all(By::new().role(Role::TreeItem)).count(), 0);
     assert!(harness.state().ui.windows.unsaved.is_none());
+
     save(&mut harness, &directory, "explorer-after-close-all");
 }
 
@@ -57,18 +67,23 @@ fn explorer_empty_packages_have_no_disclosure() {
         let label = if harness.state().session.modified { "Empty package*" } else { "Empty package" };
         let row = harness.get(By::new().role(Role::TreeItem).label(label)).rect();
         let image = harness.render().unwrap();
-        // The disclosure gutter must stay blank when the package has no visible children.
+
+        // The disclosure gutter must stay blank when the package has no visible children
         ((row.left() as u32 - 16)..(row.left() as u32 - 2))
             .any(|x| ((row.top() as u32 + 3)..(row.bottom() as u32 - 3)).any(|y| image.get_pixel(x, y).0[..3].iter().all(|channel| *channel > 150)))
     };
+
     assert!(!arrow_visible(&mut harness));
+
     save(&mut harness, &directory, "explorer-empty-package");
 
-    // An empty reserved group can be present in loaded SBS XML without appearing in the tree.
+    // An empty reserved group can be present in loaded SBS XML without appearing in the tree
     harness.state_mut().session.pkg.folders.push("Resources".into());
     settle(&mut harness, 3);
+
     assert!(harness.query(By::new().role(Role::TreeItem).label("Resources")).is_none());
     assert!(!arrow_visible(&mut harness));
+
     harness.get(By::new().role(Role::TreeItem).label("Empty package")).click_secondary();
     settle(&mut harness, 3);
     for label in ["Import", "New", "Save As", "Close"] {
@@ -84,21 +99,27 @@ fn explorer_empty_packages_have_no_disclosure() {
     ] {
         harness.state_mut().run(command, parameters).unwrap();
         settle(&mut harness, 4);
+
         assert!(arrow_visible(&mut harness), "{child} must make the package expandable");
         assert!(harness.query(By::new().role(Role::TreeItem).label(child)).is_some());
+
         harness.state_mut().run("edit.undo", json!({})).unwrap();
         settle(&mut harness, 4);
+
         assert!(!arrow_visible(&mut harness), "undoing {child} must remove the disclosure");
     }
 
     let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
     materialcraft_engine::file_cmds::add_resource(&mut harness.state_mut().session, "Mask.svg", svg.to_vec(), None).unwrap();
     settle(&mut harness, 4);
+
     assert!(arrow_visible(&mut harness));
     assert!(harness.query(By::new().role(Role::TreeItem).label("Mask")).is_some());
+
     save(&mut harness, &directory, "explorer-package-with-resource");
     harness.state_mut().run("edit.undo", json!({})).unwrap();
     settle(&mut harness, 4);
+
     assert!(!arrow_visible(&mut harness));
 }
 
@@ -145,9 +166,12 @@ fn explorer_resources_drag_into_the_graph() {
         assert!(session.cooked.nodes[&node.id].error.is_none());
         let bounds = harness.state().graph.rects.iter().find(|(id, _)| *id == node.id).unwrap().1;
         assert!((bounds.center().x - end.x).abs() < 2.0, "the node must land at the pointer");
+
         harness.state_mut().run("edit.undo", json!({})).unwrap();
+
         assert_eq!(harness.state().session.graph().unwrap().nodes.len(), index);
         assert_eq!(harness.state().session.pkg.resources.len(), 2);
+
         harness.state_mut().run("edit.redo", json!({})).unwrap();
         settle(&mut harness, 5);
     }
@@ -162,14 +186,19 @@ fn explorer_resources_folder_is_hidden_until_an_asset_is_imported() {
     let mut harness = harness(MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default()), 1600.0, 960.0);
     settle(&mut harness, 4);
     let resources = || By::new().role(Role::TreeItem).label("Resources");
+
     assert!(harness.query(resources()).is_none());
+
     save(&mut harness, &directory, "explorer-empty-resources-hidden");
     let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
     materialcraft_engine::file_cmds::add_resource(&mut harness.state_mut().session, "Mask.svg", svg.to_vec(), None).unwrap();
     settle(&mut harness, 4);
+
     assert!(harness.query(resources()).is_some());
+
     harness.state_mut().run("edit.undo", json!({})).unwrap();
     settle(&mut harness, 4);
+
     assert!(harness.query(resources()).is_none());
 }
 
@@ -186,30 +215,39 @@ fn explorer_folder_properties_and_saved_package_names() {
     settle(&mut harness, 5);
     let tree = |name| By::new().role(Role::TreeItem).label(name);
     let input = |name| By::new().role(Role::TextInput).label(name);
+
     assert!(harness.query(tree("Untitled*")).is_some());
 
     let position = harness.get(tree("Resources")).rect().center();
     super::click_canvas(&mut harness, position);
+
     assert_eq!(harness.get(input("Identifier")).value().as_deref(), Some("Resources"));
+
     let position = harness.get(input("Description")).rect().center();
     super::click_canvas(&mut harness, position);
     harness.get(input("Description")).type_text("Original texture assets");
     settle(&mut harness, 2);
     let position = harness.get(tree("Tools")).rect().center();
     super::click_canvas(&mut harness, position);
+
     assert_eq!(harness.state().session.pkg.folder_descriptions["Resources"], "Original texture assets");
+
     let position = harness.get(input("Description")).rect().center();
     super::click_canvas(&mut harness, position);
     harness.get(input("Description")).type_text("Reusable graph helpers");
     settle(&mut harness, 2);
-    // Saving while a field still has focus must commit its draft.
+
+    // Saving while a field still has focus must commit its draft
     harness.state_mut().run("file.saveAs", json!({"path": directory.join("Folder attributes.sbs")})).unwrap();
     settle(&mut harness, 4);
+
     assert_eq!(harness.state().session.pkg.folder_descriptions["Tools"], "Reusable graph helpers");
     assert!(harness.query(tree("Folder attributes.sbs")).is_some());
+
     save(&mut harness, &directory, "explorer-folder-properties");
     harness.state_mut().run("file.saveAs", json!({"path": directory.join("Folder attributes.mcraft")})).unwrap();
     settle(&mut harness, 4);
+
     assert!(harness.query(tree("Folder attributes.mcraft")).is_some());
 
     let position = harness.get(tree("Resources")).rect().center();
@@ -225,8 +263,10 @@ fn explorer_folder_properties_and_saved_package_names() {
     save(&mut harness, &directory, "explorer-resources-new-folder");
     harness.get(By::new().role(Role::Button).label("Folder")).click();
     settle(&mut harness, 4);
+
     assert!(harness.state().session.pkg.folder_paths().contains("Resources/Untitled_Folder_1"));
     assert_eq!(harness.get(input("Identifier")).value().as_deref(), Some("Untitled_Folder_1"));
+
     let position = harness.get(input("Identifier")).rect().center();
     super::click_canvas(&mut harness, position);
     harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::COMMAND, egui::Key::A);
@@ -234,6 +274,7 @@ fn explorer_folder_properties_and_saved_package_names() {
     settle(&mut harness, 2);
     let position = harness.get(tree("Tools")).rect().center();
     super::click_canvas(&mut harness, position);
+
     assert!(harness.state().session.pkg.folder_paths().contains("Resources/Textures"));
 }
 
@@ -309,7 +350,9 @@ fn explorer_folder_tree_and_context_menus() {
     let tools = harness.get(tree("Tools")).rect();
     let math = harness.get(tree("Math")).rect();
     let helper = harness.get(tree("Helper")).rect();
+
     assert!(tools.left() < math.left() && math.left() < helper.left());
+
     save(&mut harness, &directory, "explorer-folders");
 
     for (label, expected, screenshot) in [
@@ -326,7 +369,9 @@ fn explorer_folder_tree_and_context_menus() {
         for label in ["Duplicate", "Delete", "Link"] {
             assert!(harness.query(button(label)).is_none(), "{screenshot}: unexpected {label}");
         }
+
         assert!(harness.get(button("Paste")).accesskit_node().is_disabled());
+
         save(&mut harness, &directory, screenshot);
         harness.key_press(egui::Key::Escape);
         settle(&mut harness, 2);
@@ -352,6 +397,7 @@ fn explorer_folder_tree_and_context_menus() {
     save(&mut harness, &directory, "explorer-resource-menu");
     harness.get(button("Add to graph")).click();
     settle(&mut harness, 3);
+
     assert!(harness.state().session.graph().unwrap().nodes.iter().any(|node| node.def == "svg"));
 
     harness.get(tree("Helper")).click_secondary();
@@ -362,6 +408,7 @@ fn explorer_folder_tree_and_context_menus() {
     settle(&mut harness, 2);
     harness.get(button("Paste")).click();
     settle(&mut harness, 3);
+
     assert!(harness.state().session.pkg.graph_by_name("Tools/Helper").is_some());
 
     harness.get(tree("Math")).click_secondary();
@@ -374,6 +421,7 @@ fn explorer_folder_tree_and_context_menus() {
     save(&mut harness, &directory, "explorer-new-submenu");
     harness.get(button("Function Graph")).click();
     settle(&mut harness, 3);
+
     assert!(!harness.state().ui.windows.new_graph);
     assert!(harness.state().ui.explorer.rename.is_none());
     assert_eq!(harness.state().session.graph().unwrap().folder, "Tools/Math");
@@ -396,6 +444,7 @@ fn explorer_folder_tree_and_context_menus() {
 
         assert!(!harness.state().ui.windows.new_graph);
         assert!(harness.state().ui.explorer.rename.is_none());
+
         let path = format!("Tools/Math/{expected}");
         if label == "Folder" {
             assert!(harness.state().session.pkg.folder_paths().contains(&path));

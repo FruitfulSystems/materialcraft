@@ -4,10 +4,13 @@ use materialcraft_formats::sbs::{read_sbs, write_sbs};
 fn native_folder_descriptions_survive_xml_round_trip() {
     let xml = br#"<package><identifier v="Folders"/><content><group><identifier v="Tools"/><desc v="Masks &amp; shapes&#10;Notes"/><content/></group></content></package>"#;
     let imported = read_sbs(xml, "folders.sbs", &|_| None).unwrap();
+
     assert_eq!(imported.pkg.folder_descriptions["Tools"], "Masks & shapes\nNotes");
+
     let saved = write_sbs(&imported.pkg).unwrap();
     let document = roxmltree::Document::parse(std::str::from_utf8(&saved).unwrap()).unwrap();
     let group = document.descendants().find(|node| node.has_tag_name("group") && node.children().any(|child| child.attribute("v") == Some("Tools"))).unwrap();
+
     assert_eq!(group.children().find(|node| node.has_tag_name("desc")).unwrap().attribute("v"), Some("Masks & shapes\nNotes"));
     assert_eq!(read_sbs(&saved, "saved.sbs", &|_| None).unwrap().pkg.folder_descriptions, imported.pkg.folder_descriptions);
 }
@@ -44,12 +47,17 @@ fn nested_resource_paths_are_preserved_without_duplicate_groups() {
 
     let bytes = write_sbs(&package).unwrap();
     let xml = std::str::from_utf8(&bytes).unwrap();
+
     assert!(xml.contains("pkg:///Tools/Images/Mask?dependency="));
+
     let read = read_sbs(&bytes, "resources.sbs", &|_| None).unwrap();
+
     assert_eq!(read.pkg.resources[0].folder, "Tools/Images");
     assert_eq!(read.pkg.graphs[0].nodes[0].params["resource"], Value::Text("Mask".into()));
+
     let bytes = write_sbs(&read.pkg).unwrap();
     let document = roxmltree::Document::parse(std::str::from_utf8(&bytes).unwrap()).unwrap();
+
     assert_eq!(document.descendants().filter(|node| node.has_tag_name("group")).count(), 3);
 }
 
@@ -72,9 +80,11 @@ fn supplied_packages_keep_native_folder_hierarchies() {
             pending.extend(std::fs::read_dir(path).unwrap().map(|entry| entry.unwrap().path()));
             continue;
         }
+
         if path.extension().is_none_or(|extension| extension != "sbs") {
             continue;
         }
+
         let bytes = std::fs::read(&path).unwrap();
         let document = roxmltree::Document::parse(std::str::from_utf8(&bytes).unwrap().trim_start_matches('\u{feff}')).unwrap();
         let is_folder = |node: &roxmltree::Node<'_, '_>| node.has_tag_name("group") && node.children().any(|child| child.has_tag_name("content"));
@@ -107,15 +117,21 @@ fn supplied_packages_keep_native_folder_hierarchies() {
             })
             .collect();
         let imported = read_sbs(&bytes, &path.to_string_lossy(), &|_| None).unwrap();
+
         assert_eq!(imported.pkg.folder_paths(), paths, "{}: import", path.display());
         assert_eq!(imported.pkg.folder_descriptions, descriptions, "{}: imported folder descriptions", path.display());
+
         let saved = write_sbs(&imported.pkg).unwrap();
         let reopened = read_sbs(&saved, "roundtrip.sbs", &|_| None).unwrap();
+
         assert_eq!(reopened.pkg.folder_paths(), paths, "{}: export", path.display());
         assert_eq!(reopened.pkg.folder_descriptions, descriptions, "{}: exported folder descriptions", path.display());
+
         descriptions_checked += descriptions.len();
         checked += 1;
     }
+
     assert!(checked > 0);
+
     println!("Verified native folder hierarchies and {descriptions_checked} descriptions in {checked} supplied SBS packages");
 }

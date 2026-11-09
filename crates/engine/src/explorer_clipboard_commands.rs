@@ -34,6 +34,7 @@ fn copy(session: &mut Session, parameters: &Value) -> Result<Value> {
     if graph.is_some() && folder.is_some() {
         return Err(bad("explorer.copy", "select one graph or folder"));
     }
+
     if let Some(index) = graph {
         session.pkg.graph(index)?;
     }
@@ -85,6 +86,7 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
             folder_names.insert(folder.clone(), folder.clone());
             continue;
         }
+
         let (source_parent, leaf) = folder.rsplit_once('/').unwrap_or(("", folder));
         let target_parent = folder_names.get(source_parent).map(String::as_str).unwrap_or(parent);
         let new = folder_path::join(target_parent, &folder_path::unique(&destination, target_parent, leaf));
@@ -109,6 +111,7 @@ fn paste(session: &mut Session, parameters: &Value) -> Result<Value> {
             if !instance.package.is_empty() {
                 continue;
             }
+
             if let Some(new) = names.get(&instance.graph) {
                 instance.graph = new.clone();
             } else if clipboard.document != session.document_id {

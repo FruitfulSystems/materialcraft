@@ -38,6 +38,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         crate::function::show_graph(app, ui);
         return;
     }
+
     if crate::pattern::active(app) {
         crate::pattern::show(app, ui);
         return;

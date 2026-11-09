@@ -1,5 +1,5 @@
 mod curve;
-mod folder;
+mod folder_property_draft;
 mod gradient;
 mod graph;
 mod graph_attributes;
@@ -10,7 +10,7 @@ mod parameter;
 mod section;
 
 pub use curve::curve_editor;
-pub(crate) use folder::FolderPropertyDraft;
+pub(crate) use folder_property_draft::FolderPropertyDraft;
 pub use gradient::gradient_editor;
 pub(crate) use graph_property_draft::GraphPropertyDraft;
 pub(crate) use section::section;
@@ -23,6 +23,7 @@ pub fn title(app: &MaterialCraftApp) -> String {
     if let Some((_, path)) = &app.inspected_folder {
         return format!("{} - {}", path.rsplit('/').next().unwrap_or(path), tr("Properties"));
     }
+
     if let Some(target) = app.inspected_graph
         && let Ok(graph) = target.get(&app.session)
     {
@@ -58,9 +59,10 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some((document, path)) = app.inspected_folder.clone() {
-            folder::show(app, ui, document, &path);
+            folder_property_draft::show(app, ui, document, &path);
             return;
         }
+
         if let Some(target) = app.inspected_graph {
             if target.get(&app.session).is_ok() {
                 graph::show(app, ui, target);

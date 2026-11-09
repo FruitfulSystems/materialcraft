@@ -103,6 +103,14 @@ impl Headless {
     /// Open an `.sbs` or `.mcraft` package (or a `.mcmat` material's source), using the granted file access
     pub fn open(&mut self, path: &str) -> Result<Value, AutomationError> {
         let bytes = self.read(path)?;
+
+        // Workspace save paths stay relative to their granted roots
+        let document = self.session.open_packages().into_iter().find(|entry| entry.2 == Some(path)).map(|entry| entry.0);
+        if let Some(document) = document {
+            self.session.activate_document(document)?;
+            return Ok(self.inspect());
+        }
+
         let folder = path.replace('\\', "/").rsplit_once('/').map(|(folder, _)| format!("{folder}/")).unwrap_or_default();
         let fs = &self.fs;
         let linked = |relative: &str| -> Option<Vec<u8>> {
@@ -112,6 +120,7 @@ impl Headless {
             if !plain || !inside {
                 return None;
             }
+
             read_file(fs, &format!("{folder}{relative}")).ok()
         };
 
@@ -119,6 +128,7 @@ impl Headless {
         if self.session.path.is_some() {
             self.session.path = Some(path.to_string());
         }
+
         Ok(self.inspect())
     }
 
@@ -151,6 +161,7 @@ impl Headless {
                         if name == &files.entry {
                             continue;
                         }
+
                         let target = format!("{parent}{name}");
                         if let Some((directory, _)) = target.rsplit_once('/') {
                             workspace.create_dir_all(directory)?;

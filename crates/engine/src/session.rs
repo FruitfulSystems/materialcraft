@@ -306,6 +306,7 @@ impl Session {
         if !self.has_package() {
             return Err(crate::commands::bad("edit", "no package is open"));
         }
+
         let snapshot = self.snapshot(label);
         match f(self) {
             Ok(value) => {

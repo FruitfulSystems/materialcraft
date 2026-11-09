@@ -35,28 +35,63 @@ fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 fn archive_is_only_native_xml_and_original_resources() {
     let original = package();
     let files = ProjectFiles::build(&original, "surface.mcraft", true).unwrap();
+
     assert_eq!(files.entry, "package.sbs");
     assert_eq!(ProjectFiles::build(&original, "renamed.mcraft", true).unwrap().entry, "package.sbs");
     assert_eq!(files.files.len(), 3);
+
     let xml = std::str::from_utf8(files.xml().unwrap()).unwrap();
+
     assert!(xml.starts_with("<?xml"));
     assert!(!xml.contains("binembedded"));
     assert_eq!(xml.matches("<externalcopy>").count(), 2);
+
     for resource in &original.resources {
         assert!(files.files.iter().any(|(name, bytes)| name.starts_with("resources/") && *bytes == resource.bytes));
     }
     let bytes = files.zip().unwrap();
     let archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+
     assert_eq!(archive.len(), 4);
     assert!(archive.file_names().all(|name| name == "package.sbs" || name.starts_with("resources/")));
+
     let read = project::read(&bytes, "moved.mcraft").unwrap();
+
     assert!(read.warnings.is_empty(), "{:?}", read.warnings);
+
     for resource in &original.resources {
         assert_eq!(read.pkg.resource(&resource.name).unwrap().bytes, resource.bytes);
     }
     let second = ProjectFiles::build(&read.pkg, "surface.mcraft", true).unwrap();
+
     assert_eq!(files.files.keys().collect::<Vec<_>>(), second.files.keys().collect::<Vec<_>>(), "resource names stay stable across saves");
     assert_eq!(original.resources[0].source, "");
+}
+
+#[test]
+fn case_variant_resource_names_round_trip_in_both_project_layouts() {
+    let mut original = Package::new("Case variants");
+    for (name, bytes) in
+        [("Mask", SVG.to_vec()), ("mask", SVG.to_vec()), ("MASK", String::from_utf8(SVG.to_vec()).unwrap().replace("red", "blue").into_bytes())]
+    {
+        original.resources.push(Resource::new(name, "shape.SVG", ResourceBytes::new(bytes)));
+    }
+
+    for archive in [false, true] {
+        let files = ProjectFiles::build(&original, "case-variants.sbs", archive).unwrap();
+        let reopened = project::read(&files.zip().unwrap(), "case-variants.mcraft").unwrap();
+
+        assert!(reopened.warnings.is_empty(), "{:?}", reopened.warnings);
+        assert_eq!(reopened.pkg.resources.len(), original.resources.len());
+
+        for resource in &original.resources {
+            assert_eq!(reopened.pkg.resource(&resource.name).unwrap().bytes, resource.bytes);
+        }
+
+        let saved_again = ProjectFiles::build(&reopened.pkg, "case-variants.sbs", archive).unwrap();
+
+        assert_eq!(files.files.keys().collect::<Vec<_>>(), saved_again.files.keys().collect::<Vec<_>>(), "resource paths must stay stable across saves");
+    }
 }
 
 #[test]
@@ -92,11 +127,14 @@ fn missing_resources_cannot_be_silently_saved_away() {
 fn rejects_symlinks_and_excessive_entry_counts() {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     writer.add_symlink("resources/link", "/outside", zip::write::SimpleFileOptions::default()).unwrap();
+
     assert!(project::read(&writer.finish().unwrap().into_inner(), "bad.mcraft").is_err());
+
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..4097 {
         writer.start_file(format!("resources/{index}"), zip::write::SimpleFileOptions::default()).unwrap();
     }
+
     assert!(project::read(&writer.finish().unwrap().into_inner(), "bad.mcraft").is_err());
 }
 
@@ -118,13 +156,16 @@ fn archives_bundle_linked_graphs_and_can_be_converted_back_to_sbs() {
     package.dependencies.insert("/source/material.sbs".into(), std::sync::Arc::new(source));
     let files = ProjectFiles::build(&package, "consumer.mcraft", true).unwrap();
     let read = project::read(&files.zip().unwrap(), "consumer.mcraft").unwrap();
+
     assert!(read.warnings.is_empty(), "{:?}", read.warnings);
     let reference = &read.pkg.graphs[0].nodes[0].instance.as_ref().unwrap().package;
     assert!(reference.starts_with("mcraft://"));
     let dependency = read.pkg.dependencies.get(reference).unwrap();
     assert_eq!(dependency.resources[1].bytes.as_slice(), SVG);
+
     let native = ProjectFiles::build(&read.pkg, "consumer.sbs", false).unwrap();
     let xml = std::str::from_utf8(native.xml().unwrap()).unwrap();
+
     assert!(xml.contains("resources/packages/"));
     assert!(!xml.contains("mcraft://"));
     assert!(!xml.contains("/source/material.sbs"));

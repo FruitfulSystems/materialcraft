@@ -109,7 +109,7 @@ fn new_package(s: &mut Session, p: &J) -> Result<J> {
 
 /// Replace the active document explicitly, resetting its history and views
 pub fn replace_package(s: &mut Session, pkg: Package, path: Option<String>) {
-    // Reloaded archive dependencies must replace cached snapshots before links are refreshed.
+    // Reloaded archive dependencies must replace cached snapshots before links are refreshed
     s.linked_sources.extend(pkg.dependencies.clone());
     s.pkg = pkg;
     s.document_open = true;
@@ -152,6 +152,7 @@ pub fn open_bytes_linked(session: &mut Session, bytes: &[u8], name: Option<Strin
     {
         return session.activate_document(id);
     }
+
     if materialcraft_formats::material::is_material(bytes) {
         let (manifest, source) = materialcraft_formats::material::read_material(bytes)?;
         session.open_package(materialcraft_formats::sbs::read_sbs(&source, "source.sbs", &|_| None)?.pkg, None)?;
@@ -179,6 +180,7 @@ pub(crate) fn read_package_bytes(bytes: &[u8], name: &str, linked: &dyn Fn(&str)
     if materialcraft_formats::project::is_archive(bytes) || is_mcraft(name) {
         return Ok(materialcraft_formats::project::read(bytes, name)?);
     }
+
     let mut read = materialcraft_formats::sbs::read_sbs(bytes, name, linked)?;
     if !name.is_empty() {
         crate::linked_files::normalize_references(&mut read.pkg, name);
@@ -195,7 +197,8 @@ pub(crate) fn save_bytes_at(session: &Session, path: Option<&str>) -> Result<Vec
     if let Some(path) = path.filter(|path| is_mcraft(path)) {
         return Ok(save_files_at(session, path)?.zip()?);
     }
-    // Byte-only consumers (portable materials and recovery) retain standalone embedded SBS.
+
+    // Byte-only consumers (portable materials and recovery) retain standalone embedded SBS
     Ok(materialcraft_formats::sbs::write_sbs(&package_for_save(session, path))?)
 }
 
@@ -252,6 +255,7 @@ pub fn open_file(s: &mut Session, path: &str) -> Result<()> {
     if bytes.len() > 256 << 20 {
         return Err(bad("file.open", "Package exceeds 256 MiB"));
     }
+
     open_bytes_linked(s, &bytes, Some(path.to_string()), &linked_files(path))
 }
 
@@ -289,6 +293,7 @@ fn save(s: &mut Session, p: &J) -> Result<J> {
     if s.open_packages().into_iter().any(|entry| entry.0 != s.document_id && entry.2 == Some(path.as_str())) {
         return Err(bad("file.save", "another open package already uses this file"));
     }
+
     let bytes = write_package_at(s, &path)?;
     s.path = Some(path.clone());
     s.refresh_links();
@@ -400,6 +405,7 @@ pub fn add_resource_into(s: &mut Session, file: &str, bytes: Vec<u8>, name: Opti
     if bytes.len() > 64 << 20 || s.pkg.resources.len() >= 4096 {
         return Err(bad("file.importBitmap", "Resources are limited to 64 MiB per file and 4096 files per package"));
     }
+
     materialcraft_formats::decode(&bytes, false)?;
     s.edit("Import resource", |s| {
         let file_name = materialcraft_formats::safe_file_name(file);
@@ -480,5 +486,6 @@ pub fn validate_resource_extension(file: &str, vector: bool) -> Result<()> {
             if vector { "Choose an SVG file" } else { "Choose a supported bitmap format" },
         ));
     }
+
     Ok(())
 }

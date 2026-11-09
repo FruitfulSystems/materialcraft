@@ -31,6 +31,7 @@ fn reload(session: &mut Session, parameters: &Value) -> Result<Value> {
     if session.modified && parameters.get("discard").and_then(Value::as_bool) != Some(true) {
         return Err(bad("file.reload", "save the package or explicitly discard its edits"));
     }
+
     let path = session.path.clone().ok_or_else(|| bad("file.reload", "the package has no file to reload"))?;
     let bytes = read_package(&path)?;
     let linked = crate::file_cmds::linked_files(&path);
@@ -75,6 +76,7 @@ fn save_copy(session: &mut Session, parameters: &Value) -> Result<Value> {
     if path.contains("://") || session.open_packages().iter().any(|entry| entry.2 == Some(path.as_str())) {
         return Err(bad("file.saveCopyAs", "choose a local file that is not already open"));
     }
+
     let bytes = crate::file_cmds::write_package_at(session, &path)?;
     Ok(json!({"path": path, "bytes": bytes}))
 }

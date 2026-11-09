@@ -75,6 +75,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         if !actions::activate(app, document) {
             return;
         }
+
         if index != app.session.graph && app.run("graph.open", json!({"graph": index})).is_none() {
             return;
         }

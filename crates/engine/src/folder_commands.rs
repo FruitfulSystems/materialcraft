@@ -30,6 +30,7 @@ fn create(session: &mut Session, parameters: &Value) -> Result<Value> {
     if session.pkg.folder_paths().len() >= 16384 {
         return Err(bad("folder.create", "A package supports at most 16384 folders"));
     }
+
     let path = folder_path::join(parent, &folder_path::unique(&session.pkg, parent, name));
     folder_path::validate(&path)?;
     session.edit("New folder", |session| {
@@ -64,9 +65,11 @@ pub(crate) fn relocate_in_package(package: &mut materialcraft_core::Package, old
     if folder_path::is_resources(old) != folder_path::is_resources(new) {
         return Err(bad("folder", "Asset folders must stay within Resources, and graph folders outside it"));
     }
+
     if old == new {
         return Ok(json!({"folder": new}));
     }
+
     if folder_path::contains(old, new)
         || package.folder_paths().contains(new)
         || package.graphs.iter().any(|graph| graph.sbs_path() == new)
@@ -139,10 +142,12 @@ fn move_item(session: &mut Session, parameters: &Value) -> Result<Value> {
         if resource.folder == parent {
             return Ok(json!({"resource": name}));
         }
+
         let path = folder_path::join(parent, name);
         if session.pkg.folder_paths().contains(&path) {
             return Err(bad("explorer.move", "The destination already contains a folder with this name"));
         }
+
         return session.edit("Move resource", |session| {
             if let Some(resource) = session.pkg.resources.iter_mut().find(|resource| resource.name == name) {
                 resource.folder = parent.into();
@@ -150,6 +155,7 @@ fn move_item(session: &mut Session, parameters: &Value) -> Result<Value> {
             Ok(json!({"resource": name}))
         });
     }
+
     if let Some(index) = parameters.get("graph").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok()) {
         folder_path::require_graph_folder(parent)?;
         let graph = session.pkg.graph(index)?;
@@ -157,6 +163,7 @@ fn move_item(session: &mut Session, parameters: &Value) -> Result<Value> {
         if graph.folder == parent {
             return Ok(json!({"graph": index}));
         }
+
         if session.pkg.graphs.iter().any(|graph| graph.sbs_path() == new)
             || session.pkg.folder_paths().contains(&new)
             || session.pkg.resources.iter().any(|resource| resource.sbs_path() == new)

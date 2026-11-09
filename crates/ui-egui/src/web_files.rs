@@ -35,10 +35,11 @@ pub fn poll(app: &mut MaterialCraftApp) {
 }
 
 fn import_resource_bytes(app: &mut MaterialCraftApp, document: u64, name: &str, bytes: Vec<u8>, folder: &str) {
-    // A browser picker can finish after the user activates or closes its originating package.
+    // A browser picker can finish after the user activates or closes its originating package
     if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
         return;
     }
+
     match materialcraft_engine::file_cmds::add_resource_into(&mut app.session, name, bytes, None, folder) {
         Ok(name) => app.toast(format!("{} {name}", tr("Imported")), false),
         Err(error) => app.toast(error.to_string(), true),
@@ -88,7 +89,8 @@ pub fn load(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, bitmap: bool
 
 pub(crate) fn load_now(app: &mut MaterialCraftApp, name: &str, bytes: &[u8]) {
     crate::properties::GraphPropertyDraft::commit(app);
-    // Browser SBS downloads contain the same directory layout in a transport ZIP.
+
+    // Browser SBS downloads contain the same directory layout in a transport ZIP
     let path = name.strip_suffix("_sbs.zip").map_or_else(|| name.to_string(), |stem| format!("{stem}.sbs"));
     match materialcraft_engine::file_cmds::open_bytes(&mut app.session, bytes, Some(path)) {
         Ok(()) => {
@@ -113,6 +115,7 @@ pub fn dropped(app: &mut MaterialCraftApp, ctx: &egui::Context, file: &egui::Dro
             crate::windows::open_path(app, &file.path().display().to_string());
             return;
         }
+
         match file.bytes() {
             Ok(bytes) => load(app, &name, bytes, false),
             Err(e) => app.toast(format!("{} {name}: {e}", tr("Couldn't open")), true),
@@ -180,7 +183,8 @@ mod web {
             for (label, extensions) in crate::windows::package_filters(true, false) {
                 dialog = dialog.add_filter(label, extensions);
             }
-            // Browser SBS downloads wrap the XML and adjacent resources in a transport ZIP.
+
+            // Browser SBS downloads wrap the XML and adjacent resources in a transport ZIP
             dialog = dialog.add_filter("SBS Package Download (*.zip)", &["zip"]);
             if let Some(file) = dialog.pick_file().await {
                 let bytes = file.read().await;
@@ -388,12 +392,17 @@ mod tests {
         let other = app.session.document_id;
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>"#;
         import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec(), "Resources");
+
         assert_eq!(app.session.document_id, original);
         assert_eq!(app.session.pkg.resources.len(), 1);
         assert!(app.session.pkg.graphs.iter().all(|graph| graph.nodes.iter().all(|node| node.def != "svg")));
+
         app.run("package.close", serde_json::json!({"discard": true})).unwrap();
+
         assert_eq!(app.session.document_id, other);
+
         import_resource_bytes(&mut app, original, "shape.svg", svg.to_vec(), "Resources");
+
         assert!(app.session.pkg.resources.is_empty(), "a closed picker target must not import into a different package");
     }
 }

@@ -38,6 +38,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                 if modified && parameters.get("discard").and_then(Value::as_bool) != Some(true) {
                     return Err(bad("package.close", "save the package or explicitly discard its edits"));
                 }
+
                 let path = session.open_packages().into_iter().find(|entry| entry.0 == id).and_then(|entry| entry.2).map(str::to_string);
                 if id != session.document_id {
                     session.documents.remove(&id);
@@ -68,6 +69,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
                 if session.open_packages().iter().any(|entry| entry.3) && parameters.get("discard").and_then(Value::as_bool) != Some(true) {
                     return Err(bad("package.closeAll", "save the packages or explicitly discard their edits"));
                 }
+
                 session.clear_documents();
                 Ok(Value::Null)
             }
@@ -94,6 +96,7 @@ impl Session {
         if self.document_open && document == self.document_id {
             return Ok(&self.pkg);
         }
+
         self.documents.get(&document).map(|document| &document.pkg).ok_or_else(|| bad("package", "The inspected package is no longer open"))
     }
 
@@ -107,6 +110,7 @@ impl Session {
                 None => self.edit(label, |session| edit(&mut session.pkg)),
             };
         }
+
         let document = self.documents.get_mut(&document).ok_or_else(|| bad("package", "The inspected package is no longer open"))?;
         let result = document.edit(label, key, self.history_prefs.undo_limit as usize, edit)?;
         self.refresh_links();
@@ -117,9 +121,11 @@ impl Session {
         if self.document_open && id == self.document_id {
             return Ok(());
         }
+
         if !self.documents.contains_key(&id) {
             return Err(bad("package.activate", "the package is no longer open"));
         }
+
         // Publish pending source edits while the destination is still among the open dependents
         self.end_group();
         let mut document = self.documents.remove(&id).ok_or_else(|| bad("package.activate", "the package is no longer open"))?;
@@ -133,6 +139,7 @@ impl Session {
         if self.documents.len() >= 63 {
             return Err(bad("file.open", "at most 64 packages can be open at once"));
         }
+
         let id = self.next_document_id;
         self.next_document_id = id.checked_add(1).ok_or_else(|| bad("file.open", "document identifiers exhausted"))?;
         self.linked_sources.extend(package.dependencies.clone());

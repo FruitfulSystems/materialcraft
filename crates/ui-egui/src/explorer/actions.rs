@@ -17,9 +17,11 @@ pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: Ex
         }
         return;
     }
+
     if !activate(app, target.document()) {
         return;
     }
+
     let Some(folder) = target.folder(&app.session.pkg) else { return };
     match command {
         "file.importBitmap" | "file.importVector" => {

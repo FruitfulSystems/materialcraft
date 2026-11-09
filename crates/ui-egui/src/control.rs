@@ -279,6 +279,7 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 if app.session.graph().is_err() {
                     return Err(format!("invalid graph {}", app.session.graph));
                 }
+
                 Ok(materialcraft_engine::inspect::session(&app.session, None))
             }) {
                 Ok(v) => ok(v),
@@ -330,6 +331,7 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
             if !crate::menus::implemented(id) {
                 return err(format!("menu item `{id}` is not implemented"));
             }
+
             crate::menus::invoke(app, ctx, id);
             ok(Value::Null)
         }
