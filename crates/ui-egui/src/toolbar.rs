@@ -93,20 +93,26 @@ mod tests {
         harness
     }
 
-    fn off(harness: &egui_kittest::Harness<'static, MaterialCraftApp>, label: &str) -> bool {
-        harness.get(By::new().role(egui::accesskit::Role::Button).label_contains(label)).accesskit_node().is_disabled()
+    // Each button's position in the toolbar. The labels change with the UI language.
+    const NEW_GRAPH: usize = 0;
+    const OPEN: usize = 1;
+    const SAVE: usize = 2;
+    const EXPORT: usize = 5;
+
+    fn off(harness: &egui_kittest::Harness<'static, MaterialCraftApp>, button: usize) -> bool {
+        harness.get_all(By::new().role(egui::accesskit::Role::Button)).nth(button).expect("the toolbar has this button").accesskit_node().is_disabled()
     }
 
     #[test]
     fn toolbar_buttons_match_the_commands_a_blocker_allows() {
         let free = harness(|_| {});
-        assert!(!off(&free, "New graph") && !off(&free, "Open package") && !off(&free, "Save") && !off(&free, "Export"));
+        assert!(!off(&free, NEW_GRAPH) && !off(&free, OPEN) && !off(&free, SAVE) && !off(&free, EXPORT));
 
         let dialog = harness(|app| app.ui.windows.about = true);
-        assert!(off(&dialog, "New graph") && off(&dialog, "Open package") && off(&dialog, "Save") && off(&dialog, "Export"));
+        assert!(off(&dialog, NEW_GRAPH) && off(&dialog, OPEN) && off(&dialog, SAVE) && off(&dialog, EXPORT));
 
         let file_dialog = harness(|app| app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage));
-        assert!(!off(&file_dialog, "Open package"), "a file dialog leaves Open enabled, which brings it forward");
-        assert!(off(&file_dialog, "Save"));
+        assert!(!off(&file_dialog, OPEN), "a file dialog leaves Open enabled, which brings it forward");
+        assert!(off(&file_dialog, SAVE));
     }
 }
