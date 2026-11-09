@@ -35,8 +35,19 @@ pub mod windows;
 mod material_craft_app;
 pub mod pattern;
 mod toast;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod updates_ui;
 mod user_directory;
 mod value_editor;
+
+/// This app as the updater knows it: its release repository, and the icon and accent color the
+/// update prompt shows
+#[cfg(not(target_arch = "wasm32"))]
+pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.materialcraft.png")),
+    accent: Some([0x17, 0x8a, 0x9c]),
+    ..craft_update::app::App::new("materialcraft", "MaterialCraft", "Procedural material design", "storytold/materialcraft")
+};
 
 pub use control::ControlRequest;
 pub use material_craft_app::MaterialCraftApp;
