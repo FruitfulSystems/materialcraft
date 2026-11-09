@@ -20,6 +20,7 @@ pub mod menus;
 mod preview_resolution;
 #[path = "property/mod.rs"]
 pub mod properties;
+mod shell;
 pub mod state;
 pub mod theme;
 pub mod thumbs;

@@ -32,7 +32,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
     let mut nodes = Vec::new();
     let mut clear_annotation = false;
 
-    let frame_key = crate::graph::GraphCamera::frame_key(ui, canvas_bounds);
+    let frame_key = crate::graph::GraphCamera::frame_key(ui, canvas_bounds) && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked();
     if !editor.framed || app.ui.frame_all || frame_key {
         editor.framed = true;
         let selected_only = frame_key && !editor.selection.is_empty();

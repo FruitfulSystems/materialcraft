@@ -134,7 +134,7 @@ pub(super) fn handle(
                         } else if let Some(position) = pointer
                             && rect.contains(position)
                         {
-                            open_search(app, camera.to_graph(position), Some(from));
+                            open_search(app, &context, camera.to_graph(position), Some(from));
                         }
                     }
                 }
@@ -196,7 +196,7 @@ pub(super) fn handle(
                 app.run("graph.wire.insertDot", json!({"to": wire.0.0, "toPort": wire.1, "at": [at.x, at.y]}));
                 app.graph.selected_wires.clear();
             }
-            None => open_search(app, camera.to_graph(position), None),
+            None => open_search(app, &context, camera.to_graph(position), None),
         }
     }
 
@@ -252,17 +252,13 @@ pub(super) fn handle(
 
     // Keys over the canvas
     let hovered = pointer.is_some_and(|position| rect.contains(position));
-    #[cfg(not(target_arch = "wasm32"))]
-    let update_dialog_open = crate::updates_ui::blocks_input(app);
-    #[cfg(target_arch = "wasm32")]
-    let update_dialog_open = false;
-    if hovered && app.graph.search.is_none() && !update_dialog_open {
+    if hovered && app.graph.search.is_none() && !crate::shell::modality::Modality::capture(app, &context).is_blocked() {
         let space = !context.egui_wants_keyboard_input() && context.input(|input| input.key_pressed(egui::Key::Space));
         let tab = !app.graph.keyboard_was_focused && !context.text_edit_focused() && context.input(|input| input.key_pressed(egui::Key::Tab));
         if (space || tab)
             && let Some(position) = pointer
         {
-            open_search(app, camera.to_graph(position), None);
+            open_search(app, &context, camera.to_graph(position), None);
         }
         if GraphCamera::frame_key(ui, rect) {
             let selected = !app.session.selection.is_empty();

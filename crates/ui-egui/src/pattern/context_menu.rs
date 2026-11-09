@@ -7,7 +7,7 @@ pub(super) fn show(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui: &
     let mut add = None;
     ui.menu_button(tr("Add node"), |ui| {
         let entries = PatternNodeKind::ALL.into_iter().filter(|kind| *kind != PatternNodeKind::Dot).map(|kind| (kind.native_id(), kind.label(), "FX-Map"));
-        if let Some(id) = crate::graph::add_node_menu::show(ui, entries) {
+        if let Some(id) = crate::graph::add_node_menu::show(app, ui, entries) {
             add = PatternNodeKind::ALL.into_iter().find(|kind| kind.native_id() == id);
         }
     });

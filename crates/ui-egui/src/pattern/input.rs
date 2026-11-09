@@ -96,7 +96,11 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
             editor.selected_wires.clear();
         }
     }
-    if response.hovered() && !ui.ctx().egui_wants_keyboard_input() && ui.input(|input| input.key_pressed(egui::Key::Space)) {
+    if response.hovered()
+        && !ui.ctx().egui_wants_keyboard_input()
+        && ui.input(|input| input.key_pressed(egui::Key::Space))
+        && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()
+    {
         editor.menu_at = position;
         egui::Popup::open_id(ui.ctx(), response.id.with("menu"));
     }

@@ -363,8 +363,10 @@ impl MaterialCraftApp {
         web_files::poll(self);
         #[cfg(not(target_arch = "wasm32"))]
         crate::native_dialogs::poll(self);
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            web_files::dropped(self, ctx, &f);
+        if !crate::shell::modality::Modality::capture(self, ctx).is_blocked() {
+            for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+                web_files::dropped(self, ctx, &f);
+            }
         }
         self.apply_prefs();
         cook::drive(self, ctx);

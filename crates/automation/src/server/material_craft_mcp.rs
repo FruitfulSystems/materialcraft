@@ -207,7 +207,7 @@ impl MaterialCraftMcp {
     }
 
     #[tool(
-        description = "Save the package (path relative to the write root; omit to save to its own file). Writes .sbs XML with adjacent resources/ or a self-contained .mcraft ZIP."
+        description = "Save the package (path relative to the write root; omit to save to its own file). Writes .sbs XML with adjacent resources/ or a self-contained .mcraft ZIP. In bridge mode, saving without a path runs File > Save and returns an error while a dialog or prompt blocks it."
     )]
     async fn package_save(&self, Parameters(p): Parameters<SaveParams>) -> Result<CallToolResult, McpError> {
         to_result(self.call("package.save", params(&p)).await)
@@ -254,7 +254,9 @@ impl MaterialCraftMcp {
         to_result(self.bridge_only("ui.inspect", json!({})).await)
     }
 
-    #[tool(description = "Bridge mode: activate a menu item by id like a click (may open a window). ui.menu.list lists ids.")]
+    #[tool(
+        description = "Bridge mode: activate a menu item by id like a click (may open a window); returns an error while a dialog or prompt blocks it. ui.menu.list lists ids and which are enabled."
+    )]
     async fn ui_menu_invoke(&self, Parameters(p): Parameters<MenuParams>) -> Result<CallToolResult, McpError> {
         to_result(self.bridge_only("ui.menu.invoke", params(&p)).await)
     }

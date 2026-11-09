@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
+use crate::shell::modality::Modality;
 use crate::theme::Tokens;
 
 pub use crate::menu_item::MenuItem;
@@ -144,8 +145,12 @@ pub fn implemented(id: &str) -> bool {
     is_ui(id) || materialcraft_engine::find(id).is_some()
 }
 
-/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`)
+/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`), unless a dialog or prompt blocks it
 pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
+    if !Modality::capture(app, ctx).allows(id) {
+        return;
+    }
+
     if crate::graph::editor_actions::invoke(app, id) {
         return;
     }
@@ -295,7 +300,8 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
 }
 
 fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
-    let on = enabled(app, item.id);
+    let modality = Modality::capture(app, ctx);
+    let on = modality.allows(item.id) && enabled(app, item.id);
     let mut b = egui::Button::new(tr(item.label));
     if let Some(sc) = item.shortcut {
         b = b.shortcut_text(shortcut_label(ctx, sc));
@@ -316,7 +322,7 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     }
     #[cfg(not(target_arch = "wasm32"))]
     if item.id == "file.open" {
-        ui.add_enabled_ui(!app.ui.recent.is_empty(), |ui| {
+        ui.add_enabled_ui(!modality.is_blocked() && !app.ui.recent.is_empty(), |ui| {
             ui.menu_button(tr("Recent packages"), |ui| {
                 for path in app.ui.recent.clone() {
                     if ui.button(&path).clicked() {
@@ -334,20 +340,19 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     }
 }
 
-/// Dispatch shortcuts unless a widget or popup owns the keyboard
+/// Dispatch shortcuts unless a widget, popup or dialog owns the keyboard
 pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
-        return;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if crate::updates_ui::blocks_input(app) {
         return;
     }
     if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
         return;
     }
 
-    crate::graph::wire_actions::shortcuts(app, ctx);
+    let modality = Modality::capture(app, ctx);
+    if !modality.is_blocked() {
+        crate::graph::wire_actions::shortcuts(app, ctx);
+    }
 
     let platform = craft_keymap::egui::platform(ctx);
     if app.keymap.platform() != platform {
@@ -356,7 +361,9 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     // Selected label text copies through egui's Copy and Cut events, which a hit would remove
     let label_selected = label_text_selected(ctx);
     let hits = ctx.input_mut(|i| {
-        app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| !(label_selected && matches!(hit.command.id.as_str(), "edit.copy" | "edit.cut")))
+        app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| {
+            modality.allows(&hit.command.id) && !(label_selected && matches!(hit.command.id.as_str(), "edit.copy" | "edit.cut"))
+        })
     });
     for hit in hits {
         if crate::graph::editor_actions::shortcut_enabled(app, &hit.command.id) {
@@ -370,14 +377,15 @@ fn label_text_selected(ctx: &egui::Context) -> bool {
 }
 
 /// Menu items for `ui.menu.list`
-pub fn list(app: &MaterialCraftApp) -> Value {
+pub fn list(app: &MaterialCraftApp, ctx: &egui::Context) -> Value {
+    let modality = Modality::capture(app, ctx);
     Value::Array(
         CATALOG
             .iter()
             .filter(|i| i.label != "-")
             .map(|i| {
                 serde_json::json!({"menu": i.menu, "submenu": i.sub, "label": i.label, "id": i.id, "shortcut": i.shortcut,
-                    "implemented": implemented(i.id), "enabled": enabled(app, i.id)})
+                    "implemented": implemented(i.id), "enabled": modality.allows(i.id) && enabled(app, i.id)})
             })
             .collect(),
     )
@@ -498,6 +506,131 @@ mod tests {
         .textures_delta
         .clear();
         assert!(!app.ui.windows.new_graph);
+    }
+
+    #[test]
+    fn delete_waits_behind_the_unsaved_prompt() {
+        let mut app = app();
+        app.run("edit.selectAll", serde_json::json!({}));
+        let nodes = app.session.graph().unwrap().nodes.len();
+        assert!(nodes > 0);
+
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().nodes.len(), nodes, "Delete does not edit the package behind the prompt");
+
+        app.ui.windows.unsaved = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().nodes.len(), 0, "Delete works once the prompt is answered");
+    }
+
+    #[test]
+    fn wire_keys_wait_behind_the_unsaved_prompt() {
+        let mut app = app();
+        let wire = app.session.graph().unwrap().connections.first().map(|wire| (wire.to, wire.to_port.clone())).unwrap();
+        let wires = app.session.graph().unwrap().connections.len();
+        app.graph.selected_wires = vec![wire];
+
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().connections.len(), wires);
+
+        app.ui.windows.unsaved = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().connections.len(), wires - 1, "Delete works once the prompt is answered");
+    }
+
+    /// Whether a press is still in egui's input after `shortcuts`, where a shortcut that ran removes it
+    fn press_left_in_input(app: &mut MaterialCraftApp, key: egui::Key, modifiers: egui::Modifiers) -> bool {
+        let ctx = egui::Context::default();
+        let input =
+            egui::RawInput { events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }], ..Default::default() };
+        let mut left = false;
+        ctx.run_ui(input, |ui| {
+            shortcuts(app, ui.ctx());
+            left = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: pressed, .. } if *pressed == key)));
+        })
+        .textures_delta
+        .clear();
+        left
+    }
+
+    #[test]
+    fn behind_a_file_dialog_only_the_commands_that_show_one_run() {
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+
+        assert!(!press_left_in_input(&mut app, egui::Key::O, egui::Modifiers::COMMAND), "Ctrl+O reaches the open dialog");
+        assert!(press_left_in_input(&mut app, egui::Key::N, egui::Modifiers::COMMAND), "Ctrl+N waits");
+        assert!(!app.ui.windows.new_graph);
+        assert_eq!(app.dialogs.queued(), 1, "the dialog comes forward and no second one is asked for");
+    }
+
+    #[test]
+    fn invoke_waits_behind_a_file_dialog_except_for_the_commands_that_show_one() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(!app.ui.windows.export);
+        invoke(&mut app, &ctx, "file.open");
+        assert_eq!(app.dialogs.queued(), 1, "the dialog comes forward and no second one is asked for");
+    }
+
+    #[test]
+    fn invoke_runs_nothing_behind_a_prompt() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(!app.ui.windows.export);
+
+        app.ui.windows.unsaved = None;
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(app.ui.windows.export);
+    }
+
+    #[test]
+    fn the_shortcuts_list_leaves_shortcuts_running() {
+        let mut app = app();
+        app.ui.windows.shortcuts = true;
+        dispatched(egui::Key::N, egui::Modifiers::COMMAND, &mut app);
+        assert!(app.ui.windows.new_graph);
+    }
+
+    #[test]
+    fn menu_bar_items_gray_out_behind_a_prompt() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+
+        let mut app = app();
+        app.ui.recent.push("recent.sbs".into());
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(|ui, app: &mut MaterialCraftApp| menu_bar(app, ui), app);
+        harness.run_steps(2);
+        harness.get_by_label("File").click();
+        harness.run_steps(3);
+        let item = |label| By::new().role(egui::accesskit::Role::Button).label(label);
+        assert!(!harness.get(item("Close all")).accesskit_node().is_disabled());
+        assert!(!harness.get(item("Recent packages")).accesskit_node().is_disabled());
+
+        harness.state_mut().ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        harness.run_steps(3);
+        assert!(harness.get(item("Close all")).accesskit_node().is_disabled());
+        assert!(harness.get(item("Recent packages")).accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn open_stays_enabled_behind_a_file_dialog() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(|ui, app: &mut MaterialCraftApp| menu_bar(app, ui), app);
+        harness.run_steps(2);
+        harness.get_by_label("File").click();
+        harness.run_steps(3);
+        let item = |label| By::new().role(egui::accesskit::Role::Button).label_contains(label);
+        assert!(!harness.get(item("Open...")).accesskit_node().is_disabled());
+        assert!(harness.get(item("Close all")).accesskit_node().is_disabled());
     }
 
     fn press_c(events_after: Vec<egui::Event>) -> egui::RawInput {
