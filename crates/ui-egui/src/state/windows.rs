@@ -10,9 +10,9 @@ pub struct Windows {
     pub preferences: bool,
     pub shortcuts: bool,
     pub home: bool,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(test, target_arch = "wasm32"))]
     #[serde(skip)]
-    pub package_save: Option<(u64, String, bool, bool)>,
+    pub package_save: Option<crate::web_files::PackageSave>,
     #[serde(skip_deserializing)]
     pub unsaved: Option<crate::unsaved::Guarded>,
 }

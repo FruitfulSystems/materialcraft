@@ -3,14 +3,41 @@ use std::sync::{Mutex, PoisonError};
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
+#[cfg(any(test, target_arch = "wasm32"))]
+mod package_save;
+#[cfg(any(test, target_arch = "wasm32"))]
+pub use package_save::PackageSave;
+
 /// What a picked file is for
 #[derive(Clone, PartialEq)]
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum Pick {
     Package,
-    Bitmap,
+    Bitmap { target: materialcraft_engine::GraphTarget, path: Option<String> },
     Resource { document: u64, vector: bool, folder: String },
-    Mesh,
+    Mesh { document: u64 },
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+impl Pick {
+    fn bitmap(app: &MaterialCraftApp) -> Self {
+        Self::Bitmap { target: materialcraft_engine::GraphTarget::active(&app.session), path: app.session.graph().ok().map(|graph| graph.sbs_path()) }
+    }
+
+    fn mesh(app: &MaterialCraftApp) -> Self {
+        Self::Mesh { document: app.session.document_id }
+    }
+
+    fn dropped(app: &MaterialCraftApp, name: &str) -> Self {
+        let extension = name.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase()).unwrap_or_default();
+        if materialcraft_engine::formats::mesh::MESH_EXTENSIONS.contains(&extension.as_str()) {
+            Self::mesh(app)
+        } else if materialcraft_engine::formats::IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+            Self::bitmap(app)
+        } else {
+            Self::Package
+        }
+    }
 }
 
 /// Files picked in the browser, waiting for the next frame: (file name, bytes, purpose)
@@ -20,18 +47,40 @@ static INBOX: Mutex<Vec<(String, Vec<u8>, Pick)>> = Mutex::new(Vec::new());
 pub fn poll(app: &mut MaterialCraftApp) {
     let picked = std::mem::take(&mut *INBOX.lock().unwrap_or_else(PoisonError::into_inner));
     for (name, bytes, pick) in picked {
-        if let Pick::Resource { document, vector, folder } = pick {
-            if let Err(error) = materialcraft_engine::file_cmds::validate_resource_extension(&name, vector) {
+        apply_pick(app, &name, bytes, pick);
+    }
+}
+
+fn apply_pick(app: &mut MaterialCraftApp, name: &str, bytes: Vec<u8>, pick: Pick) {
+    match pick {
+        Pick::Resource { document, vector, folder } => {
+            if let Err(error) = materialcraft_engine::file_cmds::validate_resource_extension(name, vector) {
                 app.toast(error.to_string(), true);
             } else {
-                import_resource_bytes(app, document, &name, bytes, &folder);
+                import_resource_bytes(app, document, name, bytes, &folder);
             }
-        } else if pick == Pick::Mesh {
-            mesh(app, &name, &bytes);
-        } else {
-            load(app, &name, bytes, pick == Pick::Bitmap);
         }
+        Pick::Bitmap { target, path } => {
+            // An index can belong to a different graph after deletion, so compare its qualified path too
+            if target == materialcraft_engine::GraphTarget::active(&app.session) && path == app.session.graph().ok().map(|graph| graph.sbs_path()) {
+                load(app, name, bytes, true);
+            } else {
+                not_applied(app);
+            }
+        }
+        Pick::Mesh { document } => {
+            if app.session.document_id == document {
+                mesh(app, name, &bytes);
+            } else {
+                not_applied(app);
+            }
+        }
+        Pick::Package => load(app, name, bytes, false),
     }
+}
+
+fn not_applied(app: &mut MaterialCraftApp) {
+    app.toast(tr("Not applied: the active graph or package changed while the file dialog was open"), true);
 }
 
 fn import_resource_bytes(app: &mut MaterialCraftApp, document: u64, name: &str, bytes: Vec<u8>, folder: &str) {
@@ -65,8 +114,7 @@ pub fn load_mesh(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = app;
-        web::pick_mesh(ctx);
+        web::pick_mesh(app, ctx);
     }
 }
 
@@ -123,11 +171,11 @@ pub fn dropped(app: &mut MaterialCraftApp, ctx: &egui::Context, file: &egui::Dro
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = app;
+        let pick = Pick::dropped(app, &name);
         let (file, ctx) = (file.clone(), ctx.clone());
         wasm_bindgen_futures::spawn_local(async move {
             match file.bytes_async().await {
-                Ok(bytes) => INBOX.lock().unwrap_or_else(PoisonError::into_inner).push((name, bytes, Pick::Package)),
+                Ok(bytes) => INBOX.lock().unwrap_or_else(PoisonError::into_inner).push((name, bytes, pick)),
                 Err(e) => log::warn!("couldn't read dropped file {name}: {e}"),
             }
             ctx.request_repaint();
@@ -195,13 +243,13 @@ mod web {
     }
 
     /// 3D view ▸ Scene ▸ Load mesh
-    pub fn pick_mesh(ctx: &egui::Context) {
-        pick(ctx, "Meshes", materialcraft_engine::formats::mesh::MESH_EXTENSIONS, Pick::Mesh);
+    pub fn pick_mesh(app: &MaterialCraftApp, ctx: &egui::Context) {
+        pick(ctx, "Meshes", materialcraft_engine::formats::mesh::MESH_EXTENSIONS, Pick::mesh(app));
     }
 
     /// File ▸ Import bitmap
-    pub fn import_bitmap(ctx: &egui::Context) {
-        pick_image(ctx, Pick::Bitmap, false);
+    pub fn import_bitmap(app: &MaterialCraftApp, ctx: &egui::Context) {
+        pick_image(ctx, Pick::bitmap(app), false);
     }
 
     pub fn import_resource(ctx: &egui::Context, document: u64, vector: bool, folder: &str) {
@@ -225,11 +273,7 @@ mod web {
 
     /// File ▸ Save: download either the native archive or SBS with its resources.
     pub fn save(app: &mut MaterialCraftApp) {
-        if let Some(path) = app.session.path.clone() {
-            save_download(app, &path, false);
-        } else {
-            save_as(app, false);
-        }
+        super::PackageSave::save(app, download);
     }
 
     pub fn save_copy(app: &mut MaterialCraftApp) {
@@ -237,52 +281,15 @@ mod web {
     }
 
     pub fn save_as(app: &mut MaterialCraftApp, copy: bool) {
-        let archive = app.session.path.as_deref().is_some_and(materialcraft_engine::file_cmds::is_mcraft);
-        app.ui.windows.package_save = Some((app.session.document_id, app.session.pkg.name.clone(), archive, copy));
+        super::PackageSave::request(app, copy);
     }
 
     pub fn save_dialog(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-        let Some((document, mut name, mut archive, copy)) = app.ui.windows.package_save.clone() else { return };
-        let mut open = true;
-        let mut accept = false;
-        egui::Window::new(tr("Save package")).collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
-            ui.label(tr("Name"));
-            ui.text_edit_singleline(&mut name);
-            ui.radio_value(&mut archive, false, tr("SBS XML Package (*.sbs)"));
-            ui.radio_value(&mut archive, true, tr("MaterialCraft Project (*.mcraft)"));
-            if !archive {
-                ui.label(tr("Downloads the SBS and resources together in a ZIP."));
-            }
-            accept = ui.button(tr("Download")).clicked();
-        });
-        app.ui.windows.package_save = open.then_some((document, name.clone(), archive, copy));
-        if accept {
-            app.ui.windows.package_save = None;
-            if app.run("package.activate", serde_json::json!({"document": document})).is_some() {
-                let ext = if archive { "mcraft" } else { "sbs" };
-                save_download(app, &format!("{}.{ext}", materialcraft_engine::formats::safe_file_name(&name)), copy);
-            }
-        }
+        super::PackageSave::show(app, ctx, download);
     }
 
-    fn save_download(app: &mut MaterialCraftApp, path: &str, copy: bool) {
-        crate::properties::GraphPropertyDraft::commit(app);
-        let archive = materialcraft_engine::file_cmds::is_mcraft(path);
-        let name = if archive { path.to_string() } else { format!("{}_sbs.zip", path.strip_suffix(".sbs").unwrap_or(path)) };
-        let result = materialcraft_engine::file_cmds::save_files_at(&app.session, path)
-            .map_err(|e| e.to_string())
-            .and_then(|files| files.zip().map_err(|e| e.to_string()))
-            .and_then(|bytes| download(&name, &bytes));
-        match result {
-            Ok(()) => {
-                if !copy {
-                    app.session.path = Some(path.to_string());
-                    app.session.modified = false;
-                }
-                app.toast(format!("{} {name}", tr("Downloaded")), false);
-            }
-            Err(e) => app.toast(format!("{} {name}: {e}", tr("Couldn't save")), true),
-        }
+    pub(crate) fn save_then(app: &mut MaterialCraftApp, action: crate::unsaved::Guarded) {
+        super::PackageSave::save_then(app, action, download);
     }
 
     /// File ▸ Export material: download the open graph as `<graph>.mcmat`
@@ -381,6 +388,76 @@ mod tests {
             let mut out = Vec::new();
             std::io::Read::read_to_end(&mut zip.by_name(name).unwrap(), &mut out).unwrap();
             assert_eq!(&out, data);
+        }
+    }
+
+    #[test]
+    fn delayed_bitmap_picks_and_drops_do_not_follow_a_changed_graph() {
+        use materialcraft_engine::formats::{Depth, encode};
+        use materialcraft_engine::image::{Image, Kind};
+
+        let bytes = encode(&Image::filled(2, 2, Kind::Gray, [0.5; 4]), "png", Depth::U8, false).unwrap();
+        for dropped in [false, true] {
+            for change in ["package", "graph", "rename", "folder"] {
+                let mut app = app(false);
+                let pick = if dropped { Pick::dropped(&app, "picked.png") } else { Pick::bitmap(&app) };
+                match change {
+                    "package" => {
+                        app.run("file.newPackage", serde_json::json!({})).unwrap();
+                    }
+                    "graph" => {
+                        app.run("file.new", serde_json::json!({"template": "empty", "name": "Other"})).unwrap();
+                    }
+                    "rename" => app.session.graph_mut().unwrap().name = "Renamed".into(),
+                    "folder" => app.session.graph_mut().unwrap().folder = "Moved".into(),
+                    _ => panic!("unknown graph change: {change}"),
+                }
+                let before = app.session.pkg.clone();
+
+                apply_pick(&mut app, "picked.png", bytes.clone(), pick);
+
+                assert!(app.session.pkg == before, "{change}, dropped={dropped}");
+                assert!(app.toasts.iter().any(|toast| toast.error && toast.text.starts_with("Not applied")));
+            }
+        }
+    }
+
+    #[test]
+    fn delayed_mesh_picks_and_drops_do_not_follow_another_package() {
+        for dropped in [false, true] {
+            let mut app = app(false);
+            let pick = if dropped { Pick::dropped(&app, "picked.obj") } else { Pick::mesh(&app) };
+            app.run("file.newPackage", serde_json::json!({})).unwrap();
+
+            apply_pick(&mut app, "picked.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".to_vec(), pick);
+
+            assert!(app.session.custom_mesh.is_none());
+            assert!(app.toasts.iter().any(|toast| toast.error && toast.text.starts_with("Not applied")));
+        }
+    }
+
+    #[test]
+    fn bitmap_and_mesh_picks_and_drops_apply_when_the_target_is_unchanged() {
+        use materialcraft_engine::formats::{Depth, encode};
+        use materialcraft_engine::image::{Image, Kind};
+
+        let bytes = encode(&Image::filled(2, 2, Kind::Gray, [0.5; 4]), "png", Depth::U8, false).unwrap();
+        for dropped in [false, true] {
+            let mut app = app(false);
+            let nodes = app.session.graph().unwrap().nodes.len();
+            let pick = if dropped { Pick::dropped(&app, "picked.png") } else { Pick::bitmap(&app) };
+
+            apply_pick(&mut app, "picked.png", bytes.clone(), pick);
+
+            assert_eq!(app.session.graph().unwrap().nodes.len(), nodes + 1);
+            assert!(app.session.modified);
+            assert!(!app.toasts.iter().any(|toast| toast.error));
+
+            let pick = if dropped { Pick::dropped(&app, "picked.obj") } else { Pick::mesh(&app) };
+            apply_pick(&mut app, "picked.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".to_vec(), pick);
+
+            assert!(app.session.custom_mesh.is_some());
+            assert!(!app.toasts.iter().any(|toast| toast.error));
         }
     }
 

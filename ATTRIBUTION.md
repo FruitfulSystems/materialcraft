@@ -32,7 +32,7 @@ images, materials, sample graphs, presets, environments) may ever be added.
 | `docs/images/materialcraft-levels-editor.png` | Docs screenshot: the Levels editor with the input histogram | MaterialCraft contributors | Offscreen render of MaterialCraft's UI (`crates/ui-egui/tests/snapshot.rs`) | MIT OR Apache-2.0 |
 | `docs/brand/artcraft-*.svg`, `docs/brand/artcraft-*.png` | ArtCraft logo and mark | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms, not open source ([`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt)) |
 | `crates/nodes/src/atomic/text.rs` (`GLYPHS`) | Single-stroke vector font of the Text node (A–Z, a–z, 0–9, punctuation) | MaterialCraft contributors | Original, designed as stroke data in code | MIT OR Apache-2.0 |
-| `crates/formats/tests/bitmap_imports.rs`, `crates/formats/tests/project_packages.rs`, `crates/engine/tests/package_resources.rs`, `crates/automation/tests/package_files.rs`, `crates/ui-egui/src/web_files.rs`, `crates/ui-egui/src/native_dialogs.test.rs`, `crates/ui-egui/tests/snapshot/explorer.rs` | Procedural bitmap and inline SVG test fixtures | MaterialCraft contributors | Original test data generated in code | MIT OR Apache-2.0 |
+| `crates/formats/tests/bitmap_imports.rs`, `crates/formats/tests/project_packages.rs`, `crates/engine/tests/package_resources.rs`, `crates/automation/tests/package_files.rs`, `crates/ui-egui/src/web_files.rs`, `crates/ui-egui/src/native_dialogs.test.rs`, `crates/ui-egui/tests/snapshot/explorer.rs` | Procedural bitmap, SVG and mesh test fixtures | MaterialCraft contributors | Original test data generated in code | MIT OR Apache-2.0 |
 
 ## Third-party assets compiled into the binary
 

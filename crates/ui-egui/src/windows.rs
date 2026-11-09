@@ -639,7 +639,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
     {
         match id {
             "file.open" => crate::web_files::open(ctx),
-            "file.importBitmap" => crate::web_files::import_bitmap(ctx),
+            "file.importBitmap" => crate::web_files::import_bitmap(app, ctx),
             "file.importVector" => import_resource(app, ctx, true),
             "file.save" => crate::web_files::save(app),
             "file.saveAs" => crate::web_files::save_as(app, false),

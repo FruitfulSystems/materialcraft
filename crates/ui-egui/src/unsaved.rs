@@ -186,16 +186,24 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
 }
 
 /// Save first, then run `action` if the package is no longer modified. Without a path to save to,
-/// the action waits for the Save dialog's answer ([`finish_save_dialog`]) on the desktop
+/// the action waits for the Save dialog's answer ([`finish_save_dialog`])
 pub(crate) fn save_then(app: &mut MaterialCraftApp, ctx: &Context, action: Guarded) {
     #[cfg(not(target_arch = "wasm32"))]
-    if !crate::windows::has_local_path(app) {
-        app.awaiting_save = Some(action);
-        crate::native_dialogs::save_before_action(app);
-        return;
+    {
+        if !crate::windows::has_local_path(app) {
+            app.awaiting_save = Some(action);
+            crate::native_dialogs::save_before_action(app);
+            return;
+        }
+
+        crate::windows::file_action(app, ctx, "file.save");
+        run_if_saved(app, action);
     }
-    crate::windows::file_action(app, ctx, "file.save");
-    run_if_saved(app, action);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        crate::web_files::save_then(app, action);
+    }
 }
 
 fn run_if_saved(app: &mut MaterialCraftApp, action: Guarded) {
@@ -206,7 +214,6 @@ fn run_if_saved(app: &mut MaterialCraftApp, action: Guarded) {
 }
 
 /// The Save dialog of a held action has answered: run the action when `saved`, otherwise drop it
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn finish_save_dialog(app: &mut MaterialCraftApp, saved: bool) {
     let Some(action) = app.awaiting_save.take() else { return };
     if saved {

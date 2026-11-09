@@ -49,7 +49,6 @@ pub struct MaterialCraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) dialogs: crate::native_dialogs::Dialogs,
     /// The held action waiting for the Save dialog the unsaved-changes prompt opened
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) awaiting_save: Option<crate::unsaved::Guarded>,
     /// The window buttons to draw when the app draws the window frame; `None` while the desktop draws it (desktop only)
     #[cfg(not(target_arch = "wasm32"))]
