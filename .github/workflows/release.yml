@@ -10,9 +10,9 @@ on:
         type: string
         default: ""
 
-permissions:
-  contents: write
-  packages: write
+# Nothing by default; each job names what it needs. Only `release` and `freebsd-draft` write
+# (the draft GitHub Release, and the packages the shared release job publishes).
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,6 +20,9 @@ concurrency:
 
 jobs:
   release:
+    permissions:
+      contents: write
+      packages: write
     # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
     uses: storytold/craft-common-actions/.github/workflows/release.yml@main
     with:
@@ -299,6 +302,8 @@ jobs:
     name: Add FreeBSD to the draft release
     needs: [version, freebsd, release]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
