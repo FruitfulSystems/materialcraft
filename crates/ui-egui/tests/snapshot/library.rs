@@ -89,7 +89,7 @@ fn library_tree_shows_every_category_and_adds_what_the_graph_takes() {
     settle(&mut harness, 3);
     harness.get(tree("Constant")).click();
     settle(&mut harness, 4);
-    for label in ["Pi", "2Pi"] {
+    for label in ["Pi", "2 Pi"] {
         assert!(harness.query(tile(label)).is_some(), "{label}");
     }
     save(&mut harness, &directory, "library-functions-constant");

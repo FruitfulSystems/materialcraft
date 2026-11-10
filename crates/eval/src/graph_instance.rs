@@ -73,6 +73,7 @@ pub(crate) fn cook_instance(
     o.environment = opts.environment;
     o.parent_tiling = Some(base.tiling);
     o.parent_pixel_ratio = Some(base.pixel_ratio);
+    o.parent_base = Some(base);
     o.registry = Some(registry);
     o.resource_root = Some(root_resource);
     o.max_size = opts.max_size;

@@ -73,6 +73,7 @@ impl FunctionEditor {
             FunctionTarget::Graph => FunctionGraphTarget::Graph,
             FunctionTarget::Parameter(parameter) => FunctionGraphTarget::Parameter { node: self.node?, parameter: parameter.clone() },
             FunctionTarget::Dynamic(parameter) => FunctionGraphTarget::Dynamic { node: self.node?, parameter: parameter.clone() },
+            FunctionTarget::Base(parameter) => FunctionGraphTarget::Base { node: self.node?, parameter: *parameter },
             FunctionTarget::Pattern { node, parameter } => FunctionGraphTarget::Pattern { owner: self.node?, node: *node, parameter: parameter.clone() },
         })
     }

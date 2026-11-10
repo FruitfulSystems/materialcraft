@@ -53,6 +53,38 @@ impl FunctionGraph {
         graph
     }
 
+    pub fn input(identifier: &str, value_type: crate::ValueType) -> FunctionGraph {
+        use crate::ValueType;
+
+        let operation = match value_type {
+            ValueType::Boolean => "get_bool",
+            ValueType::Integer => "get_integer1",
+            ValueType::Integer2 => "get_integer2",
+            ValueType::Integer3 => "get_integer3",
+            ValueType::Integer4 => "get_integer4",
+            ValueType::Float => "get_float1",
+            ValueType::Float2 => "get_float2",
+            ValueType::Float3 => "get_float3",
+            ValueType::Float4 => "get_float4",
+            ValueType::String => "get_string",
+        };
+        let mut graph = FunctionGraph::default();
+        graph.output = Some(graph.add(operation, &[], Some(Value::Text(identifier.into()))));
+        graph
+    }
+
+    pub fn input_identifier(&self) -> Option<&str> {
+        let output = self.node(self.output?)?;
+        if self.nodes.len() != 1 || !output.op.starts_with("get_") {
+            return None;
+        }
+
+        match &output.value {
+            Some(Value::Text(identifier)) => Some(identifier),
+            _ => None,
+        }
+    }
+
     pub fn add_constant(&mut self, value: Value) -> u32 {
         let operation = match &value {
             Value::Float(_) => "const_float1",

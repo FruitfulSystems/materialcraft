@@ -469,3 +469,40 @@ fn bound_input_image_linear_flag_change_recooks_instance() {
     let third_value = third.image(inst, 0).unwrap().data[0];
     assert!((third_value - 0.5).abs() < 1e-4, "linear bound image should reach the instance, got {third_value}");
 }
+
+#[test]
+fn cooked_parameters_retain_values_without_processor_graph_copies() {
+    let mut graph = Graph::new("Parameter results");
+    graph.size = [4, 4];
+    for _ in 0..12 {
+        let owner = graph.add_node("value_processor", [0.0; 2]);
+        let mut function = materialcraft_core::FunctionGraph::constant(Value::Float(0.25));
+        let constant = function.output.unwrap();
+        for _ in 0..32 {
+            function.output = Some(function.add("add", &[function.output.unwrap(), constant], None));
+        }
+        graph.node_mut(owner).unwrap().params.insert("function".into(), Value::Function(Box::new(function)));
+    }
+    let scalar = graph.add_node("uniform", [0.0; 2]);
+    graph.node_mut(scalar).unwrap().functions.insert("color".into(), materialcraft_core::FunctionGraph::constant(Value::Color([0.5; 4])));
+    let mut package = Package::new("Parameter results");
+    package.graphs.push(graph);
+    let cache = Mutex::new(Cache::default());
+
+    let results = [cook(&package, 0, &Options::new(&no_res), &cache), cook(&package, 0, &Options::new(&no_res), &cache)];
+
+    assert!(results[1].nodes.values().all(|result| result.cached));
+    for result in results {
+        for (owner, node) in &result.nodes {
+            assert_eq!(node.error, None);
+            assert!(
+                node.parameters.values().all(|value| materialcraft_core::ValueType::of(value).is_some()),
+                "cooked previews must not retain authoring graphs"
+            );
+            if *owner != scalar {
+                assert_eq!(result.value(*owner, 0), Some(&Value::Float(8.25)));
+            }
+        }
+        assert_eq!(result.nodes[&scalar].parameters.get("color"), Some(&Value::Color([0.5; 4])));
+    }
+}

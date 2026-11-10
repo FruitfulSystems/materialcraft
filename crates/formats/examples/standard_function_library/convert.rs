@@ -32,6 +32,9 @@ pub(super) fn package(bytes: &[u8], source: &str) -> Result<Package, Box<dyn std
             graph.exposed.iter().map(|parameter| parameter.id.as_str()).collect::<Vec<_>>().join(", ")
         };
         graph.attributes.description = format!("Evaluates the {} function graph. Result type: {}. Inputs: {inputs}.", graph.name, result.label());
+        for input in &mut graph.exposed {
+            input.description.clear();
+        }
         graph.attributes.author.clear();
         graph.attributes.author_url.clear();
         graph.attributes.user_data.clear();

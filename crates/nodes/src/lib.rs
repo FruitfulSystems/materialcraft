@@ -16,6 +16,7 @@ mod node_definition_builder;
 mod output_value_type;
 mod parameter;
 mod parameter_definition;
+mod parameter_descriptor;
 mod port_definition;
 mod port_kind;
 mod random;
@@ -28,6 +29,7 @@ pub(crate) use node_definition_builder::node;
 pub use output_value_type::{output_port_value_type, output_value_type};
 pub use parameter::{clamp_params, resolve_params};
 pub use parameter_definition::ParameterDefinition;
+pub use parameter_descriptor::ParameterDescriptor;
 pub use port_definition::PortDefinition;
 pub use port_kind::PortKind;
 

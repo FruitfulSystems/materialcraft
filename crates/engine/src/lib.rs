@@ -125,7 +125,11 @@ mod function_graph_target;
 mod function_info_commands;
 pub mod function_inspection;
 pub mod function_output;
+mod parameter_function_commands;
+mod parameter_target;
 mod pattern_edit;
 pub use function_edit::FunctionEdit;
 pub use function_graph_target::FunctionGraphTarget;
 pub use pattern_edit::PatternEdit;
+
+mod exposed_input_commands;

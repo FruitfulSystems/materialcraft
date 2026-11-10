@@ -11,6 +11,10 @@ fn source() -> Package {
     let mut package = Package::new("Functions");
     let mut graph = Graph::new("Twice");
     graph.exposed.push(ExposedParameter {
+        description: String::new(),
+        editor: None,
+        clamp: false,
+        step: None,
         id: "amount".into(),
         label: "Amount".into(),
         group: String::new(),

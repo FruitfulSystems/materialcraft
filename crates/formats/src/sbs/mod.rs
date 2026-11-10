@@ -19,6 +19,7 @@ mod node_identifiers;
 mod node_parameter;
 mod output;
 mod parameter_array;
+mod parameter_widget;
 mod pattern_graph;
 mod placeholder;
 mod read_node;

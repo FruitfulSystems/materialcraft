@@ -70,6 +70,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             }
             instance.inputs = inputs;
             instance.outputs = outputs;
+            instance.defaults = graph.exposed.iter().map(|parameter| (parameter.id.clone(), parameter.default.clone())).collect();
             instance.label = graph.display_name().into();
             (node.instance.as_ref() != Some(&instance)).then_some((graph_index, node_index, instance))
         })
