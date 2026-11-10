@@ -16,6 +16,9 @@ mod embedded_graphs;
 #[path = "snapshot/library.rs"]
 mod library;
 
+#[path = "snapshot/node_search.rs"]
+mod node_search;
+
 use std::time::Duration;
 
 use egui::vec2;

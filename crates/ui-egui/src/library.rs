@@ -285,6 +285,8 @@ pub(crate) fn visible<'a>(app: &MaterialCraftApp, entries: &'a [LibraryEntry], h
         .iter()
         .filter(|entry| app.ui.library_show_missing || entry.missing.is_none())
         .filter(|entry| app.ui.library_show_other || entry.canvas == here.canvas)
+        // The open canvas hides its own kind of entry it can't take (a value processor can't sample images)
+        .filter(|entry| entry.canvas != here.canvas || entry.missing.is_some() || here.takes(entry))
         .filter_map(|entry| {
             if !search.is_empty() {
                 let label = entry.label.to_lowercase();

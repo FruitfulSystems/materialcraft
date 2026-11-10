@@ -1,5 +1,10 @@
 use super::{GraphCamera, GraphDrag, LibraryDrag, NODE_W, PortHit, WireRef};
-use super::{navigation::frame, port_hit::nearest as nearest_port, search::open_search, wire_actions::wire_menu};
+use super::{
+    navigation::frame,
+    port_hit::nearest as nearest_port,
+    search::{open_search, open_search_to},
+    wire_actions::wire_menu,
+};
 use crate::MaterialCraftApp;
 use egui::{Rect, Ui, Vec2};
 use materialcraft_engine::core::NodeId;
@@ -140,9 +145,14 @@ pub(super) fn handle(
                 }
             }
             GraphDrag::InputWire { to } => {
-                // Dropped anywhere but on another node's output, the input stays unconnected
                 if let Some(source) = drop_target(&app.graph.ports, pointer, true).filter(|source| source.node != to.0) {
                     app.run("graph.connect", json!({"from": source.node.0, "fromPort": source.port, "to": to.0.0, "toPort": to.1}));
+                } else if let Some(position) = pointer
+                    && rect.contains(position)
+                    && nearest_port(&app.graph.ports, position, 12.0).is_none()
+                {
+                    // Dropped on empty canvas: search for a node whose output feeds the input
+                    open_search_to(app, &context, camera.to_graph(position), to);
                 }
             }
             GraphDrag::Frame { .. } | GraphDrag::Comment { .. } => super::annotation_input::finish(app, drag),

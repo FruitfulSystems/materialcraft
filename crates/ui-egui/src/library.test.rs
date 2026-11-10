@@ -76,6 +76,8 @@ fn processor_functions_take_operations_their_canvas_allows() {
     assert!(here.takes(find("function:add")));
     assert!(here.takes(find("sbs://functions.sbs#Functions/Math/Pi")));
     assert!(!here.takes(find("function:samplecol")), "value processors can't sample images");
+    app.ui.library_search = "sample".into();
+    assert!(!labels(&app).iter().any(|label| label == "Sample color"), "and the library hides what the canvas can't take");
     assert!(!here.takes(find("node:blur")));
     assert!(here.refusal(find("node:blur")).is_some());
 }

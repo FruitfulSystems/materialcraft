@@ -838,15 +838,20 @@ fn wires_pulled_from_an_unconnected_input_connect_on_an_output() {
     let empty = frames.app.graph.view.left_bottom() + vec2(24.0, -24.0);
     assert!(!frames.app.graph.rects.iter().any(|(_, rect)| rect.expand(12.0).contains(empty)), "the drop point must be empty canvas");
 
-    // A click, and drops on empty canvas, on another input and on the node's own output leave the input unconnected
+    // A click, and drops on another input and on the node's own output leave the input unconnected
     let history = frames.app.session.history();
     frames.click(inputs[0].pos, Modifiers::NONE);
     frames.time += 1.0;
-    for end in [empty, inputs[1].pos, ports(&frames, target, true)[0].pos] {
+    assert!(frames.app.graph.search.is_none(), "a click on an input opens nothing");
+    for end in [inputs[1].pos, ports(&frames, target, true)[0].pos] {
         drag(&mut frames, inputs[0].pos, end);
     }
+    assert!(frames.app.graph.search.is_none());
+    // Dropped on empty canvas, it searches for a node to feed the input, as an output wire does
+    drag(&mut frames, inputs[0].pos, empty);
+    assert!(frames.app.graph.search.as_ref().is_some_and(|search| search.connect_to == Some((target, inputs[0].port.clone()))));
+    frames.app.graph.search = None;
     assert!(wires(&frames).is_empty());
-    assert!(frames.app.graph.search.is_none(), "an input wire dropped on empty canvas does not open the node search");
     assert_eq!(frames.app.session.history(), history, "a missed wire must not add an undo step");
 
     // While dragging, the wire is pulled from the input; dropped on the output, it connects

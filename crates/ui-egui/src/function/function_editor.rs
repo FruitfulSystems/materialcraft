@@ -19,6 +19,8 @@ pub struct FunctionEditor {
     pub(super) menu_at: Pos2,
     pub(crate) framed: bool,
     pub(super) open_reference: Option<u32>,
+    /// The open node search (Space, Tab, double-click or a wire dropped on empty canvas)
+    pub(crate) search: Option<super::search::FunctionSearch>,
 }
 
 impl FunctionEditor {
@@ -49,6 +51,7 @@ impl FunctionEditor {
             menu_at: Pos2::ZERO,
             framed: false,
             open_reference: None,
+            search: None,
         }
     }
 

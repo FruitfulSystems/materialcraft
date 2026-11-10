@@ -34,6 +34,8 @@ pub(super) fn canvas(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui
         .input(|input| input.pointer.hover_pos())
         .is_some_and(|pointer| frame.frames.iter().any(|frame| frame.contains(pointer)) || frame.comments.iter().any(|(_, rect)| rect.contains(pointer)));
     super::input::handle(app, editor, ui, &frame.response, &frame.ports, &frame.geometry, on_annotation);
+    let camera = GraphCamera { origin: frame.response.rect.min, pan: editor.pan, zoom: editor.zoom };
+    super::search::show(app, editor, ui, &camera);
     frame.geometry.publish(&mut app.graph, frame.response.rect);
     if standalone {
         if editor.drag.is_none() {

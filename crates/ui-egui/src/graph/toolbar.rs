@@ -47,37 +47,6 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
         }
 
-        if !pattern && !function {
-            // Quick insert of the atomic nodes
-            for (ic, def) in [
-                (icon::IMAGE, "bitmap"),
-                (icon::PALETTE, "uniform"),
-                (icon::STACK, "blend"),
-                (icon::DROP, "blur"),
-                (icon::SHUFFLE, "channels_shuffle"),
-                (icon::CHART_LINE, "curve"),
-                (icon::WIND, "directional_blur"),
-                (icon::ARROWS_OUT_LINE_HORIZONTAL, "directional_warp"),
-                (icon::RULER, "distance"),
-                (icon::MOUNTAINS, "emboss"),
-                (icon::GRADIENT, "gradient_map"),
-                (icon::CIRCLE_HALF, "grayscale_conversion"),
-                (icon::SWATCHES, "hsl"),
-                (icon::SLIDERS_HORIZONTAL, "levels"),
-                (icon::CUBE, "normal"),
-                (icon::CODE, "pixel_processor"),
-                (icon::DIAMOND, "sharpen"),
-                (icon::ARROWS_CLOCKWISE, "transformation"),
-                (icon::WAVES, "warp"),
-                (icon::SIGN_IN, "input_grayscale"),
-                (icon::SIGN_OUT, "output"),
-            ] {
-                let label = materialcraft_engine::nodes::find(def).map_or(def, |d| d.label);
-                if b(ui, ic, label) {
-                    add_node_near_selection(app, def);
-                }
-            }
-        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if super::subgraph_navigation::can_return(app) {
                 if b(ui, icon::ARROW_BEND_UP_LEFT, tr("Return to parent graph")) {
@@ -97,7 +66,80 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
             }
         });
     });
+    // A second row inserts nodes with one click, like the Library's most common entries
+    if !pattern {
+        row(ui, |ui| quick_nodes(app, ui, function));
+    }
 }
+
+/// The atomic nodes of a graph, or the common nodes of a Function canvas, as one-click buttons
+fn quick_nodes(app: &mut MaterialCraftApp, ui: &mut Ui, function: bool) {
+    if function {
+        let available = crate::function::library::available_operations(app);
+        for (index, group) in crate::function::library::QUICK.iter().enumerate() {
+            if index > 0 {
+                ui.separator();
+            }
+            for (operation, glyph) in *group {
+                let label = materialcraft_engine::nodes::function::definition(operation).map_or(*operation, |definition| definition.label);
+                // "New … node" keeps the button apart from the canvas nodes of the same name
+                let tooltip = crate::i18n::trf("New {node} node", &[("node", &tr(label))]);
+                if ui.add_enabled_ui(available.contains(operation), |ui| button(ui, glyph, &tooltip)).inner {
+                    crate::function::library::add_near_selection(app, operation);
+                }
+            }
+        }
+        return;
+    }
+    for (index, group) in ATOMIC_QUICK.iter().enumerate() {
+        if index > 0 {
+            ui.separator();
+        }
+        for (ic, def) in *group {
+            let label = materialcraft_engine::nodes::find(def).map_or(*def, |d| d.label);
+            if button(ui, ic, tr(label)) {
+                add_node_near_selection(app, def);
+            }
+        }
+    }
+}
+
+/// The atomic nodes on the graph toolbar, in groups
+const ATOMIC_QUICK: &[&[(&str, &str)]] = &[
+    &[
+        (icon::IMAGE, "bitmap"),
+        (icon::STACK, "blend"),
+        (icon::DROP, "blur"),
+        (icon::SHUFFLE, "channels_shuffle"),
+        (icon::CHART_LINE, "curve"),
+        (icon::WIND, "directional_blur"),
+        (icon::ARROWS_OUT_LINE_HORIZONTAL, "directional_warp"),
+        (icon::RULER, "distance"),
+        (icon::MOUNTAINS, "emboss"),
+        (icon::SQUARES_FOUR, "fx_map"),
+        (icon::ARROWS_DOWN_UP, "gradient_dynamic"),
+        (icon::GRADIENT, "gradient_map"),
+        (icon::CIRCLE_HALF, "grayscale_conversion"),
+        (icon::SWATCHES, "hsl"),
+        (icon::SLIDERS_HORIZONTAL, "levels"),
+        (icon::CUBE, "normal"),
+        (icon::CODE, "pixel_processor"),
+        (icon::BEZIER_CURVE, "svg"),
+        (icon::DIAMOND, "sharpen"),
+        (icon::TEXT_T, "text"),
+        (icon::ARROWS_CLOCKWISE, "transformation"),
+        (icon::PALETTE, "uniform"),
+        (icon::FUNCTION, "value_processor"),
+        (icon::WAVES, "warp"),
+    ],
+    &[
+        (icon::PAINT_BUCKET, "input_color"),
+        (icon::SIGN_IN, "input_grayscale"),
+        (icon::HASH, "input_value"),
+        (icon::SIGN_OUT, "output"),
+        (icon::DOT_OUTLINE, "dot"),
+    ],
+];
 
 fn row(ui: &mut Ui, draw: impl FnOnce(&mut Ui)) {
     let tokens = Tokens::get(ui.ctx());

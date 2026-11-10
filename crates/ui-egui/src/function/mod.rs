@@ -7,6 +7,7 @@ mod function_target;
 pub(crate) mod library;
 mod port_label;
 pub(crate) mod properties;
+pub(crate) mod search;
 
 pub(crate) use actions::{enabled, invoke};
 use function_drag::FunctionDrag;
