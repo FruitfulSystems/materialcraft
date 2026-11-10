@@ -255,7 +255,9 @@ embedded graph, pass `function: <FunctionGraphTarget>` or `pattern: <owner node 
 Function and FX-Map targets with explicit IDs.
 
 Results include `ids` and `selected`; copy/cut also return `copied` and a typed `clip` accepted by
-paste. The session retains the most recent embedded clipboard. Cross-target paste keeps internal
+paste. In the app, Copy and Cut from a menu, a shortcut or `ui.menu.invoke` also put that `clip` on
+the system clipboard, because the desktop sends no Paste event while it is empty; `command.run`
+leaves the system clipboard alone. The session retains the most recent embedded clipboard. Cross-target paste keeps internal
 links and drops external links. Standalone commands update the session selection; embedded commands
 return their selection without changing the parent selection. Invalid operations preserve the
 document, clipboard, selection and undo history. Creation and all function/pattern setters share
