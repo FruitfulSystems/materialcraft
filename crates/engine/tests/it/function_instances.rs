@@ -251,6 +251,102 @@ fn unconnected_instance_inputs_use_the_source_defaults() {
 }
 
 #[test]
+fn function_instance_inputs_follow_current_source_values() {
+    for linked in [false, true] {
+        let mut session = Session::new(source());
+        session.path = Some(std::env::temp_dir().join("materialcraft-function-input-source.sbs").to_string_lossy().into_owned());
+        execute(&mut session, "graph.exposed.set", &json!({"id": "amount", "value": 0.25})).unwrap();
+        if linked {
+            let mut package = Package::new("Calls");
+            let mut graph = Graph::new("Caller");
+            graph.function = Some(FunctionGraph::default());
+            package.graphs.push(graph);
+            file_cmds::open_bytes(&mut session, &formats::sbs::write_sbs(&package).unwrap(), Some("function-input-target.sbs".into())).unwrap();
+        } else {
+            execute(&mut session, "file.new", &json!({"name": "Caller", "kind": "function"})).unwrap();
+        }
+        let document = session.document_id;
+        let target = json!({"kind": "graph"});
+        let instance = call(&mut session, 0, "Twice", &target);
+        edit(&mut session, &target, json!({"action": "output", "id": instance}));
+
+        assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(0.5));
+
+        execute(&mut session, "file.new", &json!({"name": "Outer", "kind": "function"})).unwrap();
+        let outer = call(&mut session, document, "Caller", &target);
+        edit(&mut session, &target, json!({"action": "output", "id": outer}));
+        execute(&mut session, "package.activate", &json!({"document": 0})).unwrap();
+        execute(&mut session, "graph.open", &json!({"graph": "Twice"})).unwrap();
+        execute(&mut session, "graph.exposed.set", &json!({"id": "amount", "value": 0.75})).unwrap();
+        execute(&mut session, "package.activate", &json!({"document": document})).unwrap();
+        execute(&mut session, "graph.open", &json!({"graph": "Outer"})).unwrap();
+
+        assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(1.5));
+        assert!(function::warnings(session.graph().unwrap().function.as_ref().unwrap()).is_empty());
+
+        execute(&mut session, "graph.open", &json!({"graph": "Caller"})).unwrap();
+        let constant = edit(&mut session, &target, json!({"action": "add", "operation": "const_float1", "at": [0, 0]}))["id"].as_u64().unwrap();
+        edit(&mut session, &target, json!({"action": "value", "id": constant, "value": Value::Float(0.125)}));
+        edit(&mut session, &target, json!({"action": "connect", "from": constant, "to": instance, "input": 0}));
+        execute(&mut session, "package.activate", &json!({"document": 0})).unwrap();
+        execute(&mut session, "graph.open", &json!({"graph": "Twice"})).unwrap();
+        execute(&mut session, "graph.exposed.set", &json!({"id": "amount", "value": 1.0})).unwrap();
+        execute(&mut session, "package.activate", &json!({"document": document})).unwrap();
+        execute(&mut session, "graph.open", &json!({"graph": "Outer"})).unwrap();
+
+        assert_eq!(evaluate(session.graph().unwrap().function.as_ref().unwrap()), Value::Float(0.25));
+    }
+}
+
+#[test]
+fn function_instance_input_changes_recook_parameter_functions_and_processors() {
+    let mut session = Session::new(source());
+    execute(&mut session, "graph.exposed.set", &json!({"id": "amount", "value": 0.25})).unwrap();
+    execute(&mut session, "file.new", &json!({"name": "Material", "template": "empty"})).unwrap();
+    let blur = NodeId(execute(&mut session, "graph.node.add", &json!({"def": "blur"})).unwrap()["id"].as_u64().unwrap());
+    execute(&mut session, "graph.node.function", &json!({"id": blur, "param": "intensity", "mode": "empty"})).unwrap();
+    let processor = NodeId(execute(&mut session, "graph.node.add", &json!({"def": "value_processor"})).unwrap()["id"].as_u64().unwrap());
+    for target in [json!({"kind": "dynamic", "node": blur, "parameter": "intensity"}), json!({"kind": "parameter", "node": processor, "parameter": "function"})]
+    {
+        let instance = call(&mut session, 0, "Twice", &target);
+        edit(&mut session, &target, json!({"action": "output", "id": instance}));
+    }
+    session.preview_size = Some(16);
+    let cooked = session.cook();
+
+    assert_eq!(cooked.nodes[&blur].error, None);
+    assert_eq!(cooked.nodes[&blur].parameters["intensity"], Value::Float(0.5));
+    assert_eq!(cooked.value(processor, 0), Some(&Value::Float(0.5)));
+
+    execute(&mut session, "graph.open", &json!({"graph": "Twice"})).unwrap();
+    execute(&mut session, "graph.exposed.set", &json!({"id": "amount", "value": 0.75})).unwrap();
+    execute(&mut session, "graph.open", &json!({"graph": "Material"})).unwrap();
+    let cooked = session.cook();
+
+    assert_eq!(cooked.nodes[&blur].error, None);
+    assert_eq!(cooked.nodes[&blur].parameters["intensity"], Value::Float(1.5));
+    assert_eq!(cooked.nodes[&processor].error, None);
+    assert_eq!(cooked.value(processor, 0), Some(&Value::Float(1.5)));
+    assert!(!cooked.nodes[&blur].cached);
+    assert!(!cooked.nodes[&processor].cached);
+    let cached = session.cook();
+    assert!(cached.nodes[&blur].cached);
+    assert!(cached.nodes[&processor].cached);
+    assert_eq!(cached.value(processor, 0), Some(&Value::Float(1.5)));
+
+    let saved = formats::sbs::write_sbs(&session.pkg).unwrap();
+    let mut reopened = Session::new(formats::sbs::read_sbs(&saved, "function-inputs.sbs", &|_| None).unwrap().pkg);
+    execute(&mut reopened, "graph.open", &json!({"graph": "Material"})).unwrap();
+    reopened.preview_size = Some(16);
+    let blur = reopened.graph().unwrap().nodes.iter().find(|node| node.def == "blur").unwrap().id;
+    let processor = reopened.graph().unwrap().nodes.iter().find(|node| node.def == "value_processor").unwrap().id;
+    let cooked = reopened.cook();
+
+    assert_eq!(cooked.nodes[&blur].parameters["intensity"], Value::Float(1.5));
+    assert_eq!(cooked.value(processor, 0), Some(&Value::Float(1.5)));
+}
+
+#[test]
 fn connected_inputs_survive_source_interface_changes_and_missing_sources() {
     let mut session = Session::new(source());
     execute(&mut session, "file.new", &json!({"name": "Caller", "kind": "function"})).unwrap();
