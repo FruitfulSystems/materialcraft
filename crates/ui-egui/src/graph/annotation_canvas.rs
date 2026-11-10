@@ -87,16 +87,28 @@ pub(crate) fn comments(app: &MaterialCraftApp, ui: &Ui, comments: &[Comment], ca
     hits
 }
 
-pub(crate) fn pins(app: &MaterialCraftApp, ui: &Ui, pins: &[Pin], camera: &GraphCamera) {
+pub(crate) fn pins(app: &MaterialCraftApp, ui: &Ui, pins: &[Pin], camera: &GraphCamera) -> Vec<(u64, Rect)> {
     let painter = ui.painter_at(app.graph.view);
     let theme = Tokens::get(ui.ctx());
-
+    let mut hits = Vec::with_capacity(pins.len());
     for pin in pins {
-        let position = pos2(pin.pos[0], pin.pos[1]) + offset(app, |contents| contents.pins.contains(&pin.id));
+        let mut position = pos2(pin.pos[0], pin.pos[1]) + offset(app, |contents| contents.pins.contains(&pin.id));
+        if let Some(GraphDrag::Pin { id, delta }) = &app.graph.drag
+            && *id == pin.id
+        {
+            position += *delta;
+        }
         let position = camera.to_screen(position);
-        painter.text(position, Align2::CENTER_BOTTOM, icon::MAP_PIN, FontId::proportional(18.0), theme.accent);
-        painter.text(position + vec2(10.0, -10.0), Align2::LEFT_CENTER, &pin.name, FontId::proportional(11.0), theme.text);
+        let selected = app.session.annotation_selection == Some(AnnotationSelection::Pin(pin.id));
+        let marker = painter.text(position, Align2::CENTER_BOTTOM, icon::MAP_PIN, FontId::proportional(18.0), theme.accent);
+        let label = painter.text(position + vec2(10.0, -10.0), Align2::LEFT_CENTER, &pin.name, FontId::proportional(11.0), theme.text);
+        let bounds = marker.union(label).expand(3.0);
+        if selected {
+            painter.rect_stroke(bounds, 2.0, Stroke::new(1.0, theme.accent), StrokeKind::Outside);
+        }
+        hits.push((pin.id, bounds));
     }
+    hits
 }
 
 pub(crate) fn offset(app: &MaterialCraftApp, contains: impl FnOnce(&materialcraft_engine::FrameContents) -> bool) -> Vec2 {

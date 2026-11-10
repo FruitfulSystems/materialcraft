@@ -8,5 +8,7 @@ pub(super) struct NodeSearch {
     pub(super) text: String,
     pub(super) sel: usize,
     pub(super) connect: Option<(NodeId, String)>,
+    /// Opened from this input (a wire dragged off it): the new node's output feeds it
+    pub(super) connect_to: Option<(NodeId, String)>,
     pub(super) focus: bool,
 }

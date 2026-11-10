@@ -3,6 +3,7 @@
 
 mod attributes;
 mod base_parameters;
+mod canvas_annotations;
 mod color;
 mod comment;
 mod component_usage;
@@ -33,6 +34,7 @@ mod pattern_graph;
 mod pattern_node;
 mod pattern_node_kind;
 mod pin;
+pub use canvas_annotations::CanvasAnnotations;
 mod preset;
 mod resource;
 mod resource_bytes;

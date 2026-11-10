@@ -19,6 +19,15 @@ pub struct PatternEditor {
 }
 
 impl PatternEditor {
+    pub(crate) fn camera(&self) -> crate::state::GraphCamera {
+        crate::state::GraphCamera { pan: self.pan.into(), zoom: self.zoom }
+    }
+
+    pub(crate) fn set_camera(&mut self, camera: crate::state::GraphCamera) {
+        self.pan = camera.pan.into();
+        self.zoom = camera.zoom;
+    }
+
     pub fn new(graph: usize, node: NodeId) -> Self {
         Self {
             node,

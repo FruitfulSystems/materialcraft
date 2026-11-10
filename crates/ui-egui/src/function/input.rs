@@ -1,4 +1,5 @@
 use super::function_port::FunctionPort;
+use super::search::{FunctionSearch, SearchWire};
 use super::{FunctionDrag, FunctionEditor};
 use crate::{
     MaterialCraftApp,
@@ -26,15 +27,12 @@ pub(super) fn handle(
         editor.drag = None;
         return;
     }
+
     let on_wire = editor.drag.is_none()
         && !on_annotation
         && !ui.input(|input| input.modifiers.alt)
         && crate::graph::wire_selection::handle(&mut editor.selected_wires, &mut editor.selection, ui, response, &geometry.wires);
-    if on_wire
-        && matches!(editor.target, super::FunctionTarget::Graph)
-        && app.session.annotation_selection.is_some()
-        && (ui.input(|input| input.pointer.primary_pressed()) || response.secondary_clicked())
-    {
+    if on_wire && app.session.annotation_selection.is_some() && (ui.input(|input| input.pointer.primary_pressed()) || response.secondary_clicked()) {
         app.run("graph.annotation.select", serde_json::json!({}));
     }
 
@@ -68,7 +66,7 @@ pub(super) fn handle(
         && !on_annotation
         && !on_wire
     {
-        if matches!(editor.target, super::FunctionTarget::Graph) && app.session.annotation_selection.is_some() {
+        if app.session.annotation_selection.is_some() {
             app.run("graph.annotation.select", serde_json::json!({}));
         }
         editor.drag = Some(FunctionDrag::Box { start });
@@ -97,6 +95,7 @@ pub(super) fn handle(
         None => {}
     }
 
+    let camera = GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
     let owner = match editor.drag {
         Some(FunctionDrag::Pan(button)) => button,
         _ => egui::PointerButton::Primary,
@@ -118,23 +117,22 @@ pub(super) fn handle(
                     crate::graph::node_selection::select_box(&mut editor.selection, nodes, start, pointer, ui.input(|input| input.modifiers));
                 }
             }
-            Some(FunctionDrag::Wire(from)) => {
-                if let Some(pointer) = pointer
-                    && let Some((to, Some(input))) = near(pointer)
-                    && from != to
-                {
-                    editor.edit(app, FunctionEdit::Connect { from, to, input }, false);
+            Some(FunctionDrag::Wire(from)) => match pointer.map(|pointer| (pointer, near(pointer))) {
+                Some((_, Some((to, Some(input))))) if from != to => editor.edit(app, FunctionEdit::Connect { from, to, input }, false),
+                // Dropped on empty canvas: search for a node that takes the wire
+                Some((pointer, None)) if canvas_bounds.contains(pointer) => {
+                    editor.search = Some(FunctionSearch::at(camera.to_graph(pointer), Some(SearchWire::From(from))));
                 }
-            }
-            Some(FunctionDrag::InputWire(to, input)) => {
-                // Dropped anywhere but on another node's output, the input stays unconnected
-                if let Some(pointer) = pointer
-                    && let Some((from, None)) = near(pointer)
-                    && from != to
-                {
-                    editor.edit(app, FunctionEdit::Connect { from, to, input }, false);
+                _ => {}
+            },
+            Some(FunctionDrag::InputWire(to, input)) => match pointer.map(|pointer| (pointer, near(pointer))) {
+                Some((_, Some((from, None)))) if from != to => editor.edit(app, FunctionEdit::Connect { from, to, input }, false),
+                // Dropped on empty canvas: search for a node whose output feeds the input
+                Some((pointer, None)) if canvas_bounds.contains(pointer) => {
+                    editor.search = Some(FunctionSearch::at(camera.to_graph(pointer), Some(SearchWire::To(to, input))));
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -143,8 +141,6 @@ pub(super) fn handle(
         crate::graph::node_selection::select(&mut editor.selection, None, ui.input(|input| input.modifiers));
         crate::graph::node_selection::select(&mut editor.selected_wires, None, ui.input(|input| input.modifiers));
     }
-
-    let camera = GraphCamera { origin: canvas_bounds.min, pan: editor.pan, zoom: editor.zoom };
 
     if let Some(payload) = crate::widgets::dnd_release::<super::function_library_drag::FunctionLibraryDrag>(response)
         && let Some(pointer) = pointer
@@ -170,20 +166,40 @@ pub(super) fn handle(
         }
     }
 
+    if let Some(payload) = crate::widgets::dnd_release::<crate::graph::LibraryDrag>(response)
+        && let Some(pointer) = pointer
+    {
+        let at = camera.to_graph(pointer);
+        if let Some(result) = app.run("library.add", serde_json::json!({"entry": payload.0, "at": [at.x, at.y], "snapToGrid": snap})) {
+            editor.selection = if app.session.annotation_selection.is_some() {
+                Vec::new()
+            } else {
+                result["result"]["id"].as_u64().and_then(|id| u32::try_from(id).ok()).into_iter().collect()
+            };
+            editor.selected_wires.clear();
+        }
+    }
+
     // Adding operations
     if response.secondary_clicked()
         && let Some(pointer_position) = pointer
     {
         editor.menu_at = camera.to_graph(pointer_position);
     }
-    if response.hovered()
-        && !ui.ctx().egui_wants_keyboard_input()
-        && ui.input(|input| input.key_pressed(egui::Key::Space))
+    // Space or Tab over the canvas, or a double-click on empty canvas, searches for a node to add
+    // Tab moves focus between widgets, so it waits only for text fields and focus held before this frame
+    let space = !ui.ctx().egui_wants_keyboard_input() && ui.input(|input| input.key_pressed(egui::Key::Space));
+    let tab = !app.graph.keyboard_was_focused && !ui.ctx().text_edit_focused() && ui.input(|input| input.key_pressed(egui::Key::Tab));
+    let keys = space || tab;
+    let on_node = pointer.is_some_and(|pointer| geometry.rects.iter().any(|(_, bounds)| bounds.contains(pointer)));
+    let double_click = response.double_clicked() && !on_wire && !on_annotation && !on_node && pointer.and_then(near).is_none();
+    if editor.search.is_none()
+        && ((response.hovered() && keys) || double_click)
         && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()
         && let Some(pointer_position) = pointer
     {
         editor.menu_at = camera.to_graph(pointer_position);
-        egui::Popup::open_id(ui.ctx(), response.id.with("menu"));
+        editor.search = Some(FunctionSearch::at(editor.menu_at, None));
     }
     response.context_menu(|ui| {
         super::context_menu::show(app, editor, ui, None);

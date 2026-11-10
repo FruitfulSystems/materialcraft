@@ -104,6 +104,15 @@ Resource paths resolve beside their owning package: `resources/tile.png` in
 `sbs://resources/tile.png`. Nested packages use their own adjacent `resources/` directory.
 Loaded resource bytes are embedded on save; unavailable files keep their reference and missing state.
 
+Every session loads the whole library folder once per process (`engine::node_library`, cached
+until `library.reload`). Each package joins every session's dependencies, so its graphs can be
+instanced, and the Library lists them: function graphs under Functions, sorted into its
+sub-categories by their folder (`Functions/Math/Pi` → Constant), other graphs under their attribute
+category. A package whose titled frames name Library categories ("Filters - Blurs") can also lay
+the tree out (`formats::sbs::read_layout`): each node inside a frame becomes an entry there, listed
+as missing until a package in the folder provides it. Installed and browser builds embed
+`functions.sbs`.
+
 Importing a user-supplied function package preserves its graph bodies, connections and positions;
 it does not replace them with the bundled library. Redundant legacy instance connectors are retained
 on save and evaluated only through the declared inputs. Conflicting obsolete connections remain
@@ -187,7 +196,7 @@ them. Alignment uses the same engine command for all three models, with explicit
 and an explicit Function target or FX-Map owner ID, so overlapping IDs cannot move the parent material nodes.
 Pixel Processor, Value Processor and parameter functions use that same main panel and function node
 catalog, with one target-aware availability rule shared by node creation, Library and Add node.
-Value Processor omits the two sampler entries; saved functions retain their existing operations.
+Both processor types accept Sample gray and Sample color to read their image inputs.
 A breadcrumb and parent action return from nested functions, FX-Maps and local graph instances
 while retaining the parent view and material preview.
 

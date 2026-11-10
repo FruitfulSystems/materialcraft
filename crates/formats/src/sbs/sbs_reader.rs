@@ -184,7 +184,10 @@ impl<'text> SbsReader<'text, '_> {
             let dynamic = child_element(element, "paramValue").and_then(|value| child_element(value, "dynamicValue"));
             let function = dynamic.ok_or_else(|| "missing function body".to_string()).and_then(super::function_graph::read);
             graph.function = Some(match function {
-                Ok(function) => function,
+                Ok(mut function) => {
+                    function.annotations = Default::default();
+                    function
+                }
                 Err(error) => {
                     self.warnings.add(format!("function graph `{name}`: {error}"));
                     materialcraft_core::FunctionGraph::default()

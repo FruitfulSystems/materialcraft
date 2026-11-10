@@ -5,6 +5,20 @@ mod lib_tests {
     use materialcraft_engine::sample_session;
     use serde_json::json;
 
+    /// A frame which does not draw Explorer clears hover state left by its previous frame.
+    #[test]
+    fn review_hidden_explorer_drawing_clears_hover() {
+        let mut app = MaterialCraftApp::headless(sample_session(), UiState::default());
+        app.fonts_ready = true;
+        app.ui.explorer.hovered = true;
+        app.ui.dock.close(crate::docking::Panel::Explorer);
+        let context = egui::Context::default();
+
+        context.run_ui(egui::RawInput::default(), |ui| app.draw(ui)).textures_delta.clear();
+
+        assert!(!app.ui.explorer.hovered);
+    }
+
     #[test]
     fn run_reports_errors_as_toasts_and_keeps_the_session() {
         let mut app = MaterialCraftApp::headless(sample_session(), UiState::default());

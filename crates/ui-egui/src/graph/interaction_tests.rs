@@ -838,15 +838,20 @@ fn wires_pulled_from_an_unconnected_input_connect_on_an_output() {
     let empty = frames.app.graph.view.left_bottom() + vec2(24.0, -24.0);
     assert!(!frames.app.graph.rects.iter().any(|(_, rect)| rect.expand(12.0).contains(empty)), "the drop point must be empty canvas");
 
-    // A click, and drops on empty canvas, on another input and on the node's own output leave the input unconnected
+    // A click, and drops on another input and on the node's own output leave the input unconnected
     let history = frames.app.session.history();
     frames.click(inputs[0].pos, Modifiers::NONE);
     frames.time += 1.0;
-    for end in [empty, inputs[1].pos, ports(&frames, target, true)[0].pos] {
+    assert!(frames.app.graph.search.is_none(), "a click on an input opens nothing");
+    for end in [inputs[1].pos, ports(&frames, target, true)[0].pos] {
         drag(&mut frames, inputs[0].pos, end);
     }
+    assert!(frames.app.graph.search.is_none());
+    // Dropped on empty canvas, it searches for a node to feed the input, as an output wire does
+    drag(&mut frames, inputs[0].pos, empty);
+    assert!(frames.app.graph.search.as_ref().is_some_and(|search| search.connect_to == Some((target, inputs[0].port.clone()))));
+    frames.app.graph.search = None;
     assert!(wires(&frames).is_empty());
-    assert!(frames.app.graph.search.is_none(), "an input wire dropped on empty canvas does not open the node search");
     assert_eq!(frames.app.session.history(), history, "a missed wire must not add an undo step");
 
     // While dragging, the wire is pulled from the input; dropped on the output, it connects
@@ -866,4 +871,59 @@ fn wires_pulled_from_an_unconnected_input_connect_on_an_output() {
     assert_eq!(wires(&frames), [(source, output.port.clone(), target, inputs[1].port.clone())]);
     frames.app.session.undo().unwrap();
     assert_eq!(wires(&frames).len(), 2);
+}
+
+/// A library drop uses the same snapping preference as other node additions.
+#[test]
+fn review_library_drop_respects_grid_preference() {
+    for snapping in [true, false] {
+        let mut frames = Frames::new(new_session());
+        frames.app.ui.prefs.snap_to_grid = snapping;
+        let position = frames.app.graph.view.center() + vec2(113.0, 77.0);
+        frames.run(vec![Event::PointerMoved(position)], Modifiers::NONE);
+        frames.run(vec![Event::PointerButton { pos: position, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        egui::DragAndDrop::set_payload(&frames.ctx, super::LibraryDrag("node:blur".into()));
+        let camera =
+            super::GraphCamera { origin: frames.app.graph.view.min, pan: frames.app.ui.graph_camera.pan.into(), zoom: frames.app.ui.graph_camera.zoom };
+        let graph_position = camera.to_graph(position);
+        let expected = materialcraft_engine::graph_grid::snap_position([graph_position.x - super::NODE_W * 0.5, graph_position.y - 20.0], snapping);
+        let before = frames.app.session.graph().unwrap().nodes.len();
+
+        frames.run(vec![Event::PointerButton { pos: position, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+
+        let graph = frames.app.session.graph().unwrap();
+        assert_eq!(graph.nodes.len(), before + 1);
+        assert_eq!(graph.nodes.last().unwrap().pos, expected, "snapping: {snapping}");
+    }
+}
+
+/// Both standalone canvases hit the pin marker and description and preserve drag undo.
+#[test]
+fn navigation_pins_can_be_selected_dragged_and_deleted() {
+    for function in [false, true] {
+        let mut session = new_session();
+        if function {
+            materialcraft_engine::execute(&mut session, "file.new", &json!({"kind": "function"})).unwrap();
+        }
+        let mut frames = Frames::new(session);
+        let camera = &frames.app.ui.graph_camera;
+        let position = egui::Pos2::from(camera.pan) + frames.app.graph.view.size() * 0.5 / camera.zoom;
+        let id = frames.app.run("graph.pin.add", json!({"at": [position.x, position.y], "name": "Review checkpoint"})).unwrap()["id"].as_u64().unwrap();
+        frames.app.run("graph.annotation.select", json!({}));
+        frames.run(Vec::new(), Modifiers::NONE);
+        let from = frames.app.graph.view.center() + vec2(30.0, -10.0);
+        frames.click(from, Modifiers::NONE);
+        assert_eq!(serde_json::to_value(frames.app.session.annotation_selection).unwrap(), json!({"kind": "pin", "id": id}));
+        assert_eq!(crate::properties::title(&frames.app), "Navigation Pin - Properties");
+        let before = frames.app.session.graph().unwrap().pins[0].pos;
+        let zoom = frames.app.ui.graph_camera.zoom;
+        drag(&mut frames, from, from + vec2(64.0, 32.0) * zoom);
+        let after = frames.app.session.graph().unwrap().pins[0].pos;
+        assert!((after[0] - before[0] - 64.0).abs() < 0.01);
+        assert!((after[1] - before[1] - 32.0).abs() < 0.01);
+        frames.app.session.undo().unwrap();
+        assert_eq!(frames.app.session.graph().unwrap().pins[0].pos, before);
+        menus::invoke(&mut frames.app, &frames.ctx, "edit.delete");
+        assert!(frames.app.session.graph().unwrap().pins.is_empty());
+    }
 }

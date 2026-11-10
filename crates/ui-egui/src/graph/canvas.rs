@@ -33,6 +33,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
     }
 
+    crate::annotation::activate(app, crate::annotation::target(app));
     super::toolbar::show(app, ui);
     if app.function_editor.is_some() {
         crate::function::show_graph(app, ui);
@@ -278,7 +279,8 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
 
     let comment_hits = super::annotation_canvas::comments(app, ui, &graph.comments, &camera);
     app.graph.comments = comment_hits.clone();
-    super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
+    let pin_hits = super::annotation_canvas::pins(app, ui, &graph.pins, &camera);
+    app.graph.pins = pin_hits.clone();
 
     // Ports (drawn last, interactable over the node cards)
     // except on a dot's body: its port hit circles would otherwise cover it and it could never be moved
@@ -311,7 +313,7 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     app.graph.inspected_node = super::node_selection::inspected(&app.session.selection, app.graph.inspected_node);
-    super::input::handle(app, ui, &resp, rect, &camera, &node_responses, &frame_hits, &comment_hits, port_hover, wire_hover);
+    super::input::handle(app, ui, &resp, rect, &camera, &node_responses, &frame_hits, &comment_hits, &pin_hits, port_hover, wire_hover);
     app.graph.inspected_node = super::node_selection::inspected(&app.session.selection, app.graph.inspected_node);
 
     // GraphDrag previews

@@ -7,7 +7,7 @@ pub(crate) fn enabled(app: &MaterialCraftApp, command: &str) -> Option<bool> {
 
     match command {
         "ui.graph.viewOutputs" | "ui.graph.resetViewOutputs" => Some(app.session.graph().is_ok_and(|graph| graph.function.is_none())),
-        "ui.graph.previousPin" | "ui.graph.nextPin" => Some(app.session.graph().is_ok_and(|graph| !graph.pins.is_empty())),
+        "ui.graph.previousPin" | "ui.graph.nextPin" => Some(app.graph.annotation_target.items(&app.session).is_ok_and(|items| !items.pins.is_empty())),
         command if command.starts_with("ui.graph.") => Some(app.session.graph().is_ok()),
         _ => None,
     }
@@ -73,12 +73,12 @@ pub(crate) fn invoke(app: &mut MaterialCraftApp, command: &str) -> bool {
 }
 
 fn navigate_pin(app: &mut MaterialCraftApp, forward: bool) {
-    let Ok(graph) = app.session.graph() else { return };
+    let Ok(graph) = app.graph.annotation_target.items(&app.session) else { return };
     if graph.pins.is_empty() {
         return;
     }
 
-    let camera = &mut app.ui.graph_camera;
+    let mut camera = crate::annotation::camera(app);
     let zoom = camera.zoom.clamp(0.08, 4.0);
     let center = [camera.pan[0] + app.graph.view.width() * 0.5 / zoom, camera.pan[1] + app.graph.view.height() * 0.5 / zoom];
     let current = graph.pins.iter().position(|pin| (pin.pos[0] - center[0]).abs() < 0.1 && (pin.pos[1] - center[1]).abs() < 0.1);
@@ -92,9 +92,11 @@ fn navigate_pin(app: &mut MaterialCraftApp, forward: bool) {
     let Some(pin) = graph.pins.get(index) else { return };
 
     camera.pan = [pin.pos[0] - app.graph.view.width() * 0.5 / zoom, pin.pos[1] - app.graph.view.height() * 0.5 / zoom];
-    if let Some(editor) = &mut app.function_editor
-        && editor.target == crate::function::FunctionTarget::Graph
-    {
-        editor.set_camera(*camera);
+    if let Some(editor) = &mut app.function_editor {
+        editor.set_camera(camera);
+    } else if let Some(editor) = &mut app.pattern_editor {
+        editor.set_camera(camera);
+    } else {
+        app.ui.graph_camera = camera;
     }
 }

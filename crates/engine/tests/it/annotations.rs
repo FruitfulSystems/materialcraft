@@ -66,3 +66,110 @@ fn annotation_properties_and_selection_survive_edits_undo_and_native_save() {
     assert!(session.graph().unwrap().frames.is_empty());
     assert_eq!(session.graph().unwrap().comments.len(), 1);
 }
+
+/// Pins share annotation selection, properties, deletion and undo.
+#[test]
+fn navigation_pins_select_edit_delete_and_save() {
+    for kind in ["material", "function"] {
+        let mut session = new_session();
+        if kind == "function" {
+            execute(&mut session, "file.new", &json!({"kind": kind})).unwrap();
+        }
+        let id = execute(&mut session, "graph.pin.add", &json!({"at": [-64, 128]})).unwrap()["id"].as_u64().unwrap();
+        execute(&mut session, "graph.annotation.select", &json!({"kind": "pin", "id": id})).unwrap();
+        execute(&mut session, "graph.pin.edit", &json!({"id": id, "description": "Start & <finish>", "at": [48, -96]})).unwrap();
+        let loaded = read_sbs(&write_sbs(&session.pkg).unwrap(), "pins.sbs", &|_| None).unwrap();
+        assert!(loaded.warnings.is_empty());
+        let graph = loaded.pkg.graph_by_name(&session.graph().unwrap().sbs_path()).unwrap().1;
+        assert_eq!(graph.pins[0].name, "Start & <finish>");
+        assert_eq!(graph.pins[0].pos, [48.0, -96.0]);
+
+        execute(&mut session, "edit.delete", &json!({})).unwrap();
+        assert!(session.graph().unwrap().pins.is_empty());
+        assert!(session.annotation_selection.is_none());
+        session.undo().unwrap();
+        assert_eq!(session.graph().unwrap().pins[0].name, "Start & <finish>");
+        assert_eq!(serde_json::to_value(session.annotation_selection).unwrap(), json!({"kind": "pin", "id": id}));
+        let original = session.pkg.clone();
+        assert!(execute(&mut session, "graph.pin.edit", &json!({"id": 999999, "description": "Missing"})).is_err());
+        assert_eq!(session.pkg, original);
+    }
+}
+
+/// Every graph item edits its destination canvas and survives native SBS save/reload.
+#[test]
+fn library_graph_items_work_in_material_function_and_embedded_canvases() {
+    use materialcraft_engine::{
+        AnnotationTarget, FunctionGraphTarget, Session,
+        core::{FunctionGraph, NodeId, Value},
+    };
+    for kind in ["material", "function", "pixel_processor", "value_processor", "dynamic", "fx_map"] {
+        let mut session = new_session();
+        let target = match kind {
+            "material" => AnnotationTarget::Graph,
+            "function" => {
+                execute(&mut session, "file.new", &json!({"kind": "function"})).unwrap();
+                AnnotationTarget::Graph
+            }
+            _ => {
+                let definition = if kind == "dynamic" { "uniform" } else { kind };
+                let node = NodeId(execute(&mut session, "graph.node.add", &json!({"def": definition})).unwrap()["id"].as_u64().unwrap());
+                match kind {
+                    "fx_map" => AnnotationTarget::Pattern { owner: node },
+                    "dynamic" => {
+                        session.graph_mut().unwrap().node_mut(node).unwrap().functions.insert("color".into(), FunctionGraph::default());
+                        AnnotationTarget::Function { target: FunctionGraphTarget::Dynamic { node, parameter: "color".into() } }
+                    }
+                    _ => AnnotationTarget::Function { target: FunctionGraphTarget::Parameter { node, parameter: "function".into() } },
+                }
+            }
+        };
+        let mut parameters = target.parameters();
+        parameters["at"] = json!([64, 128]);
+        for entry in ["item:comment", "item:frame", "item:pin", "node:dot"] {
+            parameters["entry"] = json!(entry);
+            let before = session.pkg.clone();
+            execute(&mut session, "library.add", &parameters).unwrap();
+            let after = session.pkg.clone();
+            session.undo().unwrap();
+            assert_eq!(session.pkg, before, "{kind}: {entry} undo");
+            session.redo().unwrap();
+            assert_eq!(session.pkg, after, "{kind}: {entry} redo");
+        }
+        let items = target.items(&session).unwrap();
+        assert_eq!((items.comments.len(), items.frames.len(), items.pins.len()), (1, 1, 1), "{kind}");
+        let mut pin_parameters = target.parameters();
+        pin_parameters["id"] = json!(items.pins[0].id);
+        pin_parameters["kind"] = json!("pin");
+        execute(&mut session, "graph.annotation.select", &pin_parameters).unwrap();
+        pin_parameters["description"] = json!("Checkpoint & <finish>");
+        execute(&mut session, "graph.pin.edit", &pin_parameters).unwrap();
+
+        let loaded = read_sbs(&write_sbs(&session.pkg).unwrap(), "graph-items.sbs", &|_| None).unwrap();
+        let mut reopened = Session::new(loaded.pkg);
+        reopened.graph = reopened.pkg.graph_by_name(&session.graph().unwrap().sbs_path()).unwrap().0;
+        let graph = reopened.graph().unwrap();
+        let saved = match kind {
+            "material" | "function" => AnnotationTarget::Graph.items(&reopened).unwrap(),
+            "fx_map" => match &graph.nodes.iter().find(|node| node.def == kind).unwrap().params["pattern"] {
+                Value::PatternGraph(graph) => graph.annotations.clone(),
+                other => panic!("unexpected {other:?}"),
+            },
+            "dynamic" => graph.nodes.iter().find(|node| node.def == "uniform").unwrap().functions["color"].annotations.clone(),
+            _ => match &graph.nodes.iter().find(|node| node.def == kind).unwrap().params["function"] {
+                Value::Function(graph) => graph.annotations.clone(),
+                other => panic!("unexpected {other:?}"),
+            },
+        };
+        assert_eq!((saved.comments.len(), saved.frames.len(), saved.pins.len()), (1, 1, 1), "{kind}");
+        assert_eq!(saved.pins[0].name, "Checkpoint & <finish>", "{kind}");
+        assert_eq!(saved.pins[0].pos, [64.0, 128.0], "{kind}");
+        if target != AnnotationTarget::Graph {
+            assert!(graph.frames.is_empty() && graph.comments.is_empty() && graph.pins.is_empty(), "{kind}: parent must stay untouched");
+        }
+        execute(&mut session, "edit.delete", &json!({})).unwrap();
+        assert!(target.items(&session).unwrap().pins.is_empty(), "{kind}");
+        session.undo().unwrap();
+        assert_eq!(target.items(&session).unwrap().pins[0].name, "Checkpoint & <finish>");
+    }
+}

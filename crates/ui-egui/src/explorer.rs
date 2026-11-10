@@ -4,6 +4,8 @@ use egui::Ui;
 
 mod actions;
 mod context_menu;
+mod explorer_menu_state;
+pub(crate) mod explorer_row;
 mod explorer_state;
 mod explorer_target;
 mod explorer_tree;
@@ -16,6 +18,7 @@ use serde_json::json;
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
+/// Draw open packages and dispatch selection, resource and context-menu actions.
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -49,11 +52,12 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         inspected_graph: None,
         inspected_folder: None,
     };
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         for (document, package, path, modified) in tree.session.open_packages() {
             ui.push_id(document, |ui| tree.package(ui, document, package, path, modified));
         }
     });
+    tree.state.hovered = ui.rect_contains_pointer(scroll.inner_rect);
     let action = tree.action;
     let opened_node = tree.opened_node;
     let assignment = tree.assignment;
@@ -111,6 +115,35 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     }
 }
 
+/// Enter opens, F2 renames and Delete removes the selected graph or folder while the pointer is
+/// over the Explorer; elsewhere those keys keep their graph shortcuts. True when a key was used
+pub(crate) fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) -> bool {
+    if !app.ui.dock.is_visible(crate::docking::Panel::Explorer) || !app.ui.explorer.hovered || app.ui.explorer.rename.is_some() {
+        return false;
+    }
+
+    let Some(target) = app.ui.explorer.selected.clone() else { return false };
+    let command = match &target {
+        ExplorerTarget::Graph { .. } => [(egui::Key::Enter, "graph.open"), (egui::Key::F2, "graph.rename"), (egui::Key::Delete, "graph.delete")]
+            .into_iter()
+            .find(|(key, _)| pressed(ctx, *key)),
+        ExplorerTarget::Folder { .. } if !target.is_resources_root() => {
+            [(egui::Key::F2, "folder.rename"), (egui::Key::Delete, "folder.remove")].into_iter().find(|(key, _)| pressed(ctx, *key))
+        }
+        _ => None,
+    };
+    let Some((key, command)) = command else { return false };
+    ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+    actions::invoke(app, ctx, target, command);
+    true
+}
+
+/// Match an unmodified Explorer shortcut key.
+fn pressed(ctx: &egui::Context, key: egui::Key) -> bool {
+    ctx.input(|input| input.modifiers.is_none() && input.key_pressed(key))
+}
+
+/// Draw the pending Explorer rename dialog.
 pub(crate) fn dialogs(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     actions::rename_dialog(app, ctx);
 }

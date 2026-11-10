@@ -70,6 +70,7 @@ pub fn session(s: &Session, graph: Option<usize>) -> J {
         "openGraph": g.map(|_| s.graph),
         "graph": graph_json,
         "annotationSelection": s.annotation_selection,
+        "annotationTarget": s.annotation_target,
         "selection": s.selection.iter().map(|i| i.0).collect::<Vec<_>>(),
         "view2d": s.view2d,
         "view3d": s.view3d,

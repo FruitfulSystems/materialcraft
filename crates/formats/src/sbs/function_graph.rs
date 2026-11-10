@@ -8,7 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
-    let mut graph = FunctionGraph { output: child_value(element, "rootnode").and_then(|value| value.parse().ok()), nodes: Vec::new() };
+    let mut graph = FunctionGraph {
+        output: child_value(element, "rootnode").and_then(|value| value.parse().ok()),
+        nodes: Vec::new(),
+        annotations: super::canvas::read_embedded(element),
+    };
     let mut ids = BTreeSet::new();
     for element in child_element(element, "paramNodes").into_iter().flat_map(|nodes| children_named(nodes, "paramNode")) {
         if graph.nodes.len() >= 4096 {
@@ -153,7 +157,11 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
         }
         output.push_str("</paramNode>");
     }
-    output.push_str("</paramNodes></dynamicValue>");
+    output.push_str("</paramNodes>");
+    if !graph.annotations.is_empty() {
+        super::canvas::write_items(&mut output, &graph.annotations.frames, &graph.annotations.comments, &graph.annotations.pins, writer);
+    }
+    output.push_str("</dynamicValue>");
     Ok(output)
 }
 

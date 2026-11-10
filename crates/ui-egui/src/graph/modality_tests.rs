@@ -46,7 +46,9 @@ fn corner(frames: &Frames) -> Pos2 {
 }
 
 fn add_menu_open(frames: &Frames) -> bool {
-    frames.app.graph.search.is_some() || egui::Popup::is_any_open(&frames.ctx)
+    frames.app.graph.search.is_some()
+        || frames.app.function_editor.as_ref().is_some_and(|editor| editor.search.is_some())
+        || egui::Popup::is_any_open(&frames.ctx)
 }
 
 #[test]

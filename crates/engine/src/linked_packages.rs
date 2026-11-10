@@ -97,8 +97,15 @@ impl Session {
         self.refresh_links_from(BTreeSet::new());
     }
 
+    /// Refresh linked interfaces and retain ownership of installed library snapshots.
     pub(crate) fn refresh_links_from(&mut self, mut changed: BTreeSet<String>) {
+        // Replaced snapshots belong to the caller, even when their library alias is unchanged
+        self.library_sources.retain(|path, owned| self.linked_sources.get(path).is_some_and(|source| Arc::ptr_eq(source, owned)));
+        let open_paths: BTreeSet<_> = self.open_packages().into_iter().filter_map(|(_, _, path, _)| path.map(str::to_string)).collect();
+        self.library_sources.retain(|path, _| !open_paths.contains(path));
+
         let mut sources = self.linked_sources.clone();
+
         // Interface types can propagate through several files; the workspace has at most 64 open packages
         for _ in 0..64 {
             for (_, package, path, _) in self.open_packages() {
@@ -141,6 +148,13 @@ impl Session {
                 document.modified = true;
             }
             document.pkg.dependencies = sources.clone();
+        }
+
+        // Interface refreshes replace Arcs without changing who owns the source
+        for (path, owned) in &mut self.library_sources {
+            if let Some(source) = sources.get(path) {
+                *owned = source.clone();
+            }
         }
         self.linked_sources = sources;
     }

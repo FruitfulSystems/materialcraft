@@ -12,5 +12,6 @@ pub(super) struct FunctionCanvas {
     pub values: Vec<(u32, Value)>,
     pub frames: Vec<FrameHit>,
     pub comments: Vec<(u64, Rect)>,
+    pub pins: Vec<(u64, Rect)>,
     pub clear_annotation: bool,
 }

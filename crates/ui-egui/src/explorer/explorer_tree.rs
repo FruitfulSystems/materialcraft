@@ -158,7 +158,14 @@ impl ExplorerTree<'_> {
             self.action = Some((target.clone(), "activate"));
         }
         response.context_menu(|ui| {
-            if let Some(command) = context_menu::show(ui, target, self.session.explorer_clipboard.is_some(), reload) {
+            let outputs = match target {
+                ExplorerTarget::Graph { index, .. } => package.graphs.get(*index).is_some_and(|graph| graph.function.is_none()),
+                _ => package.graphs.iter().any(|graph| graph.function.is_none()),
+            };
+            let dependencies = package.dependencies.keys().any(|path| super::actions::is_package_file(path));
+            let state =
+                super::explorer_menu_state::ExplorerMenuState { paste: self.session.explorer_clipboard.is_some(), saved: reload, dependencies, outputs };
+            if let Some(command) = context_menu::show(ui, target, &state) {
                 self.action = Some((target.clone(), command));
             }
         });

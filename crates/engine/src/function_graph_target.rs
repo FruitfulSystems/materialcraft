@@ -27,10 +27,9 @@ impl FunctionGraphTarget {
         crate::function_variables::suggestions(self, session, id)
     }
 
-    pub fn available_operations(&self, session: &Session) -> impl Iterator<Item = &'static materialcraft_nodes::function::FunctionDefinition> + use<> {
-        let value_processor = matches!(self, Self::Parameter { node, parameter }
-            if parameter == "function" && session.graph().ok().and_then(|graph| graph.node(*node).ok()).is_some_and(|node| node.def == "value_processor"));
-        materialcraft_nodes::function::FUNCTIONS.iter().filter(move |operation| !value_processor || !matches!(operation.id, "samplelum" | "samplecol"))
+    /// All function targets accept the native catalog, including samplers for processor image inputs.
+    pub fn available_operations(&self, _session: &Session) -> impl Iterator<Item = &'static materialcraft_nodes::function::FunctionDefinition> + use<> {
+        materialcraft_nodes::function::FUNCTIONS.iter()
     }
 
     pub fn current<'a>(&self, session: &'a Session) -> Result<&'a FunctionGraph> {

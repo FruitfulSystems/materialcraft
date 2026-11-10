@@ -147,6 +147,21 @@ impl MaterialCraftApp {
 
     /// Run an engine command, reporting errors as toasts. Returns the result on success
     pub fn run(&mut self, id: &str, mut params: Value) -> Option<Value> {
+        if id.starts_with("graph.annotation.")
+            || id.starts_with("graph.frame.")
+            || id.starts_with("graph.comment.")
+            || id.starts_with("graph.pin.")
+            || id == "library.add"
+        {
+            if params.is_null() {
+                params = serde_json::json!({});
+            }
+            if let (Some(parameters), Some(target)) = (params.as_object_mut(), self.graph.annotation_target.parameters().as_object()) {
+                for (name, value) in target {
+                    parameters.entry(name).or_insert_with(|| value.clone());
+                }
+            }
+        }
         if id.starts_with("file.")
             || id.starts_with("package.")
             || matches!(id, "graph.open" | "graph.delete" | "graph.duplicate" | "folder.remove" | "explorer.paste" | "edit.undo" | "edit.redo")
@@ -186,6 +201,14 @@ impl MaterialCraftApp {
 
         match cook::execute_guarded(&mut self.session, id, &params) {
             Ok(v) => {
+                if matches!(id, "graph.pin.add" | "library.add")
+                    && let Some(materialcraft_engine::AnnotationSelection::Pin(pin)) = self.session.annotation_selection
+                {
+                    self.graph.pin_description_focus = Some(pin);
+                    self.inspected_folder = None;
+                    self.inspected_graph = None;
+                    self.ui.dock.focus(docking::Panel::Properties);
+                }
                 if id == "view.previewSize" {
                     self.ui.prefs.preview_size = self.session.preview_size.unwrap_or(0);
                 }
@@ -384,6 +407,7 @@ impl MaterialCraftApp {
 
     /// Draw the whole window into `ui`
     pub fn draw(&mut self, ui: &mut egui::Ui) {
+        crate::annotation::activate(self, crate::annotation::target(self));
         if !self.fonts_ready {
             self.fonts_ready = true;
             return;
@@ -395,6 +419,7 @@ impl MaterialCraftApp {
         menus::menu_bar(self, ui);
         toolbar::main_toolbar(self, ui);
         toolbar::status_bar(self, ui);
+        self.ui.explorer.hovered = false;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::Tokens::get(&ctx).chrome)).show(ui, |ui| docking::show(self, ui));
         windows::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]

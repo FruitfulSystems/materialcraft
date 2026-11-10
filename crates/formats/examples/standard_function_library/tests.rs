@@ -10,7 +10,8 @@ fn conversion_preserves_function_bodies_and_replaces_presentation_metadata() {
     graph.attributes.author = "Source author".into();
     graph.attributes.author_url = "https://example.org/source".into();
     graph.attributes.user_data = "Source notes".into();
-    graph.attributes.tags = "Source tags".into();
+    graph.attributes.category = "Function".into();
+    graph.attributes.tags = "Maths".into();
     graph.function_type = 256;
     let mut body = FunctionGraph::default();
     let left = body.add_constant(Value::Float(1.0));
@@ -30,7 +31,10 @@ fn conversion_preserves_function_bodies_and_replaces_presentation_metadata() {
     assert!(converted.graphs[0].attributes.author.is_empty());
     assert!(converted.graphs[0].attributes.author_url.is_empty());
     assert!(converted.graphs[0].attributes.user_data.is_empty());
-    assert!(converted.graphs[0].attributes.tags.is_empty());
+    assert_eq!(converted.graphs[0].attributes.category, "Function");
+    assert_eq!(converted.graphs[0].attributes.tags, "Maths");
+    assert_eq!(reopened.graphs[0].attributes.category, "Function");
+    assert_eq!(reopened.graphs[0].attributes.tags, "Maths");
     assert_eq!(converted.graphs[0].function, reopened.graphs[0].function);
     let mut restored = converted.graphs[0].function.clone().unwrap();
     let original = imported.graphs[0].function.as_ref().unwrap();
@@ -63,4 +67,22 @@ fn layout_separates_nodes_and_rejects_invalid_connections_without_partial_edits(
     assert_eq!(function, cyclic);
     function.nodes[0].inputs = vec![Some(9999)];
     assert!(super::layout::reposition(&mut function).unwrap_err().contains("missing node"));
+}
+
+#[test]
+fn conversion_preserves_empty_classification_attributes() {
+    let mut package = Package::new("Functions");
+    let mut graph = Graph::new("EmptyMetadata");
+    graph.folder = "Functions/Math".into();
+    let mut function = FunctionGraph::default();
+    function.output = Some(function.add_constant(Value::Float(1.0)));
+    graph.function = Some(function);
+    graph.function_type = 256;
+    package.graphs.push(graph);
+    let bytes = write_sbs(&package).unwrap();
+
+    let converted = super::convert::package(&bytes, "source.sbs").unwrap();
+
+    assert!(converted.graphs[0].attributes.category.is_empty());
+    assert!(converted.graphs[0].attributes.tags.is_empty());
 }

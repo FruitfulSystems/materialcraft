@@ -1,4 +1,4 @@
-use super::{FunctionEditor, FunctionTarget};
+use super::FunctionEditor;
 use crate::{MaterialCraftApp, graph::edit_menu, i18n::tr, menus};
 use egui::Ui;
 use materialcraft_engine::FunctionEdit;
@@ -54,14 +54,13 @@ fn background_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, u
     let Some(target) = editor.command_target() else { return };
 
     let mut add = None;
-    let standalone = matches!(editor.target, FunctionTarget::Graph);
     ui.menu_button(tr("Add node"), |ui| {
         let entries =
             target.available_operations(&app.session).filter(|operation| operation.id != "passthrough").map(|operation| (operation.id, operation.label, ""));
         add = crate::graph::add_node_menu::show(app, ui, entries);
     });
     annotations(app, editor, ui);
-    if edit_menu::button(ui, "Add Navigation pin", "graph.pin.add", standalone) {
+    if edit_menu::button(ui, "Add Navigation pin", "graph.pin.add", true) {
         app.run("graph.pin.add", json!({"at": [editor.menu_at.x, editor.menu_at.y]}));
         editor.selection.clear();
     }
@@ -77,7 +76,7 @@ fn background_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, u
         selection_action(app, editor, ui, label, command);
     }
     for (label, command) in [("Previous pin", "ui.graph.previousPin"), ("Next pin", "ui.graph.nextPin")] {
-        if edit_menu::button(ui, label, command, standalone && menus::enabled(app, command)) {
+        if edit_menu::button(ui, label, command, menus::enabled(app, command)) {
             crate::graph::actions::invoke(app, command);
             editor.set_camera(app.ui.graph_camera);
         }
@@ -89,12 +88,11 @@ fn background_actions(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, u
 }
 
 fn annotations(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui: &mut Ui) {
-    let standalone = matches!(editor.target, FunctionTarget::Graph);
     for (label, command, parameters) in [
         ("Add Comment", "graph.comment.add", json!({"at": [editor.menu_at.x, editor.menu_at.y]})),
         ("Add Frame", "graph.frame.add", json!({"rect": [editor.menu_at.x, editor.menu_at.y, 400, 260]})),
     ] {
-        if edit_menu::button(ui, label, command, standalone) {
+        if edit_menu::button(ui, label, command, true) {
             app.run(command, parameters);
             editor.selection.clear();
         }

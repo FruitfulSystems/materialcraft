@@ -14,9 +14,22 @@ Full numerical equivalence and importing the converted library in the reference 
 unverified. Redistribution rights for the retained source bodies are not established.
 See [architecture.md](architecture.md) for alias resolution and conversion details.
 
-Explorer now displays native SBS folders, including empty groups and nested resources. Its initial
-package, folder and graph context menus support creation, copy/paste, rename, removal, and package
-save/reload/close actions. Publishing and additional resource creation menus remain outside this scope.
+Explorer now displays native SBS folders, including empty groups and nested resources. Its
+package, folder and graph context menus follow the reference layout: creation, import, save,
+export material, send to TextureCraft, copy/paste, close, compute outputs, show in folder, open
+dependencies, view outputs in 3D view and export outputs. Enter, F2 and Delete act on the Explorer
+selection while the pointer is over it. Linking resources, exporting with dependencies and the
+dependency manager are listed but disabled until MaterialCraft has them; copy and paste have no
+Explorer shortcut yet.
+
+The Library panel shows the reference category tree (Favorites, Graph items, Atomic nodes, FxMap
+nodes, Function nodes, Texture generators, Filters, Material filters, Mesh-based generators, Spline &
+Path tools, MCF functions, Functions, 3D view, PBR materials, Values). It lists what MaterialCraft
+has: the atomic nodes, the function operations, the 171 bundled functions (sorted into the Functions
+sub-categories) and the FX-Map nodes. Texture generators, Filters, Material filters, Mesh-based
+generators, Spline & Path tools, MCF functions, 3D view, PBR materials and Values stay empty until
+library packages for them are added to `assets/sbs`; the CC0 environments in `assets/hdr` are not
+listed yet.
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (portable `.mcmat` materials closed the published-archive gap) · **Target:** the professional node-based material workflow
 

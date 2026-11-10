@@ -4,7 +4,7 @@ use materialcraft_engine::core::NodeId;
 use materialcraft_engine::nodes::PortKind;
 use std::collections::BTreeMap;
 
-use super::{PatternDrag, PatternEditor, geometry};
+use super::{PatternDrag, PatternEditor, geometry, pattern_canvas::PatternCanvas};
 use crate::{
     MaterialCraftApp,
     graph::{GraphCamera, PortHit},
@@ -21,13 +21,24 @@ pub(crate) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         let present: std::collections::BTreeSet<_> = graph.nodes.iter().map(|node| node.id).collect();
         editor.selection.retain(|id| present.contains(id));
     }
-    let Some((geometry, response, camera)) = paint(app, &mut editor, ui) else { return };
+    let Some(PatternCanvas { geometry, response, camera, frames, comments, pins }) = paint(app, &mut editor, ui) else { return };
 
     app.ui.frame_all = false;
     geometry.publish(&mut app.graph, response.rect);
-    app.graph.frames.clear();
-    app.graph.comments.clear();
-    super::input::handle(app, &mut editor, ui, &response, &camera);
+    app.graph.frames = frames.iter().map(|frame| (frame.id, frame.rect)).collect();
+    app.graph.comments = comments.clone();
+    app.graph.pins = pins.clone();
+    let on_annotation = ui
+        .input(|input| input.pointer.hover_pos())
+        .is_some_and(|pointer| frames.iter().any(|frame| frame.contains(pointer)) || comments.iter().chain(&pins).any(|(_, rect)| rect.contains(pointer)));
+    super::input::handle(app, &mut editor, ui, &response, &camera, on_annotation);
+    if editor.drag.is_none() {
+        crate::graph::annotation_input::handle(app, ui, &camera, &frames, &comments, &pins);
+        if app.session.annotation_selection.is_some() {
+            editor.selection.clear();
+            editor.selected_wires.clear();
+        }
+    }
     if let Some(PatternDrag::Wire { node, slot }) = editor.drag
         && let Some(source) = app.graph.ports.iter().find(|port| {
             port.node.0 == u64::from(node)
@@ -44,11 +55,12 @@ pub(crate) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     app.pattern_editor = Some(editor);
 }
 
-fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Option<(CanvasGeometry, egui::Response, GraphCamera)> {
+fn paint(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Option<PatternCanvas> {
+    let (bounds, response) = ui.allocate_exact_size(ui.available_size().max(vec2(100.0, 100.0)), Sense::click_and_drag());
+    app.graph.view = bounds;
     let graph = editor.current(app)?;
     let selected: std::collections::BTreeSet<_> = editor.selection.iter().copied().collect();
     let mut geometry = CanvasGeometry::default();
-    let (bounds, response) = ui.allocate_exact_size(ui.available_size().max(vec2(100.0, 100.0)), Sense::click_and_drag());
     crate::widgets::name(&response, egui::Role::Canvas, "FX-Map graph");
     let painter = ui.painter_at(bounds);
     painter.rect_filled(bounds, 0.0, Color32::from_rgb(0x26, 0x28, 0x2c));
@@ -56,12 +68,18 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
     let frame_key = GraphCamera::frame_key(ui, bounds) && !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked();
     if !editor.framed || app.ui.frame_all || frame_key {
         let selected_only = frame_key && !editor.selection.is_empty();
-        let destination = graph
+        let mut destination = graph
             .nodes
             .iter()
             .filter(|node| !selected_only || selected.contains(&node.id))
             .map(|node| geometry::bounds(node, editor, snap, selected.contains(&node.id)))
             .fold(Rect::NOTHING, |all, node| all.union(node));
+        if !selected_only {
+            for frame in &graph.annotations.frames {
+                destination =
+                    destination.union(Rect::from_min_size(egui::pos2(frame.rect[0], frame.rect[1] - 32.0), vec2(frame.rect[2], frame.rect[3] + 32.0)));
+            }
+        }
         let camera = GraphCamera::fit(bounds, destination);
         editor.pan = camera.pan;
         editor.zoom = camera.zoom;
@@ -73,12 +91,14 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
     editor.pan = camera.pan;
     editor.zoom = camera.zoom;
     crate::graph::grid::paint(&painter, &camera, bounds);
+    let frames = crate::graph::annotation_canvas::frames(app, ui, &graph.annotations.frames, &camera);
     let tokens = Tokens::get(ui.ctx());
     let rectangles: BTreeMap<_, _> = graph
         .nodes
         .iter()
         .map(|node| {
-            let bounds = geometry::bounds(node, editor, snap, selected.contains(&node.id));
+            let bounds = geometry::bounds(node, editor, snap, selected.contains(&node.id))
+                .translate(crate::graph::annotation_canvas::offset(app, |contents| contents.nodes.contains(&NodeId(u64::from(node.id)))));
             (node.id, Rect::from_min_max(camera.to_screen(bounds.min), camera.to_screen(bounds.max)))
         })
         .collect();
@@ -140,5 +160,7 @@ fn paint(app: &MaterialCraftApp, editor: &mut PatternEditor, ui: &mut Ui) -> Opt
         }
     }
 
-    Some((geometry, response, camera))
+    let comments = crate::graph::annotation_canvas::comments(app, ui, &graph.annotations.comments, &camera);
+    let pins = crate::graph::annotation_canvas::pins(app, ui, &graph.annotations.pins, &camera);
+    Some(PatternCanvas { geometry, response, camera, frames, comments, pins })
 }

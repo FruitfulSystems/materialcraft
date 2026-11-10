@@ -8,13 +8,15 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
         "Select annotation",
         [],
         None,
-        "{kind?: frame|comment, id?} clears node selection; omit kind to deselect",
+        "{kind?: frame|comment|pin, id?} clears node selection; omit kind to deselect",
         has_graph,
         select
     )]
 }
 
 fn select(session: &mut Session, parameters: &Value) -> Result<Value> {
+    let target = crate::AnnotationTarget::resolve(session, parameters)?;
+    let items = target.items(session)?;
     let selection = match strp(parameters, "kind") {
         None => None,
         Some(kind) => {
@@ -22,9 +24,10 @@ fn select(session: &mut Session, parameters: &Value) -> Result<Value> {
             let selection = match kind {
                 "frame" => AnnotationSelection::Frame(id),
                 "comment" => AnnotationSelection::Comment(id),
-                _ => return Err(bad("graph.annotation.select", "kind must be frame or comment")),
+                "pin" => AnnotationSelection::Pin(id),
+                _ => return Err(bad("graph.annotation.select", "kind must be frame, comment or pin")),
             };
-            if !selection.exists(session.graph()?) {
+            if !selection.exists(&items) {
                 return Err(bad("graph.annotation.select", "annotation does not exist"));
             }
 
@@ -32,6 +35,7 @@ fn select(session: &mut Session, parameters: &Value) -> Result<Value> {
         }
     };
 
+    session.annotation_target = target;
     session.annotation_selection = selection;
     if selection.is_some() {
         session.selection.clear();

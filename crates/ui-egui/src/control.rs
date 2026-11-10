@@ -311,6 +311,8 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                     crate::graph::editor_target::EditorTarget::Material => None,
                 },
                 "annotationSelection": app.session.annotation_selection,
+                "annotationTarget": app.session.annotation_target,
+                "pins": app.graph.pins.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "frames": app.graph.frames.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "comments": app.graph.comments.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "nodes": nodes.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),

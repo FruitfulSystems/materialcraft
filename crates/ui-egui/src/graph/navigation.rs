@@ -9,6 +9,12 @@ pub(super) fn view_center(app: &MaterialCraftApp) -> Pos2 {
     pos2(c.pan[0] + v.width() * 0.5 / c.zoom, c.pan[1] + v.height() * 0.5 / c.zoom)
 }
 
+/// Add library entry `id` (a comment, frame, pin or graph instance) in the middle of the view
+pub fn add_entry_in_view(app: &mut MaterialCraftApp, id: &str) {
+    let c = view_center(app);
+    app.run("library.add", json!({"entry": id, "at": [c.x - NODE_W * 0.5, c.y - 60.0], "snapToGrid": app.ui.prefs.snap_to_grid}));
+}
+
 /// Add `def` right of the last selected node (wired from it when it fits), else mid-view
 pub fn add_node_near_selection(app: &mut MaterialCraftApp, def: &str) {
     let sel = app.session.selection.last().copied();

@@ -1,4 +1,4 @@
-use super::{FunctionDrag, FunctionEditor, FunctionTarget};
+use super::{FunctionDrag, FunctionEditor};
 use crate::{MaterialCraftApp, graph::node_card};
 use egui::{Color32, Pos2, Rect, vec2};
 use materialcraft_engine::core::FunctionNode;
@@ -39,8 +39,6 @@ pub(super) fn preview_rect(app: &MaterialCraftApp, editor: &FunctionEditor, node
         let position = materialcraft_engine::graph_grid::translate(node.pos, (*delta).into(), snap);
         bounds = bounds.translate(vec2(position[0] - node.pos[0], position[1] - node.pos[1]));
     }
-    if matches!(editor.target, FunctionTarget::Graph) {
-        bounds = bounds.translate(crate::graph::annotation_canvas::offset(app, |contents| contents.function_nodes.contains(&node.id)));
-    }
+    bounds = bounds.translate(crate::graph::annotation_canvas::offset(app, |contents| contents.function_nodes.contains(&node.id)));
     bounds
 }
