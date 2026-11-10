@@ -130,11 +130,22 @@ the static authoring defaults are zero. These values propagate through nested gr
 without becoming constants in saved functions. Relevant variable changes invalidate cached cooks.
 The normal-format integer is passed through without assigning a convention label to an unverified code.
 
+Numeric, Boolean, color, enum and text value parameters can own a Function graph, including
+inputs on material graph instances. The six base parameters store their functions separately from
+node-specific parameters so native identifiers cannot collide. Size and seed functions establish
+the evaluation context before other parameters run; downstream nodes inherit evaluated nominal
+sizes rather than capped previews. SBS writes these functions as native dynamic values, including
+incomplete graphs. Exposing a parameter creates a typed Get-node function. Properties offers the
+same function creation, editing and reset actions for base parameters and instance inputs.
+Only Specific Parameters offer exposure: a modal drafts the identifier, label, group, description,
+editor, default, limits, clamp and step before one undoable command creates the input and function.
+Inheritance buttons show distinct icons for input, parent and absolute modes.
+
 The local `assets/sbs/functions.sbs` is converted from a user-supplied package with
 `cargo run -p materialcraft-formats --release --example standard_function_library -- <source.sbs> assets/sbs/functions.sbs`.
 The converter preserves all 171 function bodies (2,334 nodes), folder paths, identifiers, inputs,
 defaults and internal references. It writes new interface-based descriptions, generates node
-positions and omits source annotations and icons. It rejects import warnings and functions that
+positions and omits source parameter descriptions, annotations and icons. It rejects import warnings and functions that
 cannot compile instead of substituting empty graphs. The source graph bodies are retained;
 rewritten metadata does not establish redistribution rights.
 Local tests compare every converted body and evaluate all 171 functions against the supplied

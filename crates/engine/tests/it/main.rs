@@ -24,6 +24,7 @@ mod node_library;
 mod normal_maps;
 mod open_documents;
 mod optimization_perf;
+mod parameter_functions;
 mod pattern_graph;
 mod perf;
 mod reset_drivers;

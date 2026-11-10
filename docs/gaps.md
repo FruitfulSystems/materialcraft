@@ -42,7 +42,7 @@ Every known shortfall, most important first. Pick from the top.
 | 3 | Mesh-based generators and bakers | None | Workflows that start from a mesh | 15 h | target-app-parity (Node library) |
 | 4 | Portable materials over MCP | `.mcmat` export runs from the app and the CLI; the MCP workspace sandbox refuses `file.*` commands and has no `material_export` tool | Sandboxed agents can't hand a material to TextureCraft | 1 h | target-app-parity (Files) |
 | 5 | Function loops and reusable functions | Functions live on one parameter or processor | Iterative effects; sharing logic between nodes | 5 h | target-app-parity (Function graphs) |
-| 6 | Input visibility conditions, per-instance output sizes | Not implemented | Organizing large graphs' inputs | 4 h | target-app-parity (Graph parameters) |
+| 6 | Input visibility conditions | Visibility expressions are not implemented; instance output sizes can use parameter functions | Organizing large graphs' inputs | 4 h | target-app-parity (Graph parameters) |
 | 7 | `ui.screenshot` times out on this test machine | The window-capture callback never fires here; `view.screenshot` and the offscreen snapshot test work | Agents bridged to the app see views but not the whole window | 1 h | — |
 | 8 | Translations and keymap editor | English only, fixed shortcuts | Non-English users; custom shortcuts | 8 h | localization-parity |
 | 9 | Minimap and multi-graph tabs | One graph at a time, no overview | Navigating big graphs | 5 h | target-app-parity (Graph editing, UI and UX) |

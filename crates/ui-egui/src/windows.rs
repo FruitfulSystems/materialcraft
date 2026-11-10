@@ -97,6 +97,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     crate::unsaved::show(app, ctx);
     crate::explorer::dialogs(app, ctx);
+    crate::properties::ExposeParameterDialog::show(app, ctx);
     #[cfg(target_arch = "wasm32")]
     crate::web_files::save_dialog(app, ctx);
     #[cfg(not(target_arch = "wasm32"))]

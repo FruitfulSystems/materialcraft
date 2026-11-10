@@ -252,23 +252,26 @@ fn panic_hunt() {
 
 #[test]
 fn dynamic_parameters_follow_graph_inputs() {
-    let mut s = sample_session();
-    run(&mut s, "file.new", json!({"template": "empty"}));
-    let u = run(&mut s, "graph.node.add", json!({"def": "uniform", "params": {"color_mode": false}}))["id"].as_u64().unwrap();
-    run(&mut s, "graph.exposed.add", json!({"id": "level", "default": {"t": "float", "v": 0.25}}));
-    let f = json!({"nodes": [{"id": 1, "op": "get_float1", "value": {"t": "text", "v": "level"}}], "output": 1});
-    run(&mut s, "graph.node.function", json!({"id": u, "param": "color", "function": f}));
-    s.cook();
-    let mean = |s: &Session| s.cooked.image(materialcraft_engine::core::NodeId(u), 0).unwrap().mean()[0];
-    assert!((mean(&s) - 0.25).abs() < 1e-4, "{}", mean(&s));
-    run(&mut s, "graph.exposed.set", json!({"id": "level", "value": 0.75}));
-    s.cook();
-    assert!((mean(&s) - 0.75).abs() < 1e-4);
-    // Text parameters can't take functions; removing restores the plain value
-    assert!(execute(&mut s, "graph.node.function", &json!({"id": u, "param": "nope"})).is_err());
-    run(&mut s, "graph.node.function", json!({"id": u, "param": "color", "remove": true}));
-    s.cook();
-    assert!((mean(&s) - 0.5).abs() < 0.05);
+    use materialcraft_engine::core::{FunctionGraph, NodeId, Value, ValueType};
+
+    let mut session = sample_session();
+    run(&mut session, "file.new", json!({"template": "empty"}));
+    let owner = NodeId(run(&mut session, "graph.node.add", json!({"def": "uniform", "params": {"color_mode": false}}))["id"].as_u64().unwrap());
+    run(&mut session, "graph.exposed.add", json!({"id": "level", "default": Value::Float4([0.25; 4])}));
+    let function = FunctionGraph::input("level", ValueType::Float4);
+    run(&mut session, "graph.node.function", json!({"id": owner, "param": "color", "function": function}));
+
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.25).abs() < 1e-4, "{mean}");
+    run(&mut session, "graph.exposed.set", json!({"id": "level", "value": Value::Float4([0.75; 4])}));
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.75).abs() < 1e-4);
+
+    // Removing the function restores the plain value
+    assert!(execute(&mut session, "graph.node.function", &json!({"id": owner, "param": "nope"})).is_err());
+    run(&mut session, "graph.node.function", json!({"id": owner, "param": "color", "remove": true}));
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.5).abs() < 0.05);
 }
 
 #[test]

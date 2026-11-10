@@ -68,6 +68,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::document_history_commands::specs());
         v.extend(crate::embedded_edit_commands::specs());
         v.extend(crate::graph_cmds::specs());
+        v.extend(crate::exposed_input_commands::specs());
         v.extend(crate::graph_property_commands::specs());
         v.extend(crate::alignment_commands::specs());
         v.extend(crate::annotation_commands::specs());
@@ -79,6 +80,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::comment_commands::specs());
         v.extend(crate::pin_commands::specs());
         v.extend(crate::node_cmds::specs());
+        v.extend(crate::parameter_function_commands::specs());
         v.extend(crate::node_graph_commands::specs());
         v.extend(crate::pattern_graph_commands::specs());
         v.extend(crate::connection_commands::specs());

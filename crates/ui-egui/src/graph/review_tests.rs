@@ -176,7 +176,7 @@ fn dynamic_parameter_functions_return_to_the_owning_node() {
     let owner = NodeId(app.run("graph.node.add", json!({"def": "blur"})).unwrap()["id"].as_u64().unwrap());
     app.run("graph.node.function", json!({"id": owner, "param": "intensity"})).unwrap();
     super::subgraph_navigation::open_function(&mut app, owner, FunctionTarget::Dynamic("intensity".into()));
-    assert!(super::subgraph_navigation::breadcrumb(&app).ends_with("Blur / intensity"));
+    assert!(super::subgraph_navigation::breadcrumb(&app).ends_with("Blur / Intensity"));
     let context = egui::Context::default();
     menus::invoke(&mut app, &context, "edit.selectAll");
     menus::invoke(&mut app, &context, "edit.delete");
