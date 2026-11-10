@@ -28,13 +28,25 @@ impl<'a> PreparedGraph<'a> {
     }
 
     pub fn input_base(&self, id: NodeId, cooked: &crate::Cooked) -> Option<crate::ResolvedBaseParameters> {
-        let primary = self.index.node(id).and_then(|node| materialcraft_nodes::find(&node.def)).and_then(|definition| definition.primary_input);
-        self.ports(id).0.iter().filter(|port| port.kind != materialcraft_nodes::PortKind::Value && primary.is_none_or(|primary| port.id == primary)).find_map(
-            |port| {
+        let node = self.index.node(id)?;
+        let definition = materialcraft_nodes::find(&node.def);
+        let primary = definition.and_then(|definition| definition.primary_input);
+        let mut base = self
+            .ports(id)
+            .0
+            .iter()
+            .filter(|port| port.kind != materialcraft_nodes::PortKind::Value && primary.is_none_or(|primary| port.id == primary))
+            .find_map(|port| {
                 let connection = self.index.input_of(id, &port.id)?;
                 cooked.nodes.get(&connection.from).map(|result| result.base)
-            },
-        )
+            })?;
+
+        // Only bypassed generators take their image dimensions from the input
+        if !node.disabled && definition.is_some_and(|definition| definition.generator) {
+            base.size = self.parent_base.size;
+        }
+
+        Some(base)
     }
 
     pub fn ports(&self, id: NodeId) -> (&[Port], &[Port]) {

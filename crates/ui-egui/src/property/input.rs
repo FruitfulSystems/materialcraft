@@ -6,7 +6,10 @@ use serde_json::{Value as JsonValue, json};
 pub(super) fn input_editor(ui: &mut Ui, exposed: &materialcraft_engine::core::ExposedParameter, current: &Value) -> Option<JsonValue> {
     let label = if exposed.label.is_empty() { exposed.id.as_str() } else { exposed.label.as_str() };
     let response = ui.vertical(|ui| edit(ui, exposed, current, label));
-    response.response.on_hover_text(&exposed.description);
+    if !exposed.description.is_empty() {
+        response.response.on_hover_text(&exposed.description);
+    }
+
     response.inner
 }
 
@@ -117,6 +120,37 @@ mod tests {
         Harness,
         kittest::{By, Queryable},
     };
+
+    #[test]
+    fn input_descriptions_only_open_nonempty_tooltips() {
+        for description in ["", "Controls the amount"] {
+            let input: ExposedParameter = serde_json::from_value(json!({
+                "id": "amount", "label": "Amount", "default": {"t": "bool", "v": false}, "description": description
+            }))
+            .unwrap();
+            let directory = std::env::var_os("MC_SNAPSHOT_DIR").map(std::path::PathBuf::from);
+            let builder = Harness::builder().with_size(egui::vec2(360.0, 160.0)).with_step_dt(1.0 / 60.0);
+            let builder = if directory.is_some() { builder.wgpu() } else { builder };
+            let mut harness = builder.build_ui(|ui| {
+                input_editor(ui, &input, &input.default);
+            });
+            harness.run();
+            let position = harness.get(By::new().role(egui::accesskit::Role::CheckBox).label("Amount")).rect().center();
+
+            harness.event(egui::Event::PointerMoved(position));
+            harness.run_steps(90);
+
+            assert_eq!(egui::Tooltip::seconds_since_last_tooltip(&harness.ctx).is_finite(), !description.is_empty());
+            if !description.is_empty() {
+                assert!(harness.query(By::new().role(egui::accesskit::Role::Label).label(description)).is_some());
+            }
+            if let Some(directory) = directory {
+                std::fs::create_dir_all(&directory).unwrap();
+                let name = if description.is_empty() { "input-without-description" } else { "input-description-tooltip" };
+                harness.render().unwrap().save(directory.join(format!("{name}.png"))).unwrap();
+            }
+        }
+    }
 
     #[test]
     fn exposed_sliders_apply_step_and_allow_values_outside_soft_limits() {

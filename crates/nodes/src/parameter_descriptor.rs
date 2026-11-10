@@ -45,15 +45,13 @@ impl ParameterDescriptor {
                 Some(Value::Text(name)) => Some(name.as_str()),
                 _ => None,
             });
-            if let Some(input) = source
-                .zip(name)
-                .and_then(|(source, name)| source.graph_by_name(name))
-                .and_then(|(_, graph)| graph.exposed.iter().find(|input| input.id == parameter))
+            if let Some((_, graph)) = source.zip(name).and_then(|(source, name)| source.graph_by_name(name))
+                && let Some(input) = graph.exposed.iter().find(|input| input.id == parameter)
             {
                 return Some(Self {
                     id: input.id.clone(),
                     label: input.label.clone(),
-                    default: input.default.clone(),
+                    default: graph.input_value(parameter).unwrap_or(&input.default).clone(),
                     min: input.min,
                     max: input.max,
                     options: input.options.clone(),

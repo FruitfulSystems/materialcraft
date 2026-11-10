@@ -168,19 +168,68 @@ fn instance_params(app: &mut MaterialCraftApp, ui: &mut Ui, node: &materialcraft
     if exposed.is_empty() {
         ui.label(RichText::new(tr("This graph exposes no inputs")).color(tokens.text_dim));
     }
+
     for entry in exposed {
-        let current = node.params.get(&entry.id).cloned().unwrap_or_else(|| entry.default.clone());
+        let descriptor = ParameterDescriptor::for_node(&app.session.pkg, node, &entry.id);
+        let current = node.params.get(&entry.id).unwrap_or_else(|| descriptor.as_ref().map_or(&entry.default, |descriptor| &descriptor.default)).clone();
         let literal = |app: &mut MaterialCraftApp, ui: &mut Ui| {
             if let Some(value) = input_editor(ui, &entry, &current) {
                 app.run("graph.node.param", json!({"id": node.id.0, "param": entry.id, "value": value}));
             }
         };
-        if let Some(descriptor) = ParameterDescriptor::for_node(&app.session.pkg, node, &entry.id)
+        if let Some(descriptor) = descriptor
             && descriptor.supports_function
         {
             super::parameter_control::show(app, ui, node, &descriptor, None, literal);
         } else {
             literal(app, ui);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{
+        Harness,
+        kittest::{By, Queryable},
+    };
+    use materialcraft_engine::core::NodeId;
+
+    #[test]
+    fn instance_properties_show_current_source_values_and_local_overrides() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), crate::UiState::default());
+        app.session.graph_mut().unwrap().name = "Source".into();
+        app.run("graph.node.add", json!({"def": "output"})).unwrap();
+        app.run("graph.exposed.add", json!({"id": "amount", "label": "Amount", "default": 0.25})).unwrap();
+        app.run("graph.exposed.set", json!({"id": "amount", "value": 0.75})).unwrap();
+        app.run("file.new", json!({"name": "Target", "template": "empty"})).unwrap();
+        let instance = NodeId(app.run("graph.instance.add", json!({"document": 0, "graph": "Source"})).unwrap()["id"].as_u64().unwrap());
+        let directory = std::env::var_os("MC_SNAPSHOT_DIR").map(std::path::PathBuf::from);
+        let builder = Harness::builder().with_size(egui::vec2(420.0, 200.0)).with_context_setup(crate::theme::install);
+        let builder = if directory.is_some() { builder.wgpu() } else { builder };
+        let mut harness = builder.build_ui_state(
+            move |ui, app: &mut MaterialCraftApp| {
+                let node = app.session.graph().unwrap().node(instance).unwrap().clone();
+                instance_params(app, ui, &node);
+            },
+            app,
+        );
+        harness.run();
+        let input = || By::new().role(egui::accesskit::Role::TextInput).label("Amount");
+
+        assert_eq!(harness.get(input()).value().as_deref(), Some("0.750"));
+        if let Some(directory) = &directory {
+            std::fs::create_dir_all(directory).unwrap();
+            harness.render().unwrap().save(directory.join("instance-current-input.png")).unwrap();
+        }
+
+        harness.state_mut().run("graph.node.param", json!({"id": instance, "param": "amount", "value": 0.5})).unwrap();
+        harness.run();
+
+        assert_eq!(harness.get(input()).value().as_deref(), Some("0.500"));
+        if let Some(directory) = directory {
+            harness.render().unwrap().save(directory.join("instance-local-override.png")).unwrap();
         }
     }
 }
