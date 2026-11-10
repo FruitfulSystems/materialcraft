@@ -17,6 +17,15 @@ fn language_switching_and_arabic_translations_work() {
     assert_eq!(tr("Welcome to MaterialCraft"), "مرحباً بك في MaterialCraft");
     assert!(is_rtl());
 
+    // The update menu item and dialogs use the same catalog
+    assert_eq!(tr("Check for updates..."), "التحقق من وجود تحديثات...");
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use materialcraft_ui_egui::updates_ui::translate;
+        assert_eq!(translate("Cancel", &[]), "إلغاء");
+        assert_eq!(translate("{app} update", &[("app", "MaterialCraft")]), "MaterialCraft update");
+    }
+
     // Live formatting
     let formatted = trf("Hello {name}", &[("name", &"World")]);
     assert_eq!(formatted, "Hello World");

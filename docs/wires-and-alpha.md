@@ -24,10 +24,10 @@ named by the input it feeds: the target node and its input port (`to`, `toPort`)
 | **Shift**+click a wire | Adds it to the wire selection |
 | **Ctrl**+click a wire | Adds it to the wire selection, or removes it when it is already selected |
 | **Delete** or **Backspace** with wires selected | Deletes every selected wire (one undo step) |
-| **X** with two or more wires selected | Swaps where the selected wires come from (see below); they stay selected, so **X** again swaps back |
+| **X** with exactly two wires selected | Swaps where the selected wires come from (see below); they stay selected, so **X** again swaps back |
 | Drag a wire | Pulls a reroute **Dot** out of the wire where it was pressed and moves it with the pointer, in one gesture |
 | Double-click a wire | Drops a reroute Dot at that point |
-| Right-click a wire | Opens the wire menu: **Insert reroute dot**, **Swap selected links (X)** (with two or more selected), **Delete link** / **Delete selected links**. Right-clicking a wire that is already selected keeps the selection |
+| Right-click a wire | Opens the wire menu: **Insert reroute dot**, **Swap selected links (X)** (with exactly two selected), **Delete link** / **Delete selected links**. Right-clicking a wire that is already selected keeps the selection |
 | Click anywhere else | Drops the wire selection |
 
 A wire is hit within 5 points of its curve. Node cards, ports and comments sit on top of wires, so
@@ -36,20 +36,17 @@ canvas.
 
 ### Swapping wires
 
-Select the wires going into a node and press **X** to swap their sources. On a **Blend** node, select
+Select any two wires and press **X** to swap their sources. On a **Blend** node, select
 the *Foreground* and *Background* wires and press **X**: what fed the foreground now feeds the
 background and the other way around, so the two layers trade places without rewiring by hand.
 
 - **Two wires** trade sources.
-- **More than two** reverse their sources. The wires are ordered by target node, then by the order
-  of the inputs on the node (top to bottom), and the first wire's source goes to the last input,
-  the second's to the one before it, and so on. With *Foreground*, *Background* and *Opacity*
-  selected on a Blend, the foreground and opacity sources trade places and the background keeps
-  its own.
+- The action is hidden unless exactly two wires from different output pins are selected.
+- Output pin identity determines eligibility; equal values from different pins can still swap.
+- In a main graph, both replacement connections must pass the normal image/value input checks.
 - The order you click the wires in does not matter, so the result is predictable.
 - Wires into different nodes can be swapped too. A swap that would feed a node into itself (a
   cycle) is refused with a message, and nothing changes.
-- One wire alone cannot be swapped: the editor says to select two or more.
 - The swap is one undo step.
 
 ### Reroute dots
@@ -65,7 +62,7 @@ restores the straight wire.
 | Command | Params | Result |
 |---|---|---|
 | `graph.wire.insertDot` | `{to, toPort, at?: [x, y]}` | Splits the wire feeding `to.toPort` with a Dot centered at `at` (graph space; default: midway between the two nodes). Returns `{"id": <dot id>}` and selects the dot. Errors when no wire feeds that input. |
-| `graph.wire.swap` | `{wires: [{to, toPort}, ...]}` | Swaps (two wires) or reverses (more) the sources of the listed wires, as described above. Returns `{"swapped": n}`. Errors with fewer than two wires, a wire listed twice, a missing wire or a cycle; nothing changes then. |
+| `graph.wire.swap` | `{wires: [{to, toPort}, ...]}` | Exchanges the sources of exactly two listed wires. Returns `{"swapped": 2}`. Rejects a count other than two, repeated or missing wires, wires from the same output pin, incompatible input types, and cycles; nothing changes then. |
 | `graph.wire.delete` | `{wires: [{to, toPort}, ...]}` | Deletes the listed wires in one undo step (what the Delete key and the menu run). Returns `{"deleted": n}`. |
 | `graph.disconnect` | `{to, toPort}` | Deletes the single wire feeding `to.toPort`. |
 
@@ -166,7 +163,7 @@ Headless renders (`materialcraft-cli render`, the `render` RPC) use the same set
 - `a_wire_splits_with_a_reroute_dot_and_deletes` (engine): insertion, wiring, selection, cooking
   through the dot, single-step undo, the error with no wire, deletion.
 - `selected_wires_swap_their_sources_and_delete_together` (engine): two-wire swap in any order,
-  three-wire reverse, single-step undo, refused requests (one wire, duplicates, missing wires),
+  single-step undo, refused requests (one or three wires, duplicates, missing wires),
   a refused cycle that leaves the graph unchanged, deleting several wires in one step.
 - `graph_view::tests::clicked_wires_swap_with_x_and_delete_together`: real clicks on a Blend
   node's two wires (the second with Shift), X swaps, X again swaps back, Delete removes both.

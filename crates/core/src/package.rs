@@ -1,95 +1,25 @@
-//! Packages: the document. A package holds graphs and the resources (bitmaps) they use.
-
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
-
+use crate::Resource;
+use crate::{CoreError, Graph, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{CoreError, Graph, Result};
-
-/// The native package extension (a zip: `package.json` plus `resources/`).
-pub const PACKAGE_EXT: &str = "mcraft";
-
-/// An embedded file: a bitmap a Bitmap node shows, or an SVG.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Resource {
-    /// Unique name, referenced by nodes (`resource` parameter).
-    pub name: String,
-    /// File name inside the package's `resources/` folder.
-    pub file: String,
-    /// The file's bytes (stored in the zip, not in `package.json`).
-    #[serde(skip)]
-    pub bytes: ResourceBytes,
-}
-
-impl Resource {
-    /// A resource named `name`, stored as `file` in the package.
-    pub fn new(name: impl Into<String>, file: impl Into<String>, bytes: ResourceBytes) -> Resource {
-        Resource { name: name.into(), file: file.into(), bytes }
-    }
-}
-
-/// A resource's bytes with a hash of their whole content, computed once when the bytes are
-/// set, so caches can key on content (two files of one size are not the same image).
-#[derive(Clone, Debug)]
-pub struct ResourceBytes {
-    bytes: Arc<Vec<u8>>,
-    hash: u64,
-}
-
-impl ResourceBytes {
-    /// Take ownership of `bytes` and hash them.
-    pub fn new(bytes: Vec<u8>) -> ResourceBytes {
-        let mut h = DefaultHasher::new();
-        bytes.hash(&mut h);
-        ResourceBytes { hash: h.finish(), bytes: Arc::new(bytes) }
-    }
-
-    /// The bytes.
-    pub fn as_slice(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    /// Number of bytes.
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    /// Whether there are no bytes.
-    pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    /// Hash of the whole content.
-    pub fn content_hash(&self) -> u64 {
-        self.hash
-    }
-
-    /// Whether both values share one allocation (cheap clones of one file).
-    pub fn ptr_eq(&self, other: &ResourceBytes) -> bool {
-        Arc::ptr_eq(&self.bytes, &other.bytes)
-    }
-}
-
-impl Default for ResourceBytes {
-    fn default() -> Self {
-        ResourceBytes::new(Vec::new())
-    }
-}
-
-impl PartialEq for ResourceBytes {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash && self.bytes == other.bytes
-    }
-}
+pub const PACKAGE_EXT: &str = "sbs";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
     pub graphs: Vec<Graph>,
+    /// Explicit SBS group paths, including folders without graphs
+    #[serde(default)]
+    pub folders: Vec<String>,
+    /// Descriptions of SBS groups, keyed by their full folder path.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub folder_descriptions: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub resources: Vec<Resource>,
-    /// Format version of `package.json`.
+    /// Resolved source packages shared by cooks; SBS stores their file references instead
+    #[serde(skip)]
+    pub dependencies: std::collections::BTreeMap<String, std::sync::Arc<Package>>,
+    /// Format version of `package.json`
     #[serde(default = "version")]
     pub version: u32,
 }
@@ -100,7 +30,33 @@ fn version() -> u32 {
 
 impl Package {
     pub fn new(name: &str) -> Package {
-        Package { name: name.into(), graphs: Vec::new(), resources: Vec::new(), version: 1 }
+        Package {
+            name: name.into(),
+            graphs: Vec::new(),
+            folders: Vec::new(),
+            folder_descriptions: Default::default(),
+            resources: Vec::new(),
+            version: 1,
+            dependencies: Default::default(),
+        }
+    }
+
+    pub fn folder_paths(&self) -> std::collections::BTreeSet<String> {
+        let mut folders = std::collections::BTreeSet::from(["Resources".to_string()]);
+        for path in self
+            .folders
+            .iter()
+            .map(String::as_str)
+            .chain(self.graphs.iter().map(|graph| graph.folder.as_str()))
+            .chain(self.resources.iter().map(|resource| resource.folder.as_str()))
+        {
+            let mut parent = path;
+            while !parent.is_empty() {
+                folders.insert(parent.to_string());
+                parent = parent.rsplit_once('/').map_or("", |(parent, _)| parent);
+            }
+        }
+        folders
     }
 
     pub fn graph(&self, i: usize) -> Result<&Graph> {
@@ -112,36 +68,29 @@ impl Package {
     }
 
     pub fn graph_by_name(&self, name: &str) -> Option<(usize, &Graph)> {
-        self.graphs.iter().enumerate().find(|(_, g)| g.name == name)
+        self.graphs.iter().enumerate().find(|(_, g)| g.sbs_path() == name).or_else(|| {
+            let mut matches = self.graphs.iter().enumerate().filter(|(_, g)| g.name == name);
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        })
     }
 
     pub fn resource(&self, name: &str) -> Option<&Resource> {
         self.resources.iter().find(|r| r.name == name)
     }
 
-    /// A name not used by any graph: `base`, `base_1`, `base_2`…
-    pub fn unique_graph_name(&self, base: &str) -> String {
-        let base = if base.trim().is_empty() { "Graph" } else { base.trim() };
-        if self.graph_by_name(base).is_none() {
-            return base.to_string();
+    pub fn instance_package(&self, node: &crate::Node) -> Option<&Package> {
+        match node.instance.as_ref().map(|instance| instance.package.as_str()) {
+            Some(file) if !file.is_empty() => self.dependencies.get(file).map(AsRef::as_ref),
+            _ => Some(self),
         }
-        (1..).map(|i| format!("{base}_{i}")).find(|n| self.graph_by_name(n).is_none()).unwrap_or_else(|| base.to_string())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn same_length_same_prefix_bytes_hash_differently() {
-        let a = vec![7u8; 200];
-        let mut b = a.clone();
-        b[150] = 8;
-        let (a, b) = (ResourceBytes::new(a), ResourceBytes::new(b));
-        assert_eq!(a.len(), b.len());
-        assert_ne!(a.content_hash(), b.content_hash());
-        assert_ne!(a, b);
-        assert_eq!(ResourceBytes::default(), ResourceBytes::new(Vec::new()));
+    pub fn instance_graph(&self, node: &crate::Node) -> Option<(usize, &Graph)> {
+        let name = node.instance.as_ref().map(|instance| instance.graph.as_str()).or_else(|| match node.params.get("graph") {
+            Some(crate::Value::Text(name)) => Some(name.as_str()),
+            _ => None,
+        })?;
+        self.instance_package(node)?.graph_by_name(name)
     }
 }

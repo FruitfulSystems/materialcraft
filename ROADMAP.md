@@ -1,51 +1,27 @@
 # MaterialCraft roadmap
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (≈ 67%: portable materials for TextureCraft) · **Target:** the professional node-based material workflow
+**Current focus (2026-11-08):** native primitive editing, reusable SBS functions and interoperable save/load.
 
-**Stage:** alpha (in active development). MaterialCraft aims for full parity with the professional
-node-based procedural material workflow, with better performance, every feature drivable by agents
-(MCP, CLI, control channel), and builds for Windows, macOS, Linux, FreeBSD and the web.
+The old Rust procedural library has been removed. The main catalog has 30 entries: 26 native
+primitives and four graph input/output items. Functions have 85 operations; pattern graphs have
+Quadrant, Switch, Iterate and Dot. See [the primitive workflow](docs/atomic-workflow.md) for usage and limits.
 
-## Headline numbers
+Earlier percentage estimates and node counts are superseded by this change. Reference-app
+rendering parity and arbitrary SBS round trips have not been established.
 
-- **Parity: ≈ 67%** of a material artist's daily workflow works end to end
-  ([docs/target-app-parity.md](docs/target-app-parity.md)).
-- **Remaining: ≈ 83 Opus 5.5 agent hours** ([docs/roadmap.md](docs/roadmap.md)).
-- **Nodes:** 227 (all tileable), cooked on every CPU core through a content-addressed cache; the
-  brick wall sample cooks in about 40 ms at preview size.
+## Next steps
 
-## By area
-
-| Area | Weight | Done |
-|---|---:|---:|
-| Graph editing | 15 | 75% |
-| Atomic nodes | 12 | 95% |
-| Node library | 20 | 45% |
-| Function graphs | 10 | 70% |
-| Graph parameters and instances | 8 | 70% |
-| 2D view | 5 | 80% |
-| 3D view | 10 | 55% |
-| Files | 8 | 70% |
-| UI and UX | 8 | 70% |
-| Platforms | 4 | 50% |
-| **Total** | **100** | **≈ 67%** |
-
-## What's next
-
-1. The rest of the node library: scan processing, more grunges, spline tools, SDF shapes.
-2. A GPU 3D view with tessellation and lights.
-3. Mesh-based generators and bakers.
-4. Function loops and reusable functions.
-5. The first release on every platform.
-
-The ranked work list is [docs/gaps.md](docs/gaps.md); file formats are in
-[docs/file-format-parity.md](docs/file-format-parity.md) and languages in
-[docs/localization-parity.md](docs/localization-parity.md).
+1. Verify the original atomic sample in the reference application
+2. Compare primitive outputs and parameter semantics against reference results
+3. Validate the converted standard library in the reference application and establish redistribution rights
+4. Extend the SBS library beyond reusable functions to processing graphs
 
 ## Progress log
 
 | Date | What landed |
 |---|---|
+| 2026-11-08 | Explorer folder hierarchy and package/folder/graph context menus, native SBS empty folders and resource paths, undoable copy/move/rename/remove, and package reload/save-copy actions |
+| 2026-11-08 | Portable `sbs://` function instances in the Library, preserved package folders and missing references, and a converted library retaining all 171 supplied function bodies (2,334 nodes); external runtime equivalence and redistribution rights remain unverified |
 | 2026-11-02 | Cross-app materials: `.mcmat` portable materials, Send to TextureCraft, input-node preview images (mesh maps from TextureCraft), live re-cooks from TextureCraft through the CLI |
 | 2026-11-02 | Visual function editor, dynamic parameters, presets and groups, 105 more nodes (flood fill, FX-Map, SVG, Text, 3D noises, weathering, material blending), mesh import, browser file I/O, 2D histogram, CLI `--set`, better samples |
 | 2026-11-02 | First day: engine, ~120 nodes, cooking cache, packages, export, the full editor UI, 3D preview, CLI, control channel with synthetic input, MCP server, wasm builds |

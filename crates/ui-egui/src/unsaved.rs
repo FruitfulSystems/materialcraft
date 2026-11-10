@@ -1,61 +1,33 @@
-//! Ask before unsaved work is thrown away.
+//! Ask before unsaved work is thrown away
 //!
-//! Opening a package, closing all, making an empty package, dropping a file on the window and
-//! closing the window or quitting all replace or end the open package. When it has unsaved
-//! changes, those paths ask first (Save / Discard / Cancel). Only these UI paths ask: engine
-//! commands run by the control channel, MCP, the CLI and scripts never open a dialog.
+//! Closing all packages or quitting asks Save / Discard / Cancel for each modified package
+//! Opening or creating another package retains the existing documents without asking
+//! Engine commands run by the control channel, MCP, the CLI and scripts never open a dialog
 //!
 //! The decision is a pure state machine ([`request`], [`answer`], [`after_save`]) over the
 //! serde [`Guarded`] action held in `Windows::unsaved`, so tests and the control channel
-//! (`ui.inspect`) can see it. The glue below runs the held action once it is allowed.
+//! (`ui.inspect`) can see it. The glue below runs the held action once it is allowed
 
 use egui::{Align2, Context, RichText, Window};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
 
-/// An action that would throw the open package's unsaved work away.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Guarded {
-    /// A menu item: `ui.closeAll` or `file.newPackage`.
-    Menu { id: String },
-    /// Open the package at `path` (desktop).
-    OpenPath { path: String },
-    /// Open the package whose bytes wait in `MaterialCraftApp::pending_load` (browser).
-    LoadBytes { name: String },
-    /// Close the window.
-    Quit,
-}
-
-/// What the user picked in the dialog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Choice {
-    Save,
-    Discard,
-    Cancel,
-}
-
-/// What to do after an answer.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Step {
-    /// Run the action now.
-    Run(Guarded),
-    /// Save first, then run the action if the package is no longer modified.
-    Save(Guarded),
-    /// Do nothing.
-    Stop,
-}
+mod choice;
+mod guarded;
+mod step;
+pub use choice::Choice;
+pub use guarded::Guarded;
+pub use step::Step;
 
 /// Does throwing this session away lose work?
 pub fn needs_confirmation(session: &materialcraft_engine::Session) -> bool {
-    session.modified
+    session.open_packages().iter().any(|entry| entry.3)
 }
 
 /// Ask to run `action`. Returns it when it can run now; otherwise holds it in `pending` for the
-/// dialog (an action already waiting is kept) and returns `None`.
+/// dialog (an action already waiting is kept) and returns `None`
 pub fn request(pending: &mut Option<Guarded>, modified: bool, action: Guarded) -> Option<Guarded> {
     if pending.is_some() {
         return None;
@@ -63,13 +35,11 @@ pub fn request(pending: &mut Option<Guarded>, modified: bool, action: Guarded) -
     if !modified {
         return Some(action);
     }
-    if pending.is_none() {
-        *pending = Some(action);
-    }
+    *pending = Some(action);
     None
 }
 
-/// Apply the user's answer to the held action.
+/// Apply the user's answer to the held action
 pub fn answer(pending: &mut Option<Guarded>, choice: Choice) -> Step {
     match (pending.take(), choice) {
         (Some(a), Choice::Discard) => Step::Run(a),
@@ -78,7 +48,7 @@ pub fn answer(pending: &mut Option<Guarded>, choice: Choice) -> Step {
     }
 }
 
-/// After a save attempt, the action may run only when the package really was saved.
+/// After a save attempt, the action may run only when the package really was saved
 pub fn after_save(still_modified: bool, action: Guarded) -> Option<Guarded> {
     (!still_modified).then_some(action)
 }
@@ -88,19 +58,53 @@ pub fn holds_close(modified: bool, confirmed: bool) -> bool {
     modified && !confirmed
 }
 
-/// Run `action`, asking first when the package has unsaved changes.
+/// Run `action`, asking first when the package has unsaved changes
 pub fn guard(app: &mut MaterialCraftApp, action: Guarded) {
+    if app.ui.windows.unsaved.is_some() || app.awaiting_save.is_some() {
+        return;
+    }
+
+    crate::properties::GraphPropertyDraft::commit(app);
+    if let Guarded::Package { document, .. } = &action {
+        if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
+            return;
+        }
+        if let Some(action) = request(&mut app.ui.windows.unsaved, app.session.modified, action) {
+            perform(app, action);
+        }
+        return;
+    }
+
+    if app.ui.windows.unsaved.is_none()
+        && let Some((document, ..)) = app.session.open_packages().into_iter().find(|entry| entry.3)
+    {
+        app.run("package.activate", serde_json::json!({"document": document}));
+    }
     let modified = needs_confirmation(&app.session);
     if let Some(a) = request(&mut app.ui.windows.unsaved, modified, action) {
         perform(app, a);
     }
 }
 
-/// Run an allowed action.
+/// Run an allowed action
 fn perform(app: &mut MaterialCraftApp, action: Guarded) {
     match action {
-        Guarded::Menu { .. } => {
-            app.run("file.newPackage", Value::Null);
+        Guarded::Package { document, reload } => {
+            if app.run("package.activate", serde_json::json!({"document": document})).is_some() {
+                app.run(if reload { "file.reload" } else { "package.close" }, serde_json::json!({"discard": true}));
+            }
+        }
+        action @ (Guarded::Menu { .. } | Guarded::Quit) => {
+            if app.session.modified {
+                app.run("package.close", serde_json::json!({"discard": true}));
+            }
+            if needs_confirmation(&app.session) {
+                guard(app, action);
+            } else if action == Guarded::Quit {
+                app.quit_confirmed = true;
+            } else {
+                app.run("package.closeAll", Value::Null);
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         Guarded::OpenPath { path } => crate::windows::open_path_now(app, &path),
@@ -111,25 +115,41 @@ fn perform(app: &mut MaterialCraftApp, action: Guarded) {
                 crate::web_files::load_now(app, &name, &bytes);
             }
         }
-        Guarded::Quit => app.quit_confirmed = true,
     }
 }
 
-/// Per frame: hold back a window close while there is unsaved work, and finish a confirmed quit.
+/// Per frame: hold back a window close while there is unsaved work, and finish a confirmed quit
 pub fn handle_close(app: &mut MaterialCraftApp, ctx: &Context) {
-    if ctx.input(|i| i.viewport().close_requested()) && holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        guard(app, Guarded::Quit);
+    if ctx.input(|i| i.viewport().close_requested()) && !app.quit_confirmed {
+        // Focused text is still a draft when the OS asks to close the window
+        crate::properties::GraphPropertyDraft::commit(app);
+        // While the Save dialog of a held action is open, the close waits for its answer
+        if app.awaiting_save.is_some() || holds_close(needs_confirmation(&app.session), app.quit_confirmed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            // The prompt is drawn only while the window is visible
+            if ctx.input(|i| i.viewport().minimized) == Some(true) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            guard(app, Guarded::Quit);
+        }
     }
     if app.quit_confirmed {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
-/// The Save / Discard / Cancel dialog, while an action is held.
+/// The Save / Discard / Cancel dialog, while an action is held
 pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
     if app.ui.windows.unsaved.is_none() {
         return;
+    }
+    if let Some(Guarded::Package { document, .. }) = &app.ui.windows.unsaved {
+        let document = *document;
+        if app.run("package.activate", serde_json::json!({"document": document})).is_none() {
+            app.ui.windows.unsaved = None;
+            return;
+        }
     }
     let mut choice = None;
     Window::new(tr("Unsaved changes"))
@@ -160,14 +180,46 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &Context) {
     let Some(choice) = choice else { return };
     match answer(&mut app.ui.windows.unsaved, choice) {
         Step::Run(a) => perform(app, a),
-        Step::Save(a) => {
-            crate::windows::file_action(app, ctx, "file.save");
-            match after_save(needs_confirmation(&app.session), a) {
-                Some(a) => perform(app, a),
-                None => app.pending_load = None,
-            }
-        }
+        Step::Save(a) => save_then(app, ctx, a),
         Step::Stop => app.pending_load = None,
+    }
+}
+
+/// Save first, then run `action` if the package is no longer modified. Without a path to save to,
+/// the action waits for the Save dialog's answer ([`finish_save_dialog`])
+pub(crate) fn save_then(app: &mut MaterialCraftApp, ctx: &Context, action: Guarded) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if !crate::windows::has_local_path(app) {
+            app.awaiting_save = Some(action);
+            crate::native_dialogs::save_before_action(app);
+            return;
+        }
+
+        crate::windows::file_action(app, ctx, "file.save");
+        run_if_saved(app, action);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        crate::web_files::save_then(app, action);
+    }
+}
+
+fn run_if_saved(app: &mut MaterialCraftApp, action: Guarded) {
+    match after_save(app.session.modified, action) {
+        Some(action) => perform(app, action),
+        None => app.pending_load = None,
+    }
+}
+
+/// The Save dialog of a held action has answered: run the action when `saved`, otherwise drop it
+pub(crate) fn finish_save_dialog(app: &mut MaterialCraftApp, saved: bool) {
+    let Some(action) = app.awaiting_save.take() else { return };
+    if saved {
+        run_if_saved(app, action);
+    } else {
+        app.pending_load = None;
     }
 }
 

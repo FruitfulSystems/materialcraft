@@ -290,7 +290,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(&ctx);
     let style = style(ui, &tk);
     let layout = app.ui.dock.workspace.layout.clone();
-    let mut area = DockArea::new(area_id()).input_blocked(ctx.memory(|m| m.top_modal_layer()).is_some());
+    let mut area = DockArea::new(area_id()).input_blocked(crate::shell::modality::Modality::capture(app, &ctx).is_blocked());
     if let Some(panel) = app.ui.dock.raise.take() {
         area = area.raise_panel(panel);
     }
@@ -318,7 +318,7 @@ impl DockContent<Panel> for Panels<'_> {
     fn body(&mut self, ui: &mut Ui, panel: &Panel) {
         let app = &mut *self.app;
         match panel {
-            Panel::Graph => crate::graph_view::show(app, ui),
+            Panel::Graph => crate::graph::show(app, ui),
             Panel::View3d => crate::view3d::show(app, ui),
             Panel::View2d => crate::view2d::show(app, ui),
             _ => {
@@ -373,6 +373,24 @@ mod tests {
         for panel in Panel::ALL {
             assert!(w.layout.contains(&panel) || w.hidden.iter().any(|(p, _)| *p == panel), "{panel:?} is neither shown nor hidden");
         }
+    }
+
+    #[test]
+    fn floating_panels_stop_while_a_dialog_is_open() {
+        let mut app = crate::MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        let ctx = egui::Context::default();
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0)));
+        let frame = |app: &mut crate::MaterialCraftApp| {
+            ctx.run_ui(egui::RawInput { screen_rect, ..Default::default() }, |ui| show(app, ui)).textures_delta.clear();
+            ctx.data(|data| data.get_temp::<bool>(area_id().with("input-blocked")))
+        };
+
+        assert_eq!(frame(&mut app), Some(false));
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        assert_eq!(frame(&mut app), Some(true), "the panels stop on the frame the prompt opens");
+        app.ui.windows.unsaved = None;
+        app.ui.windows.shortcuts = true;
+        assert_eq!(frame(&mut app), Some(false), "the Shortcuts list does not block");
     }
 
     #[test]

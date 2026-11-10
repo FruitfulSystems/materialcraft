@@ -1,33 +1,87 @@
-//! # materialcraft-core
-//!
-//! The MaterialCraft document model, L0 (pure data, no I/O): a [`Package`] holds [`Graph`]s and
-//! [`Resource`]s; a graph holds [`Node`]s (catalog definitions with parameter overrides),
-//! [`Connection`]s between named ports, frames, comments, navigation pins and exposed inputs.
-//! Parameter values are [`Value`]s; function graphs ([`function::FnGraph`]) drive pixel and value
-//! processors.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-pub mod function;
-pub mod graph;
-pub mod package;
-pub mod value;
+mod attributes;
+mod base_parameters;
+mod canvas_annotations;
+mod color;
+mod comment;
+mod component_usage;
+mod connection;
+mod core_error;
+mod curve;
+mod curve_point;
+mod evaluation_environment;
+mod exposed_parameter;
+mod frame;
+mod function_graph;
+mod function_node;
+mod gradient;
+mod gradient_key;
+mod graph;
+mod graph_index;
+mod graph_instance;
+mod graph_kind;
+mod graph_port;
+mod material_channel;
+mod missing_node;
+mod node;
+mod node_id;
+mod output_format;
+mod package;
+mod parameter_inheritance;
+mod pattern_graph;
+mod pattern_node;
+mod pattern_node_kind;
+mod pin;
+pub use canvas_annotations::CanvasAnnotations;
+mod preset;
+mod resource;
+mod resource_bytes;
+mod size_mode;
+mod value;
+mod value_type;
 
-pub use graph::{
-    Attributes, BaseParams, Comment, Connection, ExposedParam, Frame, Graph, GraphKind, MAX_SIZE_LOG2, MIN_SIZE_LOG2, MISSING_NODE, Node, NodeId, OutputFormat,
-    Pin, Preset, SizeMode, missing_ports,
-};
-pub use package::{PACKAGE_EXT, Package, Resource, ResourceBytes};
-pub use value::{Curve, CurvePoint, Gradient, GradientKey, Value, linear_to_srgb, parse_color, srgb_to_linear};
-
-#[derive(Debug, thiserror::Error)]
-pub enum CoreError {
-    #[error("no node {0}")]
-    NoNode(u64),
-    #[error("no graph {0}")]
-    NoGraph(usize),
-    #[error("that connection would make a cycle")]
-    Cycle,
-}
+pub use attributes::Attributes;
+pub use base_parameters::BaseParameters;
+pub use color::{linear_to_srgb, parse_color, srgb_to_linear};
+pub use comment::Comment;
+pub use component_usage::ComponentUsage;
+pub use connection::Connection;
+pub use core_error::CoreError;
+pub use curve::Curve;
+pub use curve_point::CurvePoint;
+pub use evaluation_environment::EvaluationEnvironment;
+pub use exposed_parameter::ExposedParameter;
+pub use frame::Frame;
+pub use function_graph::FunctionGraph;
+pub use function_node::FunctionNode;
+pub use gradient::Gradient;
+pub use gradient_key::GradientKey;
+pub use graph::{Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2};
+pub use graph_index::GraphIndex;
+pub use graph_instance::GraphInstance;
+pub use graph_kind::GraphKind;
+pub use graph_port::GraphPort;
+pub use material_channel::MaterialChannel;
+pub use missing_node::{MISSING_NODE, missing_ports};
+pub use node::Node;
+pub use node_id::NodeId;
+pub use output_format::OutputFormat;
+pub use package::{PACKAGE_EXT, Package};
+pub use parameter_inheritance::ParameterInheritance;
+pub use pattern_graph::PatternGraph;
+pub use pattern_node::PatternNode;
+pub use pattern_node_kind::PatternNodeKind;
+pub use pin::Pin;
+pub use preset::Preset;
+pub use resource::Resource;
+pub use resource_bytes::ResourceBytes;
+pub use size_mode::SizeMode;
+pub use value::Value;
+pub use value_type::ValueType;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+#[cfg(test)]
+mod value_tests;

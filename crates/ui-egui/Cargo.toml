@@ -14,6 +14,7 @@ materialcraft-render = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "persistence"] }
 egui = { workspace = true }
 craft-ui = { workspace = true }
+craft-keymap = { workspace = true, features = ["egui"] }
 egui-phosphor = { version = "0.14", features = ["regular"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -24,7 +25,10 @@ zip = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-locale = "0.3"
-rfd = { workspace = true }
+craft-update = { workspace = true }
+craft-dialogs = { workspace = true }
+craft-quit = { workspace = true, features = ["egui"] }
+craft-window = { workspace = true, features = ["egui"] }
 # Floating panels open as OS windows.
 craft-ui = { workspace = true, features = ["native-windows"] }
 
@@ -40,4 +44,4 @@ web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "H
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 eframe = { workspace = true, features = ["x11"] }
 # Offscreen renders of the real UI (tests/snapshot.rs).
-egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot", "eframe"] }

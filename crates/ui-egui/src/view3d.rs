@@ -1,7 +1,7 @@
-//! The 3D view: the open graph's material on a built-in scene, rendered by
-//! `materialcraft-render` (one ray per pixel at half resolution while the camera moves, 2×2
-//! supersampled when it rests). Left-drag orbits, Alt+drag or middle-drag pans, the wheel zooms,
-//! Shift+drag turns the light and a double-click resets the camera.
+//! The 3D view: assigned material channels on a built-in scene, rendered by
+//! `materialcraft-render` (2×2 rays per pixel at half resolution while the camera moves, 2×2
+//! supersampled at full resolution when it rests). Left-drag orbits, Alt+drag or middle-drag pans,
+//! the wheel zooms, Shift+drag turns the light and a double-click resets the camera.
 //!
 //! The full-quality frame waits until the view's size and the camera have rested for [`SETTLE`]
 //! (a panel, divider or window drag changes the size on every step), then renders on a worker
@@ -27,6 +27,28 @@ use crate::theme::Tokens;
 
 /// Seconds the view's size and the camera rest before the full-quality frame renders.
 pub const SETTLE: f64 = 0.15;
+
+/// What a moving frame is drawn with, smallest first: (fraction of the view's pixels, rays per
+/// pixel along each side). The first is the bare minimum a slow machine falls back to
+const MOVE_LEVELS: [(f32, u32); 4] = [(0.5, 1), (0.5, 2), (0.75, 2), (1.0, 2)];
+/// Milliseconds a moving frame may take before it is drawn smaller
+const MOVE_BUDGET_MS: f32 = 32.0;
+
+/// Rays per pixel times the pixel count, relative to the view: what a level costs
+fn move_cost(level: usize) -> f32 {
+    let (scale, rays) = MOVE_LEVELS[level.min(MOVE_LEVELS.len() - 1)];
+    (scale * rays as f32).powi(2)
+}
+
+/// The level (an index of [`MOVE_LEVELS`]) for the next moving frame, given the level of the last
+/// one and how long it took: lower when over budget, higher when the next level would fit
+fn next_move_level(level: usize, ms: f32) -> usize {
+    let level = level.min(MOVE_LEVELS.len() - 1);
+    if ms > MOVE_BUDGET_MS {
+        return level.saturating_sub(1);
+    }
+    if level + 1 < MOVE_LEVELS.len() && ms * move_cost(level + 1) / move_cost(level) < MOVE_BUDGET_MS * 0.9 { level + 1 } else { level }
+}
 
 /// Triangle budget of the displaced mesh; the browser builds it on the UI thread, so it gets a smaller one.
 const RELIEF_TRIANGLES: usize = if cfg!(target_arch = "wasm32") { 120_000 } else { materialcraft_render::VIEW_TRIANGLES };
@@ -56,6 +78,8 @@ pub struct View3dState {
     /// The last frame shown (RGBA8, for `view.screenshot`).
     pub shown: Option<(u32, u32, Vec<u8>)>,
     show_env: bool,
+    /// Index into [`MOVE_LEVELS`] of the last moving frame
+    move_level: usize,
 }
 
 impl View3dState {
@@ -88,12 +112,8 @@ impl Drop for Job {
     }
 }
 
-/// A displaced scene building on a worker thread (`None` arrives when nothing moves).
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-struct ReliefJob {
-    key: u64,
-    rx: Receiver<Option<Arc<Scene>>>,
-}
+mod relief_job;
+use relief_job::ReliefJob;
 
 pub fn scene_label(app: &MaterialCraftApp) -> String {
     let id = &app.session.view3d.scene;
@@ -109,6 +129,25 @@ fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     egui::Frame::NONE.fill(tk.panel).inner_margin(egui::Margin::symmetric(4, 1)).show(ui, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button(tr("Material"), |ui| {
+                let sources = app.session.material_preview.sources(&app.session.pkg);
+                for channel in materialcraft_engine::core::MaterialChannel::ALL {
+                    let source = sources.get(&channel);
+                    let label = source
+                        .and_then(|source| {
+                            let graph = app.session.pkg.graphs.get(source.graph)?;
+                            let node = graph.node(source.node).ok()?;
+                            Some(format!("{} / {}", graph.name, crate::graph::node_label(node)))
+                        })
+                        .unwrap_or_else(|| tr("Unassigned").to_string());
+                    ui.label(format!("{}: {label}", tr(channel.label())));
+                }
+                ui.separator();
+                if ui.button(tr("Clear material assignments")).clicked() {
+                    app.run("view.3d.clear", json!({}));
+                    ui.close();
+                }
+            });
             ui.menu_button(tr("Scene"), |ui| {
                 for (id, label) in SCENES {
                     if ui.selectable_label(app.session.view3d.scene == *id, tr(label)).clicked() {
@@ -157,7 +196,7 @@ fn menus(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 }
             });
             ui.menu_button(tr("Display"), |ui| {
-                crate::view2d::resolution_menu(app, ui);
+                crate::preview_resolution::show(app, ui);
                 ui.separator();
                 let mut flip = app.session.view3d.normal_y_flip;
                 if ui.checkbox(&mut flip, tr("Flip normal map Y (DirectX)")).changed() {
@@ -199,7 +238,14 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let avail = ui.available_size();
     let (rect, resp) = ui.allocate_exact_size(vec2(avail.x, (avail.y - 22.0).max(40.0)), Sense::click_and_drag());
     crate::widgets::name(&resp, egui::Role::Image, "3D view");
-    // Camera gestures.
+    let graph_hover = resp.dnd_hover_payload::<crate::graph_drag_payload::GraphDragPayload>().is_some();
+    if let Some(graph) = crate::widgets::dnd_release::<crate::graph_drag_payload::GraphDragPayload>(&resp)
+        && (graph.document == app.session.document_id || app.run("package.activate", json!({"document": graph.document})).is_some())
+    {
+        app.run("view.3d.outputs", json!({"graph": graph.name}));
+    }
+
+    // Camera gestures
     let mut moving = false;
     if resp.dragged() {
         let d = resp.drag_delta();
@@ -244,7 +290,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         p.text(
             rect.center_top() + vec2(0.0, 18.0),
             egui::Align2::CENTER_TOP,
-            tr("Add Output nodes with usages (base color, normal, ...) to see the material"),
+            tr("Assign an image with View in 3D view, or connect Output nodes with material usages"),
             egui::FontId::proportional(11.0),
             tk.viewport_text,
         );
@@ -256,7 +302,18 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         egui::FontId::proportional(10.5),
         tk.viewport_text,
     );
-    // Bottom bar.
+    if graph_hover {
+        p.rect_stroke(rect.shrink(2.0), 4.0, egui::Stroke::new(2.0, tk.accent), egui::StrokeKind::Inside);
+        p.text(
+            rect.center_top() + vec2(0.0, 38.0),
+            egui::Align2::CENTER_TOP,
+            tr("Drop to apply graph outputs"),
+            egui::FontId::proportional(13.0),
+            tk.viewport_text,
+        );
+    }
+
+    // Bottom bar
     let bar = Rect::from_min_size(pos2(rect.left(), rect.bottom()), vec2(rect.width(), 22.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(bar), |ui| {
         ui.painter().rect_filled(bar, 0.0, tk.panel);
@@ -309,11 +366,7 @@ fn content_key(app: &MaterialCraftApp, w: u32, h: u32, show_env: bool, relief_sh
     for f in [v.yaw, v.pitch, v.distance, v.target[0], v.target[1], v.target[2], v.tiling, v.exposure, v.env_rotation, v.height_scale, v.height_level] {
         f.to_bits().hash(&mut hs);
     }
-    if let Ok(g) = app.session.graph() {
-        for (id, usage, _, _) in materialcraft_engine::eval::outputs(g, &app.session.cooked) {
-            (usage, app.session.cooked.nodes.get(&id).map(|r| r.key)).hash(&mut hs);
-        }
-    }
+    app.session.material_key().hash(&mut hs);
     hs.finish()
 }
 
@@ -334,8 +387,11 @@ fn render(app: &mut MaterialCraftApp, ctx: &egui::Context, rect: Rect, moving: b
     }
     let ppp = ctx.pixels_per_point();
     if moving {
-        // One ray per pixel at half resolution, here: the camera follows the pointer.
-        if let Some(frame) = render_now(app, rect, ppp * 0.5, 1) {
+        // As large as keeps the camera following the pointer, with 2×2 rays so edges are not stair-stepped
+        let level = app.view3d.move_level.min(MOVE_LEVELS.len() - 1);
+        let (scale, rays) = MOVE_LEVELS[level];
+        if let Some(frame) = render_now(app, rect, ppp * scale, rays) {
+            app.view3d.move_level = next_move_level(level, frame.ms);
             show_frame(app, ctx, frame, key, false, size);
         }
         ctx.request_repaint_after(Duration::from_secs_f64(SETTLE));
@@ -398,9 +454,9 @@ fn relief_key(app: &MaterialCraftApp, scene_key: &str, maps: &Maps) -> Option<u6
         return None;
     }
 
-    let graph = app.session.graph().ok()?;
-    let height_output = materialcraft_engine::eval::outputs(graph, &app.session.cooked).into_iter().find(|(_, usage, _, _)| *usage == "height");
-    let height_cook = height_output.and_then(|(id, _, _, _)| app.session.cooked.nodes.get(&id).map(|r| r.key));
+    let sources = app.session.material_preview.sources(&app.session.pkg);
+    let height_source = sources.get(&materialcraft_engine::core::MaterialChannel::Height)?;
+    let height_cook = app.session.material_source_key(height_source);
 
     let mut hasher = DefaultHasher::new();
     (scene_key, height_cook, maps.normal.is_some()).hash(&mut hasher);
@@ -565,6 +621,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn relief_tracks_assigned_height_while_another_graph_is_open() {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
+        app.session.preview_size = Some(16);
+        app.session.cook();
+        let (scene_key, _) = base_scene(&mut app);
+        let original = relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())).unwrap();
+        app.session.pkg.graphs.push(materialcraft_engine::core::Graph::new("Other"));
+        app.session.graph = 1;
+        app.session.cook();
+        assert_eq!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+        app.session.pkg.graphs[0].seed += 1;
+        app.session.cook();
+        assert_ne!(relief_key(&app, &scene_key, &Maps::from_usages(app.session.material_maps())), Some(original));
+    }
+
+    #[test]
     fn changing_relief_keeps_one_worker_and_discards_stale_geometry() {
         let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::UiState::default());
         app.session.cook();
@@ -600,5 +672,22 @@ mod tests {
         assert_eq!((r.width(), r.height(), r.center()), (300.0, 200.0, rect.center()));
         // A degenerate size never divides by zero.
         assert_eq!(frame_rect(rect, Some((300, 0))), rect);
+    }
+}
+
+#[cfg(test)]
+mod move_level_tests {
+    use super::*;
+
+    #[test]
+    fn the_moving_frame_grows_when_cheap_and_shrinks_when_slow() {
+        assert_eq!(next_move_level(0, 3.5), 1, "one ray at half size in 3.5 ms leaves room for 2×2 rays");
+        assert_eq!(next_move_level(1, 11.0), 2, "2×2 at half size in 11 ms leaves room for three quarters");
+        assert_eq!(next_move_level(2, 25.0), 2, "full size would take about 44 ms");
+        assert_eq!(next_move_level(2, 3.0), 3);
+        assert_eq!(next_move_level(3, 20.0), 3, "the largest level stays");
+        assert_eq!(next_move_level(3, 80.0), 2);
+        assert_eq!(next_move_level(0, 500.0), 0, "a very slow machine stays at one ray at half size");
+        assert_eq!(next_move_level(9, 5.0), 3, "a stale level is clamped");
     }
 }

@@ -13,9 +13,10 @@ pub fn main_toolbar(app: &mut MaterialCraftApp, ui: &mut Ui) {
     egui::Panel::top("main_toolbar").exact_size(30.0).frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(6, 2))).show(ui, |ui| {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let (u, r) = (app.session.can_undo(), app.session.can_redo());
+            let (u, r) = (crate::menus::enabled(app, "edit.undo"), crate::menus::enabled(app, "edit.redo"));
+            let modality = crate::shell::modality::Modality::capture(app, &ctx);
             let mut b = |ui: &mut Ui, ic: &str, tip: &str, id: &str, on: bool| {
-                let r = ui.add_enabled_ui(on, |ui| crate::widgets::icon_button(ui, ic, tip, false, 24.0)).inner;
+                let r = ui.add_enabled_ui(on && modality.allows(id), |ui| crate::widgets::icon_button(ui, ic, tip, false, 24.0)).inner;
                 if r.clicked() {
                     crate::menus::invoke(app, &ctx, id);
                 }
@@ -66,4 +67,52 @@ pub fn status_bar(app: &mut MaterialCraftApp, ui: &mut Ui) {
             });
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::kittest::{By, NodeT, Queryable};
+
+    use crate::{MaterialCraftApp, state::UiState};
+
+    fn harness(block: impl FnOnce(&mut MaterialCraftApp)) -> egui_kittest::Harness<'static, MaterialCraftApp> {
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::sample_session(), UiState::default());
+        block(&mut app);
+        let mut fonts_installed = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 100.0)).build_ui_state(
+            move |ui, app: &mut MaterialCraftApp| {
+                if std::mem::replace(&mut fonts_installed, true) {
+                    super::main_toolbar(app, ui);
+                } else {
+                    crate::theme::install(ui.ctx());
+                }
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness
+    }
+
+    // Each button's position in the toolbar. The labels change with the UI language.
+    const NEW_GRAPH: usize = 0;
+    const OPEN: usize = 1;
+    const SAVE: usize = 2;
+    const EXPORT: usize = 5;
+
+    fn off(harness: &egui_kittest::Harness<'static, MaterialCraftApp>, button: usize) -> bool {
+        harness.get_all(By::new().role(egui::accesskit::Role::Button)).nth(button).expect("the toolbar has this button").accesskit_node().is_disabled()
+    }
+
+    #[test]
+    fn toolbar_buttons_match_the_commands_a_blocker_allows() {
+        let free = harness(|_| {});
+        assert!(!off(&free, NEW_GRAPH) && !off(&free, OPEN) && !off(&free, SAVE) && !off(&free, EXPORT));
+
+        let dialog = harness(|app| app.ui.windows.about = true);
+        assert!(off(&dialog, NEW_GRAPH) && off(&dialog, OPEN) && off(&dialog, SAVE) && off(&dialog, EXPORT));
+
+        let file_dialog = harness(|app| app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage));
+        assert!(!off(&file_dialog, OPEN), "a file dialog leaves Open enabled, which brings it forward");
+        assert!(off(&file_dialog, SAVE));
+    }
 }

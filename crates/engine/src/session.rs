@@ -9,10 +9,8 @@ use materialcraft_eval::{Cache, Cooked, Options};
 use materialcraft_image::Image;
 use serde::{Deserialize, Serialize};
 
-use crate::{EngineError, Result};
-
-/// Undo keeps this many steps.
-const MAX_UNDO: usize = 200;
+use crate::snapshot::Snapshot;
+use crate::{AnnotationSelection, Clip, EngineError, Result};
 
 /// The 3D view's scene and look.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -32,11 +30,9 @@ pub struct View3d {
     pub environment: String,
     pub env_rotation: f32,
     pub exposure: f32,
-    /// How far the height output raises the surface (white above black), in mesh radii; 0 = off.
+    /// Height relief in mesh radii
     pub height_scale: f32,
-    /// The height (0..1) that stays on the surface: 0 = the relief rises out of the mesh, 0.5 = centered on it.
     pub height_level: f32,
-    /// Flip green when reading DirectX normal maps; false matches the Normal node's OpenGL default.
     pub normal_y_flip: bool,
     pub show_axis: bool,
     pub show_grid: bool,
@@ -116,91 +112,123 @@ pub struct View2d {
     pub histogram: bool,
 }
 
-#[derive(Clone)]
-struct Snapshot {
-    pkg: Package,
-    graph: usize,
-    selection: Vec<NodeId>,
-    label: String,
-    modified: bool,
-    dirty: bool,
-    cook_epoch: u64,
-}
-
-/// Nodes and connections copied to the clipboard (as JSON, so other sessions can paste them).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Clip {
-    pub nodes: Vec<materialcraft_core::Node>,
-    pub connections: Vec<materialcraft_core::Connection>,
-}
-
 /// The prefix of warning lines in [`Session::log`].
 pub const WARNING_PREFIX: &str = "Warning: ";
 
 pub struct Session {
+    pub environment: materialcraft_core::EvaluationEnvironment,
+    pub document_id: u64,
+    /// False after closing the last document; `pkg` then holds only cleared storage.
+    pub(crate) document_open: bool,
+    pub(crate) next_document_id: u64,
+    pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
+    pub(crate) linked_sources: std::collections::BTreeMap<String, Arc<Package>>,
+    /// Snapshots inserted by the library, excluding explicitly supplied dependencies
+    pub(crate) library_sources: std::collections::BTreeMap<String, Arc<Package>>,
     pub pkg: Package,
     /// Where the package was opened from or last saved to.
     pub path: Option<String>,
     /// Index of the graph being edited.
     pub graph: usize,
     pub selection: Vec<NodeId>,
+    pub annotation_selection: Option<AnnotationSelection>,
+    pub annotation_target: crate::AnnotationTarget,
     pub view2d: View2d,
     pub view3d: View3d,
+    pub material_preview: crate::MaterialPreview,
+    pub(crate) cooked_graph: Option<usize>,
+    pub(crate) material_cooked: std::collections::BTreeMap<usize, Cooked>,
     /// Cap on node output size while editing (`None` = full size).
     pub preview_size: Option<u32>,
     /// 3D view camera preferences (set with [`Session::set_camera_prefs`]).
     pub camera: CameraPrefs,
+    pub history_prefs: crate::HistoryPrefs,
     pub modified: bool,
     pub log: Vec<String>,
     /// What the last opened SBS package held that MaterialCraft couldn't read; empty after a clean open.
     pub load_warnings: Vec<String>,
     pub clipboard: Option<Clip>,
+    pub embedded_clipboard: Option<crate::EmbeddedClipboard>,
+    pub explorer_clipboard: Option<crate::ExplorerClipboard>,
     /// The last cook of the open graph.
     pub cooked: Cooked,
     /// Set when the graph changed and needs cooking.
     pub dirty: bool,
-    /// Bumped by every synchronous [`Session::cook`]; a background cook that started before the
-    /// bump holds stale results and must not replace `cooked`.
+    /// Synchronous cooks invalidate older worker results
     pub cook_epoch: u64,
     /// Cooked node outputs, shared with background cooks.
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
-    /// Edits with the same key coalesce into one undo step (slider drags).
-    merge_key: Option<String>,
-    /// Snapshot and successful-edit flag for the current command group.
+    /// The node library loaded from the SBS library folder
+    pub library: Arc<crate::node_library::NodeLibrary>,
+    pub(crate) history: crate::document_history::DocumentHistory,
     group: Option<(Snapshot, bool)>,
     decoded: Arc<Mutex<HashMap<(u64, bool), Image>>>,
 }
 
 impl Session {
+    /// Open a package with the process's installed node library.
     pub fn new(pkg: Package) -> Session {
-        Session {
+        Self::with_library(pkg, crate::node_library::NodeLibrary::shared())
+    }
+
+    /// Open a package with an explicit library, preserving dependencies supplied by the caller.
+    pub fn with_library(mut pkg: Package, library: Arc<crate::NodeLibrary>) -> Session {
+        let mut library_sources = std::collections::BTreeMap::new();
+        for (path, package) in &library.packages {
+            if let std::collections::btree_map::Entry::Vacant(entry) = pkg.dependencies.entry(path.clone()) {
+                entry.insert(package.clone());
+                library_sources.insert(path.clone(), package.clone());
+            }
+        }
+        let mut session = Session {
+            environment: Default::default(),
+            document_id: 0,
+            document_open: true,
+            next_document_id: 1,
+            documents: std::collections::BTreeMap::new(),
+            linked_sources: pkg.dependencies.clone(),
+            library_sources,
+            material_preview: crate::MaterialPreview::for_graph(&pkg, 0),
+            cooked_graph: None,
+            material_cooked: std::collections::BTreeMap::new(),
             pkg,
             path: None,
             graph: 0,
             selection: Vec::new(),
+            annotation_selection: None,
+            annotation_target: Default::default(),
             view2d: View2d { channel: "rgba".into(), ..View2d::default() },
             view3d: View3d::default(),
             preview_size: Some(512),
             camera: CameraPrefs::default(),
+            history_prefs: crate::HistoryPrefs::default(),
             modified: false,
             log: Vec::new(),
             load_warnings: Vec::new(),
             clipboard: None,
+            embedded_clipboard: None,
+            explorer_clipboard: None,
             cooked: Cooked::default(),
             dirty: true,
             cook_epoch: 0,
             cache: Arc::new(Mutex::new(Cache::default())),
             custom_mesh: None,
-            undo: Vec::new(),
-            redo: Vec::new(),
-            merge_key: None,
+            library: Default::default(),
+            history: Default::default(),
             group: None,
             decoded: Arc::new(Mutex::new(HashMap::new())),
+        };
+        session.refresh_links();
+        for warning in &library.warnings {
+            session.warn(warning.clone());
         }
+        if !library.packages.contains_key(crate::function_library::STANDARD_PACKAGE) {
+            session.warn(format!("Missing function library: {} did not load", crate::function_library::STANDARD_PACKAGE));
+        }
+        session.library = library;
+        session
     }
 
     /// The graph being edited.
@@ -217,6 +245,9 @@ impl Session {
             pkg: self.pkg.clone(),
             graph: self.graph,
             selection: self.selection.clone(),
+            annotation_selection: self.annotation_selection,
+            annotation_target: self.annotation_target.clone(),
+            material_preview: self.material_preview.clone(),
             label: label.into(),
             modified: self.modified,
             dirty: self.dirty,
@@ -226,64 +257,40 @@ impl Session {
 
     /// Run `f` as one undoable step. On error the session is restored.
     pub fn edit<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        self.merge_key = None;
-        self.edit_inner(label, f)
+        self.finish_edit();
+        self.edit_inner(label, None, f)
     }
 
     /// Like [`Session::edit`], but consecutive edits with the same `key` (dragging one slider)
     /// make a single undo step.
     pub fn edit_merged<T>(&mut self, key: &str, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        if self.group.is_some() {
-            return self.edit_inner(label, f);
-        }
-        if self.merge_key.as_deref() == Some(key) && !self.undo.is_empty() {
-            // The merged step keeps its original snapshot; restore the session if `f` fails.
-            let snap = self.snapshot(label);
-            let r = f(self);
-            match &r {
-                Ok(_) => self.changed(),
-                Err(_) => self.restore(snap),
-            }
-            return r;
-        }
-        let r = self.edit_inner(label, f);
-        if r.is_ok() {
-            self.merge_key = Some(key.into());
-        }
-        r
+        self.edit_inner(label, Some(key), f)
     }
 
-    /// End the current coalescing run: the next [`Session::edit_merged`] starts a new undo step.
-    /// Call it when a gesture ends (pointer release) and once per control or MCP request.
-    pub fn end_merge(&mut self) {
-        self.merge_key = None;
+    /// End the current gesture without adding an undo step
+    pub fn finish_edit(&mut self) {
+        self.history.finish_edit();
+        for document in self.documents.values_mut() {
+            document.history.finish_edit();
+        }
     }
 
-    /// Start grouping: every edit until [`Session::end_group`] becomes one undo entry labelled
-    /// `label` (a gesture that runs several commands, such as rewiring a link). Nothing is
-    /// recorded if no edit ran. A group started inside a group is ignored.
     pub fn begin_group(&mut self, label: &str) {
         if self.group.is_none() {
-            self.merge_key = None;
+            self.finish_edit();
             self.group = Some((self.snapshot(label), false));
         }
     }
 
-    /// Close the group opened by [`Session::begin_group`], recording one undo entry if any edit ran.
     pub fn end_group(&mut self) {
         if let Some((snap, edited)) = self.group.take()
             && edited
         {
-            self.undo.push(snap);
-            if self.undo.len() > MAX_UNDO {
-                self.undo.remove(0);
-            }
-            self.redo.clear();
+            self.history.record(snap, None, self.history_prefs.undo_limit as usize);
+            self.refresh_links();
         }
     }
 
-    /// Run `f` as one undo entry, however many edits it makes. On error everything `f` did is
-    /// undone and nothing is recorded.
     pub fn group<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
         if self.group.is_some() {
             let snap = self.snapshot(label);
@@ -310,37 +317,25 @@ impl Session {
         r
     }
 
-    fn edit_inner<T>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
-        let snap = self.snapshot(label);
-        if self.group.is_some() {
-            // Only successful edits make the group an undo entry.
-            return match f(self) {
-                Ok(v) => {
-                    if let Some((_, edited)) = self.group.as_mut() {
-                        *edited = true;
-                    }
-                    self.changed();
-                    Ok(v)
-                }
-                Err(e) => {
-                    self.restore(snap);
-                    Err(e)
-                }
-            };
+    fn edit_inner<T>(&mut self, label: &str, key: Option<&str>, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+        if !self.has_package() {
+            return Err(crate::commands::bad("edit", "no package is open"));
         }
+
+        let snapshot = self.snapshot(label);
         match f(self) {
-            Ok(v) => {
-                self.undo.push(snap);
-                if self.undo.len() > MAX_UNDO {
-                    self.undo.remove(0);
+            Ok(value) => {
+                if let Some((_, edited)) = self.group.as_mut() {
+                    *edited = true;
+                } else {
+                    self.history.record(snapshot, key, self.history_prefs.undo_limit as usize);
                 }
-                self.redo.clear();
                 self.changed();
-                Ok(v)
+                Ok(value)
             }
-            Err(e) => {
-                self.restore(snap);
-                Err(e)
+            Err(error) => {
+                self.restore(snapshot);
+                Err(error)
             }
         }
     }
@@ -349,66 +344,86 @@ impl Session {
         self.pkg = s.pkg;
         self.graph = s.graph.min(self.pkg.graphs.len().saturating_sub(1));
         self.selection = s.selection;
+        self.annotation_selection = s.annotation_selection;
+        self.annotation_target = s.annotation_target;
+        self.material_preview = s.material_preview;
         self.modified = s.modified;
         self.dirty = s.dirty || self.cook_epoch != s.cook_epoch;
+        if self.cook_epoch != s.cook_epoch {
+            self.clear_preview_results();
+        }
     }
 
     /// Mark the document modified and in need of a cook.
     pub fn changed(&mut self) {
         self.modified = true;
         self.dirty = true;
+        // Publish a grouped edit only after it succeeds, so rollback cannot dirty other packages
+        if self.group.is_none() {
+            self.refresh_links();
+        }
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        self.history.can_undo()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        self.history.can_redo()
     }
 
     /// Labels of the undo stack, oldest first.
     pub fn history(&self) -> Vec<String> {
-        self.undo.iter().map(|s| s.label.clone()).collect()
+        self.history.labels()
     }
 
     pub fn undo(&mut self) -> Option<String> {
         self.end_group();
-        let s = self.undo.pop()?;
+        if !self.can_undo() {
+            return None;
+        }
+
+        let s = self.history.undo(self.snapshot(""), self.history_prefs.undo_limit as usize)?;
         let label = s.label.clone();
-        let cur = self.snapshot(&label);
-        self.redo.push(cur);
         self.restore(s);
-        self.merge_key = None;
-        self.changed();
+        self.finish_edit();
+        self.dirty = true;
+        self.refresh_links();
         Some(label)
     }
 
     pub fn redo(&mut self) -> Option<String> {
         self.end_group();
-        let s = self.redo.pop()?;
+        if !self.can_redo() {
+            return None;
+        }
+
+        let s = self.history.redo(self.snapshot(""), self.history_prefs.undo_limit as usize)?;
         let label = s.label.clone();
-        let cur = self.snapshot(&label);
-        self.undo.push(cur);
         self.restore(s);
-        self.merge_key = None;
-        self.changed();
+        self.finish_edit();
+        self.dirty = true;
+        self.refresh_links();
         Some(label)
     }
 
     /// Forget undo history (after opening a package).
     pub fn reset_history(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-        self.merge_key = None;
+        self.history.clear();
         self.group = None;
     }
 
     /// A decoder for the package's bitmap resources (memoized, shareable with worker threads).
     pub fn resource_decoder(&self) -> impl Fn(&str) -> Option<Image> + Sync + Send + 'static {
-        let res: Vec<(String, ResourceBytes)> = self.pkg.resources.iter().map(|r| (r.name.clone(), r.bytes.clone())).collect();
+        let mut res: Vec<(String, ResourceBytes)> = self.pkg.resources.iter().map(|r| (r.name.clone(), r.bytes.clone())).collect();
+        res.extend(
+            self.pkg
+                .dependencies
+                .iter()
+                .flat_map(|(file, package)| package.resources.iter().map(move |resource| (format!("{file}\0{}", resource.name), resource.bytes.clone()))),
+        );
         let memo = self.decoded.clone();
-        // Free images of resources that were deleted or replaced.
+        // Release decoded images of deleted or replaced resources
         memo.lock().unwrap_or_else(PoisonError::into_inner).retain(|(k, _), _| res.iter().any(|(_, b)| b.content_hash() == *k));
         move |requested: &str| {
             let (name, linear) = materialcraft_image::split_resource_key(requested);
@@ -432,17 +447,30 @@ impl Session {
     pub fn cook(&mut self) -> &Cooked {
         let dec = self.resource_decoder();
         let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         opts.max_size = self.preview_size;
-        self.cooked = materialcraft_eval::cook(&self.pkg, self.graph, &opts, &self.cache);
+        let cooked = crate::PreviewCook::run(&self.pkg, self.graph, &self.material_preview.graphs(), &opts, &self.cache);
+        self.accept_preview(cooked);
         self.dirty = false;
         self.cook_epoch = self.cook_epoch.wrapping_add(1);
         &self.cooked
     }
 
+    /// Publish a completed editor and material cook together
+    pub fn accept_preview(&mut self, result: crate::PreviewCook) {
+        if result.graph != self.graph || result.cancelled() {
+            return;
+        }
+        self.cooked_graph = Some(result.graph);
+        self.cooked = result.cooked;
+        self.material_cooked = result.materials;
+    }
+
     /// Cook graph `gi` at full size, without touching the preview results.
     pub fn cook_full(&self, gi: usize) -> Cooked {
         let dec = self.resource_decoder();
-        let opts = Options::new(&dec);
+        let mut opts = Options::new(&dec);
+        opts.environment = self.environment;
         materialcraft_eval::cook(&self.pkg, gi, &opts, &self.cache)
     }
 
@@ -471,12 +499,6 @@ impl Session {
     pub fn set_camera_prefs(&mut self, prefs: CameraPrefs) {
         self.camera = prefs.sanitized();
         self.view3d.target = self.camera.clamp_target(self.view3d.target);
-    }
-
-    /// The open graph's material channels for the 3D view: usage id → image.
-    pub fn material_maps(&self) -> Vec<(&'static str, &Image)> {
-        let Ok(g) = self.graph() else { return Vec::new() };
-        materialcraft_eval::outputs(g, &self.cooked).into_iter().filter_map(|(_, usage, _, img)| Some((usage, img?))).collect()
     }
 
     /// Show a mesh file in the 3D view (OBJ, glTF, GLB).
