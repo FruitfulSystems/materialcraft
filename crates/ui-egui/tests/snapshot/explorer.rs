@@ -156,6 +156,13 @@ fn explorer_resources_drag_into_the_graph() {
         harness.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
         settle(&mut harness, 8);
 
+        // A drop starts an asynchronous cook; other GPU tests may still be using the worker pool
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while (harness.state().cooker.busy() || harness.state().session.dirty) && std::time::Instant::now() < deadline {
+            settle(&mut harness, 1);
+        }
+        assert!(!harness.state().cooker.busy() && !harness.state().session.dirty, "the resource preview cook must complete");
+
         let session = &harness.state().session;
         assert_eq!(session.document_id, document);
         let graph = session.graph().unwrap();

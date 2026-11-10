@@ -7,6 +7,8 @@ mod context_menu;
 pub(crate) mod frame_hit;
 #[cfg(test)]
 mod frames;
+#[cfg(test)]
+mod function_search_tests;
 mod graph_camera;
 mod graph_drag;
 pub(crate) mod graph_parent;

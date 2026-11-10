@@ -80,7 +80,8 @@ fn bottom_library_drags_functions_into_function_and_processor_canvases() {
 
         harness.state_mut().ui.library_search = "MissingFunction".into();
         settle(&mut harness, 3);
-        drag(&mut harness, "MissingFunction", vec2(160.0, 180.0));
+        // The canvas sits under the two toolbar rows; drop above its lower edge
+        drag(&mut harness, "MissingFunction", vec2(160.0, 110.0));
 
         let missing = target
             .current(&harness.state().session)

@@ -9,7 +9,15 @@ pub(super) fn open_search(app: &mut MaterialCraftApp, ctx: &egui::Context, at: P
     if crate::shell::modality::Modality::capture(app, ctx).is_blocked() {
         return;
     }
-    app.graph.search = Some(NodeSearch { at, text: String::new(), sel: 0, connect, focus: true });
+    app.graph.search = Some(NodeSearch { at, text: String::new(), sel: 0, connect, connect_to: None, focus: true });
+}
+
+/// The search for a node whose output feeds input `to` (a wire dragged off it onto empty canvas)
+pub(super) fn open_search_to(app: &mut MaterialCraftApp, ctx: &egui::Context, at: Pos2, to: (NodeId, String)) {
+    open_search(app, ctx, at, None);
+    if let Some(search) = app.graph.search.as_mut() {
+        search.connect_to = Some(to);
+    }
 }
 
 /// Catalog entries matching `text` (label or id contains every word)
@@ -58,7 +66,11 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
                     reveal_selection = true;
                 }
             });
-            let list = matches(&s.text);
+            // Feeding an input needs a node with an output
+            let mut list = matches(&s.text);
+            if s.connect_to.is_some() {
+                list.retain(|definition| !definition.outputs.is_empty());
+            }
             let (up, down, enter, esc) = ui.input(|i| {
                 let pressed = |key| !blocked && i.key_pressed(key);
                 (pressed(egui::Key::ArrowUp), pressed(egui::Key::ArrowDown), pressed(egui::Key::Enter), pressed(egui::Key::Escape))
@@ -105,7 +117,12 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
             if let Some((n, port)) = s.connect {
                 p["connectFrom"] = json!({"node": n.0, "port": port});
             }
-            app.run("graph.node.add", p);
+            let added = app.run("graph.node.add", p).and_then(|result| result.get("id").and_then(serde_json::Value::as_u64)).map(NodeId);
+            if let (Some(id), Some((to, port))) = (added, s.connect_to)
+                && let Some(output) = app.session.output_ports(id).first().cloned()
+            {
+                app.run("graph.connect", json!({"from": id.0, "fromPort": output, "to": to.0, "toPort": port}));
+            }
         }
     } else if close || clicked_out {
         app.graph.search = None;

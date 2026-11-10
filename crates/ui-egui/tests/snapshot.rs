@@ -22,6 +22,9 @@ mod library;
 #[path = "snapshot/menu.rs"]
 mod menu;
 
+#[path = "snapshot/node_search.rs"]
+mod node_search;
+
 use std::time::Duration;
 
 use egui::vec2;
