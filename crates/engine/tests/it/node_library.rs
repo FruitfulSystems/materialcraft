@@ -16,11 +16,14 @@ fn the_library_tree_lists_categories_and_filters_entries() {
     let names: Vec<_> = tree["categories"].as_array().unwrap().iter().map(|category| category["name"].as_str().unwrap()).collect();
     assert_eq!(names[..4], ["Graph items", "Atomic nodes", "FxMap nodes", "Function nodes"]);
     assert!(names.contains(&"MCF functions") && !names.contains(&"SDF functions"));
-    assert_eq!(tree["layouts"], json!(["sbs://all_nodes.sbs"]));
+    assert_eq!(tree["layouts"], json!([]));
 
-    let noises = entries(&mut session, json!({"category": "Texture generators/Noises"}));
-    assert_eq!(noises.len(), 89);
-    assert!(noises.iter().all(|entry| entry["missing"].is_string()));
+    let constants = entries(&mut session, json!({"category": "Functions/Constant"}));
+    assert!(constants.iter().any(|entry| entry["label"] == "Pi"));
+    let functions = entries(&mut session, json!({"category": "Functions"}));
+    assert_eq!(functions.len(), 171, "every bundled function, across the sub-categories");
+    assert!(entries(&mut session, json!({})).iter().all(|entry| entry["missing"].is_null()));
+    assert!(entries(&mut session, json!({"category": "Texture generators"})).is_empty());
 
     let functions = entries(&mut session, json!({"canvas": "function", "filter": "pi"}));
     assert!(functions.iter().any(|entry| entry["id"] == "sbs://functions.sbs#Functions/Math/Pi" && entry["type"] == "functionInstance"));
@@ -46,9 +49,6 @@ fn library_entries_add_to_the_graph_they_fit() {
         assert_eq!(count(&session), previous + 1, "{entry}");
     }
 
-    // Library nodes MaterialCraft lacks are listed but refuse to add, naming what they need
-    let error = execute(&mut session, "library.add", &json!({"entry": "sbs://3d_perlin_noise.sbs#3D_perlin_noise"})).unwrap_err().to_string();
-    assert!(error.contains("3d_perlin_noise.sbs"), "{error}");
     assert!(execute(&mut session, "library.add", &json!({"entry": "nothing"})).is_err());
     assert!(execute(&mut session, "library.add", &json!({})).is_err());
     // Function entries need a Function canvas
@@ -75,8 +75,8 @@ fn library_entries_add_to_the_graph_they_fit() {
 fn reloading_the_library_keeps_open_work_unmodified() {
     let mut session = new_session();
     let reloaded = execute(&mut session, "library.reload", &json!({})).unwrap();
-    assert!(reloaded["entries"].as_u64().unwrap() > 500);
-    assert!(reloaded["available"].as_u64().unwrap() > 200);
+    assert!(reloaded["entries"].as_u64().unwrap() > 250);
+    assert_eq!(reloaded["available"], reloaded["entries"]);
     assert!(!session.modified);
     assert!(session.pkg.dependencies.contains_key("sbs://functions.sbs"));
 }

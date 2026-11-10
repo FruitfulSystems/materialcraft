@@ -28,15 +28,29 @@ fn identifiers_read_as_labels() {
 }
 
 #[test]
-fn the_bundled_library_fills_every_category_of_the_tree() {
+fn functions_sort_into_sub_categories_by_folder_and_name() {
+    assert_eq!(function_category("Functions/Math/Pi"), "Functions/Constant");
+    assert_eq!(function_category("Functions/Math/Equality_Float2"), "Functions/Comparison");
+    assert_eq!(function_category("Functions/Math/Parity/EvenCount"), "Functions/Parity");
+    assert_eq!(function_category("Functions/Math/Trigo/acos"), "Functions/Maths");
+    assert_eq!(function_category("Functions/Math/Trigo/deg_to_rad"), "Functions/Conversion");
+    assert_eq!(function_category("Functions/easings/sine/ease_in_sine"), "Functions/Easings");
+    assert_eq!(function_category("Functions/switch/Float2/switch_float2_4_inputs"), "Functions/Various");
+    assert_eq!(function_category("Functions/Tonemappers/tonemap_ACES"), "Functions/Color");
+    assert_eq!(function_category("Functions/Mathematics/x"), "Functions", "a folder name must match whole");
+    assert_eq!(function_category("Loose"), "Functions");
+}
+
+#[test]
+fn the_bundled_library_fills_the_tree_with_what_materialcraft_has() {
     let library = NodeLibrary::shared();
-    assert_eq!(library.layouts, vec!["sbs://all_nodes.sbs".to_string()]);
+    assert!(library.layouts.is_empty());
     assert!(library.packages.contains_key("sbs://functions.sbs"));
-    assert!(!library.packages.contains_key("sbs://all_nodes.sbs"), "a layout is not a package of graphs");
 
     let entries = library.entries(&library.packages);
     let ids: BTreeSet<_> = entries.iter().map(|entry| entry.id.as_str()).collect();
     assert_eq!(ids.len(), entries.len(), "ids are unique");
+    assert!(entries.iter().all(|entry| entry.missing.is_none()), "everything listed can be added");
     let known = |category: &str| {
         let mut parts = category.split('/');
         let top = parts.next().unwrap_or("");
@@ -48,47 +62,54 @@ fn the_bundled_library_fills_every_category_of_the_tree() {
     let count = |category: &str| entries.iter().filter(|entry| entry.category == category).count();
     let find = |id: &str| entries.iter().find(|entry| entry.id == id).unwrap_or_else(|| panic!("no entry {id}"));
 
-    // Every top-level category that has sub-categories, except the new ones, has entries
-    for (top, subs) in CATEGORIES {
+    for top in ["Function nodes", "Functions"] {
+        let (_, subs) = CATEGORIES.iter().find(|(name, _)| *name == top).unwrap();
         for sub in *subs {
-            let category = format!("{top}/{sub}");
-            if !matches!(*top, "MCF functions" | "Values") && !matches!(category.as_str(), "PBR materials/Pavement" | "PBR materials/Stone") {
-                assert!(count(&category) > 0, "{category} is empty");
-            }
+            assert!(count(&format!("{top}/{sub}")) > 0, "{top}/{sub} is empty");
         }
     }
-    assert_eq!(count("Texture generators/Noises"), 89);
+    // Every bundled function has a sub-category
+    assert_eq!(entries.iter().filter(|entry| entry.category.starts_with("Functions/")).count(), 171);
+    assert_eq!(count("Functions"), 0);
+    assert_eq!(find("sbs://functions.sbs#Functions/Tonemappers/tonemap_ACES").category, "Functions/Color");
     assert_eq!(
         entries.iter().filter(|entry| entry.category == "Graph items").map(|entry| entry.label.as_str()).collect::<Vec<_>>(),
         ["Comment", "Frame", "Pin", "Dot node"]
     );
-    assert_eq!(find("node:blur").category, "Atomic nodes");
-    assert_eq!(find("node:output").category, "Atomic nodes");
-    assert!(find("node:bitmap").missing.is_none(), "the atomic frame's bitmap is the Bitmap node");
-    assert!(entries.iter().filter(|entry| entry.category == "Atomic nodes").all(|entry| entry.missing.is_none()));
-    assert!(entries.iter().filter(|entry| entry.category == "3D view/HDRI environments").all(|entry| entry.missing.is_some()));
-    assert!(find("node:blur").missing.is_none());
+    for id in ["node:blur", "node:bitmap", "node:output", "node:input_color", "node:input_value"] {
+        assert_eq!(find(id).category, "Atomic nodes", "{id}");
+    }
     assert_eq!(find("function:add").category, "Function nodes/Operator");
     assert_eq!(find("pattern:paramset").category, "FxMap nodes");
-
     let pi = find("sbs://functions.sbs#Functions/Math/Pi");
     assert_eq!((pi.label.as_str(), pi.category.as_str()), ("Pi", "Functions/Constant"));
-    assert!(pi.missing.is_none());
     assert_eq!(find("sbs://functions.sbs#Functions/Math/Equality_Float2").category, "Functions/Comparison");
-
-    let perlin = find("sbs://3d_perlin_noise.sbs#3D_perlin_noise");
-    assert_eq!((perlin.label.as_str(), perlin.category.as_str()), ("3D Perlin Noise", "Texture generators/Noises"));
-    assert!(perlin.missing.is_some(), "library packages MaterialCraft lacks are listed but not addable");
-    assert_eq!(find("sbs://materials/pbr/bricks_001.sbs#bricks_001").category, "PBR materials/Bricks");
-    assert_eq!(find("sbs://materials/pbr/old_painted_planks.sbs#old_painted_planks").category, "PBR materials/Wood");
-    // A node that sits in two frames is listed in both
-    assert!(entries.iter().filter(|entry| entry.id.starts_with("sbs://paths_tools.sbs#path_to_spline")).count() == 2);
 }
 
+/// A layout that places a library node MaterialCraft doesn't have yet, a function and a sub-category
+/// the PBR keywords decide
+const LAYOUT: &str = r#"<package><dependencies>
+    <dependency><filename v="sbs://3d_perlin_noise.sbs"/><uid v="2"/></dependency>
+    <dependency><filename v="sbs://materials/bricks_001.sbs"/><uid v="3"/></dependency></dependencies>
+    <content><graph><identifier v="Layout"/><compNodes>
+      <compNode><uid v="10"/><GUILayout><gpos v="20 40 0"/></GUILayout><compImplementation><compInstance><path v="pkg:///3D_perlin_noise?dependency=2"/></compInstance></compImplementation></compNode>
+      <compNode><uid v="11"/><GUILayout><gpos v="220 40 0"/></GUILayout><compImplementation><compInstance><path v="pkg:///bricks_001?dependency=3"/></compInstance></compImplementation></compNode>
+    </compNodes><GUIObjects>
+      <GUIObject><type v="COMMENT"/><GUILayout><gpos v="0 0 0"/><size v="160 200"/></GUILayout><title v="Texture Generators - Noises"/></GUIObject>
+      <GUIObject><type v="COMMENT"/><GUILayout><gpos v="200 0 0"/><size v="160 200"/></GUILayout><title v="PBR Materials"/></GUIObject>
+    </GUIObjects></graph></content></package>"#;
+
 #[test]
-fn a_library_package_makes_its_placed_entry_available() {
-    let library = NodeLibrary::shared();
-    let mut dependencies = library.packages.clone();
+fn a_layout_lists_what_it_places_and_a_library_package_makes_it_available() {
+    let frames = materialcraft_formats::sbs::read_layout(LAYOUT.as_bytes(), "sbs://layout.sbs").unwrap();
+    let library = NodeLibrary { placements: placements(&frames), ..Default::default() };
+    let entries = library.entries(&BTreeMap::new());
+    let perlin = entries.iter().find(|entry| entry.id == "sbs://3d_perlin_noise.sbs#3D_perlin_noise").unwrap();
+    assert_eq!((perlin.label.as_str(), perlin.category.as_str()), ("3D Perlin Noise", "Texture generators/Noises"));
+    assert!(perlin.missing.is_some(), "a placed node whose package is absent is listed but not addable");
+    let bricks = entries.iter().find(|entry| entry.id == "sbs://materials/bricks_001.sbs#bricks_001").unwrap();
+    assert_eq!(bricks.category, "PBR materials/Bricks");
+
     let mut graph = Graph::new("3D_perlin_noise");
     graph.add_node("uniform", [0.0; 2]);
     graph.add_node("output", [200.0, 0.0]);
@@ -97,7 +118,7 @@ fn a_library_package_makes_its_placed_entry_available() {
     graph.name = "Loose".into();
     graph.attributes.category = "Filters/Blurs".into();
     package.graphs.push(graph);
-    dependencies.insert("sbs://3d_perlin_noise.sbs".into(), Arc::new(package));
+    let dependencies = BTreeMap::from([("sbs://3d_perlin_noise.sbs".to_string(), Arc::new(package))]);
 
     let entries = library.entries(&dependencies);
     let perlin = entries.iter().find(|entry| entry.id == "sbs://3d_perlin_noise.sbs#3D_perlin_noise").unwrap();

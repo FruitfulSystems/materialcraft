@@ -24,10 +24,12 @@ Explorer shortcut yet.
 
 The Library panel shows the reference category tree (Favorites, Graph items, Atomic nodes, FxMap
 nodes, Function nodes, Texture generators, Filters, Material filters, Mesh-based generators, Spline &
-Path tools, MCF functions, Functions, 3D view, PBR materials, Values) filled from the bundled
-library layout. 495 of its 787 entries are listed but dimmed: MaterialCraft has no package
-for them yet, and each becomes available once its package is in the library folder. MCF functions
-and Values have no entries yet; HDRI environment images are not bundled.
+Path tools, MCF functions, Functions, 3D view, PBR materials, Values). It lists what MaterialCraft
+has: the atomic nodes, the function operations, the 171 bundled functions (sorted into the Functions
+sub-categories) and the FX-Map nodes. Texture generators, Filters, Material filters, Mesh-based
+generators, Spline & Path tools, MCF functions, 3D view, PBR materials and Values stay empty until
+library packages for them are added to `assets/sbs`; the CC0 environments in `assets/hdr` are not
+listed yet.
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (portable `.mcmat` materials closed the published-archive gap) · **Target:** the professional node-based material workflow
 

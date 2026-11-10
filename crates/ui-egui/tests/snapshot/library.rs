@@ -70,13 +70,31 @@ fn library_tree_shows_every_category_and_adds_what_the_graph_takes() {
     assert_eq!(graph.nodes.len(), before + 1);
     assert_eq!(graph.nodes.last().unwrap().def, "blur");
 
-    // Opening a category shows its sub-categories; library nodes MaterialCraft lacks are dimmed
+    // Categories MaterialCraft has no nodes for yet say so
     harness.get(tree("Texture generators")).click();
     settle(&mut harness, 3);
     harness.get(tree("Noises")).click();
     settle(&mut harness, 4);
-    assert!(harness.query(tile("3D Perlin Noise")).is_some());
-    save(&mut harness, &directory, "library-texture-generators-noises");
+    assert!(harness.query(By::new().label("Nothing in this category yet")).is_some());
+    harness.get(tree("Texture generators")).click();
+    settle(&mut harness, 2);
+    harness.get(tree("Texture generators")).click();
+    settle(&mut harness, 2);
+
+    // Opening a category shows its sub-categories; functions sort into theirs by folder
+    harness.get(tree("Functions")).click();
+    settle(&mut harness, 3);
+    harness.get(tree("Constant")).click();
+    settle(&mut harness, 4);
+    for label in ["Pi", "2Pi"] {
+        assert!(harness.query(tile(label)).is_some(), "{label}");
+    }
+    save(&mut harness, &directory, "library-functions-constant");
+    harness.get(tree("Functions")).click();
+    settle(&mut harness, 2);
+    harness.get(tree("Functions")).click();
+    settle(&mut harness, 2);
+    assert!(!harness.state().ui.library_expanded.contains("Functions"));
 
     for (top, subs) in [
         ("Filters", &["Adjustments", "Blending", "Blurs", "Channels", "Effects", "Normal map", "Tiling", "Transforms"][..]),
@@ -112,8 +130,8 @@ fn library_tree_shows_every_category_and_adds_what_the_graph_takes() {
     save(&mut harness, &directory, "library-favorites");
 
     // Search finds entries across the whole library, what the graph takes first
-    harness.state_mut().ui.library_search = "noise".into();
+    harness.state_mut().ui.library_search = "blur".into();
     settle(&mut harness, 4);
-    assert!(harness.query(tile("3D Perlin Noise")).is_some());
+    assert!(harness.query(tile("Blur")).is_some());
     save(&mut harness, &directory, "library-search");
 }

@@ -1,8 +1,9 @@
 //! The node library. Every SBS package in the library folder (`assets/sbs`, or the bundled copies)
-//! is loaded once per process. A package whose titled frames are library categories ("Filters -
-//! Blurs") lays the library out: each node inside a frame becomes an entry in that category.
-//! Every other package lends its graphs, which graph instances can use. Native nodes, function
-//! operations, FX-Map nodes and graph items fill in what no layout places.
+//! is loaded once per process and lends its graphs: function graphs go under Functions (sorted by
+//! their folder), other graphs under their attribute category. Native nodes, function operations,
+//! FX-Map nodes and graph items fill the rest of the tree. A package whose titled frames are library
+//! categories ("Filters - Blurs") can also lay the library out: each node inside a frame becomes an
+//! entry in that category, listed as missing until a package provides it.
 
 use materialcraft_core::{Package, PatternNodeKind};
 use materialcraft_formats::sbs::{LayoutItem, library};
@@ -233,7 +234,10 @@ impl NodeLibrary {
                 continue;
             }
             let item = LibraryItem::Node { def: definition.id.into() };
-            push(&mut out, entry(id, definition.label, definition.category, definition.description, item, None));
+            // Graph inputs and outputs sit with the atomic nodes; Graph items holds annotations and the Dot
+            let category =
+                if matches!(definition.id, "input_color" | "input_grayscale" | "input_value" | "output") { "Atomic nodes" } else { definition.category };
+            push(&mut out, entry(id, definition.label, category, definition.description, item, None));
         }
         for operation in materialcraft_nodes::function::FUNCTIONS {
             let id = format!("function:{}", operation.id);
@@ -255,7 +259,8 @@ impl NodeLibrary {
                     continue;
                 }
                 let placement = if graph.function.is_some() {
-                    Placement { category: "Functions".into(), item: LayoutItem::FunctionInstance { package: path.clone(), graph: name } }
+                    let category = known_category(&graph.attributes.category).unwrap_or_else(|| function_category(&name));
+                    Placement { category, item: LayoutItem::FunctionInstance { package: path.clone(), graph: name } }
                 } else if graph.nodes.iter().any(|node| node.def == "output") {
                     let category = known_category(&graph.attributes.category).unwrap_or_else(|| "Other".into());
                     Placement { category, item: LayoutItem::Instance { package: path.clone(), graph: name, outputs: Vec::new() } }
@@ -369,8 +374,12 @@ fn known_category(text: &str) -> Option<String> {
     let mut parts = text.split('/');
     let top = parts.next()?;
     let (top, subs) = CATEGORIES.iter().find(|(name, _)| key(name) == key(top))?;
-    let sub = parts.next().and_then(|sub| subs.iter().find(|name| key(name) == key(sub)));
-    Some(category_path(top, sub.copied()))
+    // A sub-category the tree doesn't have names no category ("Functions/colorValues" is a folder)
+    let sub = match parts.next() {
+        None => None,
+        Some(sub) => Some(*subs.iter().find(|name| key(name) == key(sub))?),
+    };
+    Some(category_path(top, sub))
 }
 
 fn category_path(top: &str, sub: Option<&str>) -> String {
@@ -390,6 +399,48 @@ fn sub_category(category: &str, graph: &str) -> String {
         .iter()
         .find(|(top, _, words)| *top == category && words.iter().any(|word| name.contains(word)))
         .map_or_else(|| category.to_string(), |(top, sub, _)| category_path(top, Some(sub)))
+}
+
+/// Function graphs whose name decides their Functions sub-category
+const FUNCTION_NAMES: &[(&str, &str)] = &[
+    ("Pi", "Constant"),
+    ("2Pi", "Constant"),
+    ("deg_to_rad", "Conversion"),
+    ("Degrees_to_Turn", "Conversion"),
+    ("Curve_Function", "Various"),
+    ("Roughness", "Various"),
+];
+/// Name prefixes that decide a function graph's sub-category
+const FUNCTION_PREFIXES: &[(&str, &str)] = &[("Equality_", "Comparison"), ("NotEqual_", "Comparison")];
+/// Library folders (below `Functions/`) and the Functions sub-category of the graphs in them; the
+/// first folder that holds the graph wins
+const FUNCTION_FOLDERS: &[(&str, &str)] = &[
+    ("colorValues", "Color"),
+    ("Tonemappers", "Color"),
+    ("easings", "Easings"),
+    ("Math/Parity", "Parity"),
+    ("Random", "Random"),
+    ("Ranges", "Conversion"),
+    ("typeConverters", "Conversion"),
+    ("Transforms", "Transformation"),
+    ("switch", "Various"),
+    ("Various", "Various"),
+    ("Cycles", "Various"),
+    ("Math", "Maths"),
+];
+
+/// The Functions sub-category of a function graph, from its path in the library package
+/// (`Functions/Math/Pi` → `Functions/Constant`); `Functions` when nothing matches
+pub fn function_category(path: &str) -> String {
+    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let folder = folder.strip_prefix("Functions").map_or(folder, |rest| rest.trim_start_matches('/'));
+    let sub = FUNCTION_NAMES
+        .iter()
+        .find(|(known, _)| *known == name)
+        .or_else(|| FUNCTION_PREFIXES.iter().find(|(prefix, _)| name.starts_with(prefix)))
+        .or_else(|| FUNCTION_FOLDERS.iter().find(|(known, _)| folder == *known || folder.strip_prefix(known).is_some_and(|rest| rest.starts_with('/'))))
+        .map(|(_, sub)| *sub);
+    category_path("Functions", sub)
 }
 
 /// A readable label from an SBS identifier: `3D_perlin_noise` → "3D Perlin Noise"

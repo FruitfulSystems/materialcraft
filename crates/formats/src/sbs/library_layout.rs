@@ -281,18 +281,4 @@ mod tests {
         assert!(read_layout(b"\xff\xfe", "sbs://x.sbs").is_err());
         assert!(read_layout(b"<package><content><graph><compNodes><compNode><GUILayout><gpos v=\"nan\"/></GUILayout></compNode></compNodes><GUIObjects><GUIObject><type v=\"COMMENT\"/><GUILayout><gpos v=\"0 0\"/><size v=\"-5 1e40\"/></GUILayout><title v=\"X\"/></GUIObject></GUIObjects></graph></content></package>", "sbs://x.sbs").unwrap().is_empty());
     }
-
-    #[test]
-    fn the_bundled_layout_places_the_whole_library() {
-        let bytes = super::super::library::read("sbs://all_nodes.sbs").unwrap();
-        let frames = read_layout(&bytes, "sbs://all_nodes.sbs").unwrap();
-        let count = |title: &str| frames.iter().filter(|frame| frame.title == title).map(|frame| frame.items.len()).sum::<usize>();
-        assert_eq!(count("Atomic Nodes"), 28);
-        assert_eq!(count("Texture Generators - Noises"), 89);
-        assert_eq!(count("Filters - Blurs"), 14);
-        assert!(frames.iter().filter(|frame| frame.function).count() >= 20);
-        assert!(
-            frames.iter().flat_map(|frame| &frame.items).any(|item| matches!(item, LayoutItem::FunctionInstance { graph, .. } if graph == "Functions/Math/Pi"))
-        );
-    }
 }

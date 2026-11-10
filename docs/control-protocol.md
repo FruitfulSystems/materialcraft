@@ -121,14 +121,13 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 ## Node library
 
 Every `.sbs` file in the library folder (`assets/sbs`, or `MATERIALCRAFT_SBS_DIR`; installed and
-browser builds use the bundled `all_nodes.sbs` and `functions.sbs`) loads once per process. A
-package whose graphs group nodes in titled frames lays the library out: a frame titled
-`Top - Sub` (or `Top`) is a category of the Library tree, and every node inside it becomes an
-entry there. Function frames name only the sub-category: under Function nodes when they hold
-native operations, under Functions otherwise. The older category name "SDF functions" reads as
-MCF functions. Other packages lend their graphs: a placed instance becomes available as soon as
-its package is in the folder, and unplaced graphs go to their attribute category, or Functions
-for function graphs.
+browser builds use the bundled `functions.sbs`) loads once per process, and its graphs join every
+session's dependencies. Function graphs are listed under Functions, in the sub-category their folder
+names (`Functions/colorValues` → Color, `Functions/easings` → Easings); other graphs under the
+category in their attributes. A package whose graphs group nodes in titled frames lays the library
+out instead: a frame titled `Top - Sub` (or `Top`) is a Library category, and every node inside it
+becomes an entry there, `missing` until its package is in the folder. Function frames name only the
+sub-category. The older category name "SDF functions" reads as MCF functions.
 
 ## Linked packages
 

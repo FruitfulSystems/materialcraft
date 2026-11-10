@@ -29,12 +29,12 @@ fn open_package_graphs_are_explorer_resources_not_library_entries() {
 #[test]
 fn categories_include_their_sub_categories_and_favorites_follow_the_star() {
     let mut app = app();
-    app.ui.library_category = "Filters".into();
-    let filters = labels(&app);
-    app.ui.library_category = "Filters/Blurs".into();
-    let blurs = labels(&app);
-    assert!(!blurs.is_empty() && blurs.len() < filters.len());
-    assert!(blurs.iter().all(|label| filters.contains(label)));
+    app.ui.library_category = "Functions".into();
+    let functions = labels(&app);
+    app.ui.library_category = "Functions/Constant".into();
+    let constants = labels(&app);
+    assert!(!constants.is_empty() && constants.len() < functions.len());
+    assert!(constants.iter().all(|label| functions.contains(label)));
 
     app.ui.library_category = FAVORITES.into();
     assert!(labels(&app).is_empty());
@@ -48,9 +48,11 @@ fn categories_include_their_sub_categories_and_favorites_follow_the_star() {
 #[test]
 fn search_puts_what_the_open_graph_takes_first_and_filters_hide_the_rest() {
     let mut app = app();
-    app.ui.library_search = "blur".into();
+    // "Uniform" names a native node and random functions; a material graph takes only the node
+    app.ui.library_search = "uniform".into();
     let found = labels(&app);
-    assert_eq!(found.first().map(String::as_str), Some("Blur"));
+    assert_eq!(found.first().map(String::as_str), Some("Uniform color"), "{found:?}");
+    assert!(found.len() > 1, "{found:?}");
     let entries = app.session.library_entries();
     let here = Here::of(&app);
     let shown = visible(&app, &entries, &here);
@@ -90,13 +92,14 @@ fn every_tree_category_has_an_icon_and_double_click_adds() {
     let mut app = app();
     let before = app.session.graph().unwrap().nodes.len();
     let entries = app.session.library_entries();
-    for id in ["node:blur", "sbs://3d_perlin_noise.sbs#3D_perlin_noise"] {
+    // A material graph takes the Blur node, not a function
+    for id in ["node:blur", "sbs://functions.sbs#Functions/Math/Pi"] {
         let entry = entries.iter().find(|entry| entry.id == id).unwrap();
         if Here::of(&app).takes(entry) {
             add_entry(&mut app, entry);
         }
     }
-    assert_eq!(app.session.graph().unwrap().nodes.len(), before + 1, "only the available entry is added");
+    assert_eq!(app.session.graph().unwrap().nodes.len(), before + 1, "only the entry the graph takes is added");
     let comments = app.session.graph().unwrap().comments.len();
     add_entry(&mut app, entries.iter().find(|entry| entry.id == "item:comment").unwrap());
     assert_eq!(app.session.graph().unwrap().comments.len(), comments + 1);

@@ -79,13 +79,12 @@ pub fn read(uri: &str) -> Result<Vec<u8>, String> {
     // Installed and browser builds use the same bundled asset when no disk asset root exists
     match relative {
         "functions.sbs" => Ok(include_bytes!("../../../../assets/sbs/functions.sbs").to_vec()),
-        "all_nodes.sbs" => Ok(include_bytes!("../../../../assets/sbs/all_nodes.sbs").to_vec()),
         _ => Err(format!("Missing library asset {uri}")),
     }
 }
 
 /// The packages bundled into the binary, for installs and the browser without an asset folder
-pub const BUNDLED: &[&str] = &["sbs://all_nodes.sbs", "sbs://functions.sbs"];
+pub const BUNDLED: &[&str] = &["sbs://functions.sbs"];
 
 /// Bounds for scanning the library folder: how deep, and how many packages
 const MAX_DEPTH: usize = 6;

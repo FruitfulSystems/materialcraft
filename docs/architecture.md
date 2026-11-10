@@ -105,12 +105,13 @@ Resource paths resolve beside their owning package: `resources/tile.png` in
 Loaded resource bytes are embedded on save; unavailable files keep their reference and missing state.
 
 Every session loads the whole library folder once per process (`engine::node_library`, cached
-until `library.reload`). Each `.sbs` there is either a layout or a package of graphs. A layout's
-titled frames ("Filters - Blurs") name Library categories and place the nodes inside them
-(`formats::sbs::read_layout`); `assets/sbs/all_nodes.sbs` lays out the reference category tree,
-with every library node it instances. Packages join every session's dependencies, so their graphs
-can be instanced, and a placed instance becomes available as soon as its package is in the folder.
-Installed and browser builds embed `all_nodes.sbs` and `functions.sbs`.
+until `library.reload`). Each package joins every session's dependencies, so its graphs can be
+instanced, and the Library lists them: function graphs under Functions, sorted into its
+sub-categories by their folder (`Functions/Math/Pi` → Constant), other graphs under their attribute
+category. A package whose titled frames name Library categories ("Filters - Blurs") can also lay
+the tree out (`formats::sbs::read_layout`): each node inside a frame becomes an entry there, listed
+as missing until a package in the folder provides it. Installed and browser builds embed
+`functions.sbs`.
 
 Importing a user-supplied function package preserves its graph bodies, connections and positions;
 it does not replace them with the bundled library. Redundant legacy instance connectors are retained
