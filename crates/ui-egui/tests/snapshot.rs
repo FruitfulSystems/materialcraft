@@ -1,3 +1,6 @@
+#[path = "snapshot/graph_items.rs"]
+mod graph_items;
+
 #[path = "snapshot/explorer.rs"]
 mod explorer;
 
@@ -15,6 +18,9 @@ mod embedded_graphs;
 
 #[path = "snapshot/library.rs"]
 mod library;
+
+#[path = "snapshot/menu.rs"]
+mod menu;
 
 use std::time::Duration;
 
@@ -1379,19 +1385,29 @@ fn embedded_function_toolbar_and_panels_share_the_active_target() {
         save(&mut harness, &directory, &format!("{definition}-inline-function"));
         harness.state_mut().ui.library_search = "Sample".into();
         settle(&mut harness, 2);
-        for label in ["Sample gray", "Sample color"] {
-            assert_eq!(harness.query_all(By::new().label(label)).next().is_some(), definition == "pixel_processor");
+        for (label, operation) in [("Sample gray", "samplelum"), ("Sample color", "samplecol")] {
+            let tile = harness.get(By::new().role(egui::accesskit::Role::ListItem).label(label));
+            let position = tile.rect().center();
+
+            double_click(&mut harness, position);
+
+            assert!(target.current(&harness.state().session).unwrap().nodes.iter().any(|node| node.op == operation));
+            materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "edit.undo");
+            settle(&mut harness, 2);
+            assert_eq!(harness.state().session.pkg, original);
         }
+        save(&mut harness, &directory, &format!("{definition}-library-samplers"));
+
         harness.get(By::new().role(egui::accesskit::Role::Canvas).label("Function Graph")).click_secondary();
         settle(&mut harness, 2);
         harness.get_by_label("Add node").click();
         settle(&mut harness, 2);
         for label in ["Sample gray", "Sample color"] {
-            assert_eq!(harness.query_all(query(label)).next().is_some(), definition == "pixel_processor");
+            assert!(harness.query_all(query(label)).next().is_some());
         }
         let labels: Vec<_> =
             target.available_operations(&harness.state().session).filter(|operation| operation.id != "passthrough").map(|operation| operation.label).collect();
-        assert_eq!(labels.len(), if definition == "pixel_processor" { 84 } else { 82 });
+        assert_eq!(labels.len(), materialcraft_engine::nodes::function::FUNCTIONS.iter().filter(|operation| operation.id != "passthrough").count());
         assert!(harness.query(query("Dot")).is_none());
         save(&mut harness, &directory, &format!("{definition}-node-menu"));
         assert_node_menu_order(&harness, &labels);

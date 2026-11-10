@@ -11,8 +11,7 @@ pub(crate) fn add(app: &mut MaterialCraftApp, entry: &FunctionLibraryDrag) {
     }
 }
 
-/// The native operations the open Function canvas can take (processors that only compute a
-/// value cannot sample images)
+/// The native operations accepted by the open Function canvas.
 pub(crate) fn available_operations(app: &MaterialCraftApp) -> Vec<&'static str> {
     app.function_editor
         .as_ref()

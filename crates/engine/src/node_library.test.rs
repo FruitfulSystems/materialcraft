@@ -1,6 +1,10 @@
 use super::*;
 use materialcraft_core::Graph;
 
+#[path = "../tests/support/node_library.rs"]
+mod fixture;
+
+/// Category aliases and frame kinds resolve only to recognized categories.
 #[test]
 fn frame_titles_map_to_library_categories() {
     assert_eq!(frame_category("Texture Generators - Noises", false, false).as_deref(), Some("Texture generators/Noises"));
@@ -9,6 +13,7 @@ fn frame_titles_map_to_library_categories() {
     assert_eq!(frame_category("Mesh-based generators - Weathering", false, false).as_deref(), Some("Mesh-based generators/Weathering"));
     assert_eq!(frame_category("PBR Materials", false, false).as_deref(), Some("PBR materials"));
     assert_eq!(frame_category("Atomic Nodes", false, false).as_deref(), Some("Atomic nodes"));
+
     // The category MaterialCraft renamed still reads from older layouts
     assert_eq!(frame_category("SDF functions - Primitives", false, false).as_deref(), Some("MCF functions/Primitives"));
     assert_eq!(frame_category("Functions Inside", false, false), None);
@@ -18,6 +23,7 @@ fn frame_titles_map_to_library_categories() {
     assert_eq!(frame_category("Unknown", true, true), None);
 }
 
+/// Identifier labels preserve recognized acronyms and omit empty words.
 #[test]
 fn identifiers_read_as_labels() {
     assert_eq!(humanize("3D_perlin_noise"), "3D Perlin Noise");
@@ -27,6 +33,7 @@ fn identifiers_read_as_labels() {
     assert_eq!(humanize("__"), "");
 }
 
+/// Function categories use exact path segments and known name overrides.
 #[test]
 fn functions_sort_into_sub_categories_by_folder_and_name() {
     assert_eq!(function_category("Functions/Math/Pi"), "Functions/Constant");
@@ -41,9 +48,10 @@ fn functions_sort_into_sub_categories_by_folder_and_name() {
     assert_eq!(function_category("Loose"), "Functions");
 }
 
+/// The isolated bundled catalog has unique entries in recognized categories.
 #[test]
 fn the_bundled_library_fills_the_tree_with_what_materialcraft_has() {
-    let library = NodeLibrary::shared();
+    let library = fixture::library();
     assert!(library.layouts.is_empty());
     assert!(library.packages.contains_key("sbs://functions.sbs"));
 
@@ -68,8 +76,10 @@ fn the_bundled_library_fills_the_tree_with_what_materialcraft_has() {
             assert!(count(&format!("{top}/{sub}")) > 0, "{top}/{sub} is empty");
         }
     }
+
     // Every bundled function has a sub-category
-    assert_eq!(entries.iter().filter(|entry| entry.category.starts_with("Functions/")).count(), 171);
+    let functions = library.packages["sbs://functions.sbs"].graphs.iter().filter(|graph| graph.function.is_some()).count();
+    assert_eq!(entries.iter().filter(|entry| entry.category.starts_with("Functions/")).count(), functions);
     assert_eq!(count("Functions"), 0);
     assert_eq!(find("sbs://functions.sbs#Functions/Tonemappers/tonemap_ACES").category, "Functions/Color");
     assert_eq!(
@@ -99,6 +109,7 @@ const LAYOUT: &str = r#"<package><dependencies>
       <GUIObject><type v="COMMENT"/><GUILayout><gpos v="200 0 0"/><size v="160 200"/></GUILayout><title v="PBR Materials"/></GUIObject>
     </GUIObjects></graph></content></package>"#;
 
+/// A missing layout entry becomes available when its package is supplied.
 #[test]
 fn a_layout_lists_what_it_places_and_a_library_package_makes_it_available() {
     let frames = materialcraft_formats::sbs::read_layout(LAYOUT.as_bytes(), "sbs://layout.sbs").unwrap();
@@ -128,6 +139,7 @@ fn a_layout_lists_what_it_places_and_a_library_package_makes_it_available() {
     assert_eq!((loose.category.as_str(), loose.canvas), ("Filters/Blurs", LibraryCanvas::Material));
 }
 
+/// Invalid library files produce warnings while native entries remain usable.
 #[test]
 fn unreadable_library_files_warn_instead_of_failing() {
     let library = NodeLibrary::load(&["sbs://does_not_exist.sbs".into(), "sbs://../escape.sbs".into()]);
@@ -136,4 +148,26 @@ fn unreadable_library_files_warn_instead_of_failing() {
     let entries = library.entries(&BTreeMap::new());
     assert!(entries.iter().any(|entry| entry.id == "node:blur" && entry.category == "Atomic nodes"));
     assert!(entries.iter().any(|entry| entry.id == "function:add" && entry.category == "Function nodes/Operator"));
+}
+
+/// Classification tags take precedence over package folders and support multiple placements.
+#[test]
+fn function_tags_choose_library_filters_before_path_fallbacks() {
+    let mut package = Package::new("Functions");
+    for (name, category, tags) in [("Pi", "Function", "Maths"), ("Tagged", "", "Comparison; Easing"), ("Fallback", "", "Unknown")] {
+        let mut graph = Graph::new(name);
+        graph.folder = "Functions/Math".into();
+        graph.function = Some(Default::default());
+        graph.attributes.category = category.into();
+        graph.attributes.tags = tags.into();
+        package.graphs.push(graph);
+    }
+    let dependencies = BTreeMap::from([("sbs://classification.sbs".to_string(), Arc::new(package))]);
+
+    let entries = NodeLibrary::default().entries(&dependencies);
+    let categories = |name: &str| entries.iter().filter(|entry| entry.label == name).map(|entry| entry.category.as_str()).collect::<Vec<_>>();
+
+    assert_eq!(categories("Pi"), ["Functions/Maths"]);
+    assert_eq!(categories("Tagged"), ["Functions/Comparison", "Functions/Easings"]);
+    assert_eq!(categories("Fallback"), ["Functions/Maths"]);
 }

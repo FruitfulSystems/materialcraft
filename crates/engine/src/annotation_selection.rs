@@ -1,4 +1,4 @@
-use materialcraft_core::Graph;
+use materialcraft_core::CanvasAnnotations;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -6,13 +6,15 @@ use serde::{Deserialize, Serialize};
 pub enum AnnotationSelection {
     Frame(u64),
     Comment(u64),
+    Pin(u64),
 }
 
 impl AnnotationSelection {
-    pub fn exists(self, graph: &Graph) -> bool {
+    pub fn exists(self, graph: &CanvasAnnotations) -> bool {
         match self {
             Self::Frame(id) => graph.frames.iter().any(|frame| frame.id == id),
             Self::Comment(id) => graph.comments.iter().any(|comment| comment.id == id),
+            Self::Pin(id) => graph.pins.iter().any(|pin| pin.id == id),
         }
     }
 }

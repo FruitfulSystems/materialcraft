@@ -1,38 +1,13 @@
-use super::ExplorerTarget;
+use super::{ExplorerTarget, explorer_menu_state::ExplorerMenuState};
 use crate::menus::{self, ExplorerRow};
 use crate::{i18n::tr, menus::shortcut_label};
-
-/// What the right-clicked item allows right now
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct MenuState {
-    /// The Explorer clipboard holds something to paste
-    pub paste: bool,
-    /// The package has a file on disk (reload, show in folder)
-    pub saved: bool,
-    /// The package links other package files
-    pub dependencies: bool,
-    /// The graph (or, for a package, one of its graphs) has image outputs
-    pub outputs: bool,
-}
-
-impl MenuState {
-    fn enabled(&self, command: &str) -> bool {
-        match command {
-            "" => false,
-            "explorer.paste" => self.paste,
-            "file.reload" | menus::EXPLORER_SHOW_IN_FOLDER => self.saved,
-            menus::EXPLORER_OPEN_DEPENDENCIES => self.dependencies,
-            menus::EXPLORER_COMPUTE | menus::EXPLORER_VIEW_OUTPUTS | menus::EXPLORER_EXPORT_OUTPUTS => self.outputs,
-            _ => true,
-        }
-    }
-}
 
 /// Rows the browser can't offer: it has no folders to show or package files to open
 fn hidden(command: &str) -> bool {
     cfg!(target_arch = "wasm32") && matches!(command, menus::EXPLORER_SHOW_IN_FOLDER | menus::EXPLORER_OPEN_DEPENDENCIES)
 }
 
+/// Draw one action with its shortcut and disabled-state explanation.
 fn item(ui: &mut egui::Ui, label: &str, command: &'static str, shortcut: Option<&str>, enabled: bool, action: &mut Option<&'static str>) {
     let mut button = egui::Button::new(tr(label));
     if let Some(shortcut) = shortcut {
@@ -46,7 +21,8 @@ fn item(ui: &mut egui::Ui, label: &str, command: &'static str, shortcut: Option<
     }
 }
 
-fn rows(ui: &mut egui::Ui, rows: &[ExplorerRow], state: &MenuState, resources: bool, action: &mut Option<&'static str>) {
+/// Draw menu rows while respecting resource-folder and platform restrictions.
+fn rows(ui: &mut egui::Ui, rows: &[ExplorerRow], state: &ExplorerMenuState, resources: bool, action: &mut Option<&'static str>) {
     for row in rows {
         match *row {
             ExplorerRow::Separator => {
@@ -63,6 +39,7 @@ fn rows(ui: &mut egui::Ui, rows: &[ExplorerRow], state: &MenuState, resources: b
                             if resources && label == "New" && *command != "folder.create" {
                                 continue;
                             }
+
                             item(ui, entry, command, None, state.enabled(command), action);
                         }
                     });
@@ -73,7 +50,8 @@ fn rows(ui: &mut egui::Ui, rows: &[ExplorerRow], state: &MenuState, resources: b
     }
 }
 
-pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, state: &MenuState) -> Option<&'static str> {
+/// Build the context menu for a package, folder, graph or resource.
+pub(super) fn show(ui: &mut egui::Ui, target: &ExplorerTarget, state: &ExplorerMenuState) -> Option<&'static str> {
     ui.set_min_width(220.0);
     let mut action = None;
     let resources = target.is_resources();

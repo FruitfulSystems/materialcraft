@@ -196,7 +196,7 @@ them. Alignment uses the same engine command for all three models, with explicit
 and an explicit Function target or FX-Map owner ID, so overlapping IDs cannot move the parent material nodes.
 Pixel Processor, Value Processor and parameter functions use that same main panel and function node
 catalog, with one target-aware availability rule shared by node creation, Library and Add node.
-Value Processor omits the two sampler entries; saved functions retain their existing operations.
+Both processor types accept Sample gray and Sample color to read their image inputs.
 A breadcrumb and parent action return from nested functions, FX-Maps and local graph instances
 while retaining the parent view and material preview.
 

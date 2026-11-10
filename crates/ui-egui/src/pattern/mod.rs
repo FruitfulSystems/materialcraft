@@ -6,6 +6,7 @@ mod input;
 pub(crate) mod library;
 mod node_canvas;
 mod parameter_value;
+mod pattern_canvas;
 mod pattern_drag;
 mod pattern_editor;
 pub(crate) mod properties;

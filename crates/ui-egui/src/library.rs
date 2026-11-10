@@ -12,16 +12,18 @@ use materialcraft_engine::{LibraryCanvas, LibraryEntry, LibraryItem};
 
 use crate::MaterialCraftApp;
 use crate::function::library::FunctionLibraryDrag;
-use crate::graph::editor_target::EditorTarget;
+mod library_target;
 use crate::graph::{LibraryDrag, header_color};
 use crate::i18n::tr;
 use crate::theme::Tokens;
+pub(crate) use library_target::LibraryTarget;
 
 /// The category key of the Favorites row
 pub(crate) const FAVORITES: &str = "@favorites";
 /// Function entries that need more nodes than MaterialCraft has are shown in this color
 const WARNING: Color32 = Color32::from_rgb(255, 90, 180);
 
+/// Choose the icon for a known category or fall back to a folder.
 fn category_icon(category: &str) -> &'static str {
     match category {
         FAVORITES => icon::STAR,
@@ -68,50 +70,6 @@ fn category_icon(category: &str) -> &'static str {
     }
 }
 
-/// The graph the library adds to, and which native function operations it can take
-pub(crate) struct Here {
-    canvas: LibraryCanvas,
-    operations: Vec<&'static str>,
-}
-
-impl Here {
-    pub(crate) fn of(app: &MaterialCraftApp) -> Here {
-        match EditorTarget::resolve(app) {
-            EditorTarget::Material => Here { canvas: LibraryCanvas::Material, operations: Vec::new() },
-            EditorTarget::Pattern => Here { canvas: LibraryCanvas::Pattern, operations: Vec::new() },
-            EditorTarget::Function => Here { canvas: LibraryCanvas::Function, operations: crate::function::library::available_operations(app) },
-        }
-    }
-
-    /// Whether `entry` can go into the open graph now
-    pub(crate) fn takes(&self, entry: &LibraryEntry) -> bool {
-        entry.missing.is_none()
-            && entry.canvas == self.canvas
-            && match &entry.item {
-                LibraryItem::Operation { operation } => self.operations.contains(&operation.as_str()),
-                _ => true,
-            }
-    }
-
-    /// Why `entry` can't go into the open graph, when it can't
-    fn refusal(&self, entry: &LibraryEntry) -> Option<String> {
-        if let Some(missing) = &entry.missing {
-            return Some(missing.clone());
-        }
-        if entry.canvas != self.canvas {
-            return Some(
-                match entry.canvas {
-                    LibraryCanvas::Material => tr("Open a graph to add this"),
-                    LibraryCanvas::Function => tr("Open a function graph or a processor's function to add this"),
-                    LibraryCanvas::Pattern => tr("Open an FX-Map to add this"),
-                }
-                .to_string(),
-            );
-        }
-        (!self.takes(entry)).then(|| tr("This function can't use this node").to_string())
-    }
-}
-
 /// The library's entries for the open session, rebuilt when its packages change
 fn entries(app: &MaterialCraftApp, ctx: &egui::Context) -> Arc<Vec<LibraryEntry>> {
     type Cached = (Vec<(String, usize)>, Arc<Vec<LibraryEntry>>);
@@ -125,22 +83,24 @@ fn entries(app: &MaterialCraftApp, ctx: &egui::Context) -> Arc<Vec<LibraryEntry>
     {
         return list.clone();
     }
+
     let list = Arc::new(app.session.library_entries());
     ctx.data_mut(|data| data.insert_temp(id, Arc::new((key, list.clone()))));
     list
 }
 
+/// Draw the shared library tree and search results for the active editor.
 pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
-    let tk = Tokens::get(ui.ctx());
-    let here = Here::of(app);
+    let tokens = Tokens::get(ui.ctx());
+    let target = LibraryTarget::of(app);
     let all = entries(app, ui.ctx());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(tk.text_dim));
-        let hint = match here.canvas {
+        ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(tokens.text_dim));
+        let hint = match target.canvas {
             LibraryCanvas::Function => tr("Search functions"),
             LibraryCanvas::Pattern => tr("Search FX-Map nodes"),
-            LibraryCanvas::Material => tr("Search"),
+            LibraryCanvas::Any | LibraryCanvas::Material => tr("Search"),
         };
         let width = (ui.available_width() - 5.0 * 24.0).max(40.0);
         let response = ui.add(egui::TextEdit::singleline(&mut app.ui.library_search).hint_text(hint).desired_width(width));
@@ -166,21 +126,23 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
     });
     ui.add_space(2.0);
-    let avail = ui.available_size();
+    let available_size = ui.available_size();
+
     // The tree takes what the tiles leave: one column of tiles in a narrow panel
-    let tree_w = (avail.x * 0.6).clamp(120.0, 230.0).min(avail.x - 92.0).max(80.0);
+    let tree_width = (available_size.x * 0.6).clamp(120.0, 230.0).min(available_size.x - 92.0).max(80.0);
     let top_down = egui::Layout::top_down(egui::Align::Min);
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(vec2(tree_w, avail.y), top_down, |ui| {
+        ui.allocate_ui_with_layout(vec2(tree_width, available_size.y), top_down, |ui| {
             egui::ScrollArea::vertical().id_salt("lib-tree").auto_shrink([false, false]).show(ui, |ui| category_tree(app, ui, &all));
         });
         ui.separator();
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), avail.y), top_down, |ui| {
-            egui::ScrollArea::vertical().id_salt("lib-items").auto_shrink([false, false]).show(ui, |ui| items(app, ui, &all, &here));
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), available_size.y), top_down, |ui| {
+            egui::ScrollArea::vertical().id_salt("lib-items").auto_shrink([false, false]).show(ui, |ui| items(app, ui, &all, &target));
         });
     });
 }
 
+/// Expose availability and canvas filters without changing the selected category.
 fn filter_menu(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let filtered = !app.ui.library_show_missing || !app.ui.library_show_other;
     let response = crate::widgets::icon_button(ui, icon::FUNNEL, tr("Filter"), filtered, 22.0);
@@ -191,6 +153,7 @@ fn filter_menu(app: &mut MaterialCraftApp, ui: &mut Ui) {
     });
 }
 
+/// Toggle an entry while bounding the saved favorites list.
 fn toggle_favorite(app: &mut MaterialCraftApp, id: &str) {
     if let Some(index) = app.ui.library_favorites.iter().position(|favorite| favorite == id) {
         app.ui.library_favorites.remove(index);
@@ -201,24 +164,24 @@ fn toggle_favorite(app: &mut MaterialCraftApp, id: &str) {
 
 /// One tree row: an optional disclosure triangle, the category icon and its name
 fn tree_row(app: &mut MaterialCraftApp, ui: &mut Ui, label: &str, category: &str, depth: usize, open: Option<bool>, count: usize) {
-    let tk = Tokens::get(ui.ctx());
+    let tokens = Tokens::get(ui.ctx());
     let selected = app.ui.library_category == category;
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::click());
     crate::widgets::name(&response, egui::Role::TreeItem, label);
     let response = response.on_hover_text(crate::i18n::trf("{name}: {count} entries", &[("name", &label), ("count", &count)]));
     if selected {
-        ui.painter().rect_filled(rect, 4.0, tk.row_selected);
+        ui.painter().rect_filled(rect, 4.0, tokens.row_selected);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 4.0, tk.row_hover);
+        ui.painter().rect_filled(rect, 4.0, tokens.row_hover);
     }
     let indent = 4.0 + depth as f32 * 14.0;
     let chevron = Rect::from_min_size(rect.min + vec2(indent, 0.0), vec2(14.0, rect.height()));
     if let Some(open) = open {
         let symbol = if open { icon::CARET_DOWN } else { icon::CARET_RIGHT };
-        ui.painter().text(chevron.center(), egui::Align2::CENTER_CENTER, symbol, egui::FontId::proportional(11.0), tk.text_dim);
+        ui.painter().text(chevron.center(), egui::Align2::CENTER_CENTER, symbol, egui::FontId::proportional(11.0), tokens.text_dim);
     }
     let x = chevron.right() + 2.0;
-    let color = if selected { tk.text_strong } else { tk.text };
+    let color = if selected { tokens.text_strong } else { tokens.text };
     ui.painter().text(egui::pos2(x + 7.0, rect.center().y), egui::Align2::CENTER_CENTER, category_icon(category), egui::FontId::proportional(13.0), color);
     let font = if depth == 0 { 12.0 } else { 11.5 };
     let galley = crate::widgets::elided(ui.painter(), label.to_string(), font, color, rect.right() - x - 22.0);
@@ -236,6 +199,7 @@ fn tree_row(app: &mut MaterialCraftApp, ui: &mut Ui, label: &str, category: &str
     }
 }
 
+/// Persist the expansion state of one category.
 fn set_open(app: &mut MaterialCraftApp, category: &str, open: bool) {
     if open {
         app.ui.library_expanded.insert(category.to_string());
@@ -249,6 +213,7 @@ fn count(entries: &[LibraryEntry], category: &str) -> usize {
     entries.iter().filter(|entry| entry.category == category || entry.category.strip_prefix(category).is_some_and(|rest| rest.starts_with('/'))).count()
 }
 
+/// Draw known categories first, followed by categories supplied by packages.
 fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntry]) {
     ui.spacing_mut().item_spacing.y = 1.0;
     let favorites = app.ui.library_favorites.len();
@@ -263,6 +228,7 @@ fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntr
             }
         }
     }
+
     // Packages can name categories the tree doesn't have; they go last
     let mut extra: Vec<&str> = Vec::new();
     for entry in entries {
@@ -276,72 +242,63 @@ fn category_tree(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntr
     }
 }
 
-/// Entries matching the selected category, or the search across the whole library, with what the
-/// open graph can take first when searching
-pub(crate) fn visible<'a>(app: &MaterialCraftApp, entries: &'a [LibraryEntry], here: &Here) -> Vec<&'a LibraryEntry> {
+/// Matching entries ordered by their displayed names in tiles and list views.
+pub(crate) fn visible<'a>(app: &MaterialCraftApp, entries: &'a [LibraryEntry], target: &LibraryTarget) -> Vec<&'a LibraryEntry> {
     let search = app.ui.library_search.trim().to_lowercase();
     let category = app.ui.library_category.as_str();
-    let mut out: Vec<(u8, &LibraryEntry)> = entries
+    let mut visible: Vec<_> = entries
         .iter()
         .filter(|entry| app.ui.library_show_missing || entry.missing.is_none())
-        .filter(|entry| app.ui.library_show_other || entry.canvas == here.canvas)
-        .filter_map(|entry| {
+        .filter(|entry| app.ui.library_show_other || entry.canvas == LibraryCanvas::Any || entry.canvas == target.canvas)
+        .filter(|entry| {
             if !search.is_empty() {
-                let label = entry.label.to_lowercase();
-                let rank = if label == search {
-                    0
-                } else if label.starts_with(&search) {
-                    1
-                } else if label.contains(&search) || entry.id.to_lowercase().contains(&search) {
-                    2
-                } else {
-                    return None;
-                };
-                return Some((rank + if here.takes(entry) { 0 } else { 3 }, entry));
+                return tr(&entry.label).to_lowercase().contains(&search) || entry.id.to_lowercase().contains(&search);
             }
-            let fits = match category {
+
+            match category {
                 "" => true,
                 FAVORITES => app.ui.library_favorites.contains(&entry.id),
                 category => entry.category == category || entry.category.strip_prefix(category).is_some_and(|rest| rest.starts_with('/')),
-            };
-            fits.then_some((0, entry))
+            }
         })
         .collect();
-    out.sort_by_key(|(rank, _)| *rank);
-    out.into_iter().map(|(_, entry)| entry).collect()
+    visible.sort_by_cached_key(|entry| (tr(&entry.label).to_lowercase(), entry.id.as_str()));
+    visible
 }
 
-fn items(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntry], here: &Here) {
-    let tk = Tokens::get(ui.ctx());
+/// Draw matching entries and dispatch compatible additions or favorite changes.
+fn items(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntry], target: &LibraryTarget) {
+    let tokens = Tokens::get(ui.ctx());
     let ctx = ui.ctx().clone();
-    let list = visible(app, entries, here);
+    let list = visible(app, entries, target);
     if list.is_empty() {
         let text = match app.ui.library_category.as_str() {
             FAVORITES if app.ui.library_search.trim().is_empty() => tr("Select an entry and click the star to add it to Favorites"),
             category if app.ui.library_search.trim().is_empty() && !category.is_empty() => tr("Nothing in this category yet"),
             _ => tr("Nothing matches"),
         };
-        ui.label(RichText::new(text).color(tk.text_dim));
+        ui.label(RichText::new(text).color(tokens.text_dim));
         return;
     }
+
     let as_list = app.ui.prefs.library_list;
     let tile = vec2(78.0, 100.0);
-    let cols = if as_list { 1 } else { ((ui.available_width() + 4.0) / (tile.x + 4.0)).floor().max(1.0) as usize };
+    let columns = if as_list { 1 } else { ((ui.available_width() + 4.0) / (tile.x + 4.0)).floor().max(1.0) as usize };
     let mut add = None;
     let mut favorite = None;
-    for chunk in list.chunks(cols) {
+    for chunk in list.chunks(columns) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
             for entry in chunk {
                 let size = if as_list { vec2(ui.available_width(), 26.0) } else { tile };
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 crate::widgets::name(&response, egui::Role::ListItem, &entry.label);
-                let takes = here.takes(entry);
+                let takes = target.takes(entry);
                 let selected = app.ui.library_selected.as_deref() == Some(entry.id.as_str());
                 if selected {
-                    ui.painter().rect_filled(rect, 6.0, tk.row_selected);
+                    ui.painter().rect_filled(rect, 6.0, tokens.row_selected);
                 } else if response.hovered() {
-                    ui.painter().rect_filled(rect, 6.0, tk.row_hover);
+                    ui.painter().rect_filled(rect, 6.0, tokens.row_hover);
                 }
                 let fade = if takes { 1.0 } else { 0.4 };
                 let image = if as_list {
@@ -350,7 +307,7 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntry], here
                     Rect::from_min_size(rect.min + vec2(5.0, 4.0), vec2(68.0, 68.0))
                 };
                 preview(app, ui, &ctx, entry, image, fade);
-                let color = if entry.warning.is_some() { WARNING } else { tk.text };
+                let color = if entry.warning.is_some() { WARNING } else { tokens.text };
                 let color = color.gamma_multiply(if takes { 1.0 } else { 0.55 });
                 if as_list {
                     let galley = crate::widgets::elided(ui.painter(), entry.label.clone(), 11.5, color, rect.width() - 34.0);
@@ -361,14 +318,20 @@ fn items(app: &mut MaterialCraftApp, ui: &mut Ui, entries: &[LibraryEntry], here
                     ui.painter().with_clip_rect(rect).galley(pos, galley, color);
                 }
                 if app.ui.library_favorites.contains(&entry.id) {
-                    ui.painter().text(rect.right_top() + vec2(-8.0, 9.0), egui::Align2::CENTER_CENTER, icon::STAR, egui::FontId::proportional(10.0), tk.accent);
+                    ui.painter().text(
+                        rect.right_top() + vec2(-8.0, 9.0),
+                        egui::Align2::CENTER_CENTER,
+                        icon::STAR,
+                        egui::FontId::proportional(10.0),
+                        tokens.accent,
+                    );
                 }
 
                 let mut tip = format!("{}\n{}", entry.label, tr(&entry.category));
                 if !entry.description.is_empty() {
                     tip.push_str(&format!("\n\n{}", entry.description));
                 }
-                if let Some(reason) = here.refusal(entry).or_else(|| entry.warning.clone()) {
+                if let Some(reason) = target.refusal(entry).or_else(|| entry.warning.clone()) {
                     tip.push_str(&format!("\n\n{reason}"));
                 }
                 let response = response.on_hover_text(tip);
@@ -441,6 +404,7 @@ fn preview(app: &mut MaterialCraftApp, ui: &Ui, ctx: &egui::Context, entry: &Lib
     }
 }
 
+/// Choose the preview accent for an entry category.
 fn category_color(category: &str) -> Color32 {
     match category.split('/').next().unwrap_or("") {
         "Graph items" | "Atomic nodes" | "FxMap nodes" => Color32::from_rgb(0x5c, 0x62, 0x6e),
@@ -456,6 +420,7 @@ fn category_color(category: &str) -> Color32 {
     }
 }
 
+/// Create the payload accepted by the destination canvas.
 fn drag(ctx: &egui::Context, entry: &LibraryEntry) {
     match &entry.item {
         LibraryItem::Operation { operation } => egui::DragAndDrop::set_payload(ctx, FunctionLibraryDrag::Operation(operation.clone())),
@@ -469,6 +434,25 @@ fn drag(ctx: &egui::Context, entry: &LibraryEntry) {
 
 /// Add `entry` to the open graph: native nodes next to the selection, the rest in the view
 pub(crate) fn add_entry(app: &mut MaterialCraftApp, entry: &LibraryEntry) {
+    if entry.canvas == LibraryCanvas::Any {
+        let target = crate::annotation::target(app);
+        crate::annotation::activate(app, target);
+        let camera = crate::annotation::camera(app);
+        let at = [camera.pan[0] + app.graph.view.width() * 0.5 / camera.zoom, camera.pan[1] + app.graph.view.height() * 0.5 / camera.zoom];
+        if let Some(result) = app.run("library.add", serde_json::json!({"entry": entry.id, "at": at, "snapToGrid": app.ui.prefs.snap_to_grid})) {
+            let id = result["result"]["id"].as_u64().and_then(|id| u32::try_from(id).ok());
+            let selection = if app.session.annotation_selection.is_some() { Vec::new() } else { id.into_iter().collect() };
+            if let Some(editor) = &mut app.function_editor {
+                editor.selection = selection.clone();
+                editor.selected_wires.clear();
+            }
+            if let Some(editor) = &mut app.pattern_editor {
+                editor.selection = selection;
+                editor.selected_wires.clear();
+            }
+        }
+        return;
+    }
     match &entry.item {
         LibraryItem::Operation { operation } => crate::function::library::add(app, &FunctionLibraryDrag::Operation(operation.clone())),
         LibraryItem::FunctionInstance { package, graph } => {

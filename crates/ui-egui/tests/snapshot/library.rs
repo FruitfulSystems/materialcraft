@@ -1,14 +1,17 @@
 use super::{By, MaterialCraftApp, Queryable, UiState, harness, save, settle, vec2};
 use egui::accesskit::Role;
 
+/// Find a category by its accessible tree label.
 fn tree(label: &str) -> By<'_> {
     By::new().role(Role::TreeItem).label(label)
 }
 
+/// Find an entry by its accessible list-item label.
 fn tile(label: &str) -> By<'_> {
     By::new().role(Role::ListItem).label(label)
 }
 
+/// Render categories, search and favorites while exercising a library drag.
 #[test]
 #[ignore = "requires an offscreen GPU; run explicitly with --ignored"]
 fn library_tree_shows_every_category_and_adds_what_the_graph_takes() {
@@ -110,6 +113,7 @@ fn library_tree_shows_every_category_and_adds_what_the_graph_takes() {
         if top == "PBR materials" {
             save(&mut harness, &directory, "library-categories-open");
         }
+
         // Clicking the selected, open category closes it again
         harness.get(tree(top)).click();
         settle(&mut harness, 2);

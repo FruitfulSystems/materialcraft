@@ -1,4 +1,4 @@
-use super::{FunctionEditor, FunctionTarget};
+use super::FunctionEditor;
 use crate::MaterialCraftApp;
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, command: &str) -> Option<bool> {
@@ -12,8 +12,8 @@ pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, co
     if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, target.as_ref()) {
         return Some(enabled && editor.current(app).is_some());
     }
-    let standalone = matches!(editor.target, FunctionTarget::Graph);
-    if standalone && app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
+
+    if app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
         return None;
     }
     if let Some(target) = editor.command_target()
@@ -28,7 +28,7 @@ pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &FunctionEditor, co
     }
     match command {
         "edit.undo" | "edit.redo" | "edit.finish" | "graph.cook" | "ui.graph.snapToGrid" => None,
-        "ui.graph.previousPin" | "ui.graph.nextPin" | "graph.comment.add" | "graph.frame.add" | "graph.pin.add" if standalone => None,
+        "ui.graph.previousPin" | "ui.graph.nextPin" | "graph.comment.add" | "graph.frame.add" | "graph.pin.add" => None,
         command if command.starts_with("graph.") || command.starts_with("ui.graph.") || command.starts_with("edit.") => Some(false),
         _ => None,
     }

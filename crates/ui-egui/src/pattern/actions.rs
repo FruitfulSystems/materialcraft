@@ -16,7 +16,14 @@ pub(crate) fn enabled(app: &MaterialCraftApp, command: &str) -> Option<bool> {
         return Some(enabled);
     }
     match command {
-        "ui.graph.snapToGrid" | "graph.cook" | "edit.finish" => None,
+        "ui.graph.snapToGrid"
+        | "graph.cook"
+        | "edit.finish"
+        | "graph.frame.add"
+        | "graph.comment.add"
+        | "graph.pin.add"
+        | "ui.graph.nextPin"
+        | "ui.graph.previousPin" => None,
         command
             if command.starts_with("graph.")
                 || command.starts_with("ui.graph.")
@@ -43,6 +50,10 @@ pub(crate) fn invoke(app: &mut MaterialCraftApp, command: &str) -> bool {
 }
 
 pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut PatternEditor, command: &str) {
+    if app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
+        app.run(command, serde_json::json!({}));
+        return;
+    }
     if editor_enabled(app, editor, command) != Some(true) {
         return;
     }
@@ -61,6 +72,9 @@ pub(super) fn invoke_editor(app: &mut MaterialCraftApp, editor: &mut PatternEdit
 }
 
 pub(super) fn editor_enabled(app: &MaterialCraftApp, editor: &PatternEditor, command: &str) -> Option<bool> {
+    if app.session.annotation_selection.is_some() && matches!(command, "edit.delete" | "edit.deleteRelink") {
+        return Some(true);
+    }
     let target = materialcraft_engine::SelectionTarget::Pattern(editor.node);
     if let Some(enabled) = crate::graph::wire_actions::enabled(app, command, &editor.selected_wires, Some(&target)) {
         return Some(enabled && editor.current(app).is_some());

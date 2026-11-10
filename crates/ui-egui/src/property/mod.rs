@@ -31,7 +31,7 @@ pub fn title(app: &MaterialCraftApp) -> String {
     }
 
     match EditorTarget::resolve(app) {
-        EditorTarget::Pattern => return crate::pattern::properties::title(app),
+        EditorTarget::Pattern if !EditorTarget::annotation_active(app) => return crate::pattern::properties::title(app),
         EditorTarget::Function if !EditorTarget::annotation_active(app) => {
             return crate::function::properties::title(app).unwrap_or_else(|| {
                 let name = app.session.graph().ok().filter(|graph| graph.function.is_some()).map_or(tr("Function Graph"), |graph| graph.name.as_str());
@@ -45,6 +45,7 @@ pub fn title(app: &MaterialCraftApp) -> String {
         let name = match selection {
             materialcraft_engine::AnnotationSelection::Frame(_) => tr("Frame"),
             materialcraft_engine::AnnotationSelection::Comment(_) => tr("Comment"),
+            materialcraft_engine::AnnotationSelection::Pin(_) => tr("Navigation Pin"),
         };
         return format!("{name} - {}", tr("Properties"));
     }
@@ -73,7 +74,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }
 
         match EditorTarget::resolve(app) {
-            EditorTarget::Pattern => {
+            EditorTarget::Pattern if !EditorTarget::annotation_active(app) => {
                 crate::pattern::properties::show(app, ui);
                 return;
             }

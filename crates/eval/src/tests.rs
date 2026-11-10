@@ -265,7 +265,11 @@ fn input_change_recooks_only_readers() {
         value: Some(Value::Text("a".into())),
         pos: [0.0; 2],
     };
-    p.graphs[0].node_mut(reader).unwrap().params.insert("function".into(), Value::Function(Box::new(FunctionGraph { nodes: vec![get_a], output: Some(1) })));
+    p.graphs[0]
+        .node_mut(reader)
+        .unwrap()
+        .params
+        .insert("function".into(), Value::Function(Box::new(FunctionGraph { nodes: vec![get_a], output: Some(1), ..Default::default() })));
     let cache = &Mutex::new(Cache::default());
     let mut opts = Options::new(&no_res);
     opts.overrides.insert("a".into(), Value::Float(0.25));

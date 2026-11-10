@@ -1,12 +1,14 @@
 use super::geometry::{in_port, node_rect, out_port, preview_rect};
-use super::{FunctionDrag, FunctionEditor, FunctionTarget, port_label::port_label};
+use super::{FunctionDrag, FunctionEditor, port_label::port_label};
 use super::{function_canvas::FunctionCanvas, function_port::FunctionPort};
 use crate::graph::canvas_geometry::CanvasGeometry;
 use crate::{MaterialCraftApp, graph::node_card, theme::Tokens};
 use egui::{Align2, Color32, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mut Ui) -> Option<FunctionCanvas> {
+pub(super) fn paint(app: &mut MaterialCraftApp, editor: &mut FunctionEditor, ui: &mut Ui) -> Option<FunctionCanvas> {
+    let (canvas_bounds, response) = ui.allocate_exact_size(ui.available_size().max(vec2(200.0, 200.0)), Sense::click_and_drag());
+    app.graph.view = canvas_bounds;
     let graph = editor.current(app)?;
     let snap = app.ui.prefs.snap_to_grid;
     let selected: BTreeSet<_> = editor.selection.iter().copied().collect();
@@ -21,9 +23,8 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             .is_some_and(Option::is_some)
     });
     editor.inspected_node = crate::graph::node_selection::inspected(&editor.selection, editor.inspected_node);
-    let standalone = matches!(editor.target, FunctionTarget::Graph);
+    let document = app.graph.annotation_target.items(&app.session).ok();
     let tokens = Tokens::get(ui.ctx());
-    let (canvas_bounds, response) = ui.allocate_exact_size(ui.available_size().max(vec2(200.0, 200.0)), Sense::click_and_drag());
     crate::widgets::name(&response, egui::Role::Canvas, "Function Graph");
     let painter = ui.painter_at(canvas_bounds);
     painter.rect_filled(canvas_bounds, 4.0, Color32::from_rgb(0x26, 0x28, 0x2c));
@@ -42,10 +43,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             .filter(|node| !selected_only || selected.contains(&node.id))
             .map(|node| node_rect(node, app.ui.prefs.thumbnails))
             .fold(Rect::NOTHING, |combined, bounds| combined.union(bounds));
-        if standalone
-            && !selected_only
-            && let Ok(document) = app.session.graph()
-        {
+        if !selected_only && let Some(document) = &document {
             for frame in &document.frames {
                 destination = destination.union(Rect::from_min_size(pos2(frame.rect[0], frame.rect[1] - 32.0), vec2(frame.rect[2], frame.rect[3] + 32.0)));
             }
@@ -59,7 +57,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
     camera.zoom_from_input(ui, canvas_bounds);
     editor.pan = camera.pan;
     editor.zoom = camera.zoom;
-    let document = standalone.then(|| app.session.graph().ok()).flatten();
+
     let frame_hits = document.as_ref().map(|graph| crate::graph::annotation_canvas::frames(app, ui, &graph.frames, &camera)).unwrap_or_default();
     crate::graph::grid::paint(&painter, &camera, canvas_bounds);
 
@@ -167,7 +165,7 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
             if !keep_wires {
                 editor.selected_wires.clear();
             }
-            if standalone && app.session.annotation_selection.is_some() {
+            if app.session.annotation_selection.is_some() {
                 clear_annotation = true;
             }
         }
@@ -193,8 +191,6 @@ pub(super) fn paint(app: &MaterialCraftApp, editor: &mut FunctionEditor, ui: &mu
         .collect();
 
     let comments = document.as_ref().map(|document| crate::graph::annotation_canvas::comments(app, ui, &document.comments, &camera)).unwrap_or_default();
-    if let Some(document) = &document {
-        crate::graph::annotation_canvas::pins(app, ui, &document.pins, &camera);
-    }
-    Some(FunctionCanvas { response, camera, geometry, ports, nodes, values, frames: frame_hits, comments, clear_annotation })
+    let pins = document.as_ref().map(|document| crate::graph::annotation_canvas::pins(app, ui, &document.pins, &camera)).unwrap_or_default();
+    Some(FunctionCanvas { response, camera, geometry, ports, nodes, values, frames: frame_hits, comments, pins, clear_annotation })
 }

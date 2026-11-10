@@ -8,9 +8,13 @@ use roxmltree::Node as XmlNode;
 use std::fmt::Write as _;
 
 pub(super) fn write_canvas_items(output: &mut String, graph: &Graph, writer: &mut SbsWriter) {
+    write_items(output, &graph.frames, &graph.comments, &graph.pins, writer);
+}
+
+pub(super) fn write_items(output: &mut String, frames: &[Frame], comments: &[Comment], pins: &[Pin], writer: &mut SbsWriter) {
     output.push_str("<GUIObjects>");
 
-    for frame in &graph.frames {
+    for frame in frames {
         let [x, y, width, height] = frame.rect.map(format_float);
         let [red, green, blue] = [0, 1, 2].map(|channel| format_float(linear_to_srgb(frame.color[channel])));
         let _ = write!(
@@ -24,7 +28,7 @@ pub(super) fn write_canvas_items(output: &mut String, graph: &Graph, writer: &mu
         );
     }
 
-    for comment in &graph.comments {
+    for comment in comments {
         let [x, y] = comment.pos.map(format_float);
         let [width, height] = comment.size.map(format_float);
         let _ = write!(
@@ -35,7 +39,7 @@ pub(super) fn write_canvas_items(output: &mut String, graph: &Graph, writer: &mu
         );
     }
 
-    for pin in &graph.pins {
+    for pin in pins {
         let [x, y] = pin.pos.map(format_float);
         let _ = write!(
             output,
@@ -84,4 +88,11 @@ pub(super) fn read_canvas_items(element: XmlNode, graph: &mut Graph, warnings: &
             None => {}
         }
     }
+}
+
+/// Embedded canvases use the same GUIObjects schema as document graphs.
+pub(super) fn read_embedded(element: XmlNode) -> materialcraft_core::CanvasAnnotations {
+    let mut graph = Graph::new("embedded");
+    read_canvas_items(element, &mut graph, &mut Warnings::default());
+    materialcraft_core::CanvasAnnotations { frames: graph.frames, comments: graph.comments, pins: graph.pins }
 }

@@ -15,6 +15,7 @@ pub(super) fn handle(
     nodes: &[(NodeId, egui::Response)],
     frames: &[super::frame_hit::FrameHit],
     comments: &[(u64, Rect)],
+    pins: &[(u64, Rect)],
     port_hover: Option<PortHit>,
     wire_hover: Option<WireRef>,
 ) {
@@ -42,7 +43,9 @@ pub(super) fn handle(
                 app.run("graph.annotation.select", json!({}));
             }
 
-            let on_card = nodes.iter().any(|(_, response)| response.rect.contains(position)) || comments.iter().any(|(_, bounds)| bounds.contains(position));
+            let on_card = nodes.iter().any(|(_, response)| response.rect.contains(position))
+                || comments.iter().any(|(_, bounds)| bounds.contains(position))
+                || pins.iter().any(|(_, bounds)| bounds.contains(position));
             let wire = wire_hover.as_ref().filter(|_| port_hover.is_none() && !on_card);
             if wire.is_none() {
                 super::node_selection::select(&mut app.graph.selected_wires, None, modifiers);
@@ -59,6 +62,8 @@ pub(super) fn handle(
                 } else {
                     app.graph.drag = Some(GraphDrag::InputWire { to: (port.node, port.port.clone()) });
                 }
+            } else if let Some((id, _)) = pins.iter().rev().find(|(_, bounds)| bounds.contains(position)) {
+                super::annotation_input::begin_pin(app, *id);
             } else if let Some((id, _)) = comments.iter().rev().find(|(_, bounds)| bounds.contains(position)) {
                 super::annotation_input::begin_comment(app, *id);
             } else if let Some((id, _)) = nodes.iter().rev().find(|(_, response)| response.rect.contains(position)) {
@@ -78,7 +83,10 @@ pub(super) fn handle(
             let delta = context.input(|input| input.pointer.delta()) / zoom;
             app.ui.graph_camera.pan = [app.ui.graph_camera.pan[0] - delta.x, app.ui.graph_camera.pan[1] - delta.y];
         }
-        Some(GraphDrag::Nodes { delta }) | Some(GraphDrag::Frame { delta, .. }) | Some(GraphDrag::Comment { delta, .. }) => *delta += motion,
+        Some(GraphDrag::Nodes { delta })
+        | Some(GraphDrag::Frame { delta, .. })
+        | Some(GraphDrag::Comment { delta, .. })
+        | Some(GraphDrag::Pin { delta, .. }) => *delta += motion,
         Some(GraphDrag::WirePress { wire, start }) => {
             // Dragged far enough: a reroute dot where the press was, carried by the pointer
             if let Some(position) = pointer
@@ -145,7 +153,7 @@ pub(super) fn handle(
                     app.run("graph.connect", json!({"from": source.node.0, "fromPort": source.port, "to": to.0.0, "toPort": to.1}));
                 }
             }
-            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } => super::annotation_input::finish(app, drag),
+            GraphDrag::Frame { .. } | GraphDrag::Comment { .. } | GraphDrag::Pin { .. } => super::annotation_input::finish(app, drag),
         }
     }
 
@@ -183,6 +191,7 @@ pub(super) fn handle(
     let on_node = pointer.is_some_and(|position| {
         nodes.iter().any(|(_, response)| response.rect.contains(position))
             || comments.iter().any(|(_, bounds)| bounds.contains(position))
+            || pins.iter().any(|(_, bounds)| bounds.contains(position))
             || frames.iter().any(|frame| frame.contains(position))
     });
     if canvas.double_clicked()
@@ -204,7 +213,9 @@ pub(super) fn handle(
         && let Some(position) = pointer
     {
         app.graph.menu_at = camera.to_graph(position);
-        if let Some((id, _)) = comments.iter().rev().find(|(_, rect)| rect.contains(position)) {
+        if let Some((id, _)) = pins.iter().rev().find(|(_, rect)| rect.contains(position)) {
+            app.run("graph.annotation.select", json!({"kind": "pin", "id": id}));
+        } else if let Some((id, _)) = comments.iter().rev().find(|(_, rect)| rect.contains(position)) {
             app.run("graph.annotation.select", json!({"kind": "comment", "id": id}));
         } else if let Some(hit) = frames.iter().rev().find(|frame| frame.contains(position)) {
             app.run("graph.annotation.select", json!({"kind": "frame", "id": hit.id}));
@@ -247,7 +258,7 @@ pub(super) fn handle(
     {
         let graph_position = camera.to_graph(position);
         let at = [graph_position.x - NODE_W * 0.5, graph_position.y - 20.0];
-        app.run("library.add", json!({"entry": payload.0, "at": at}));
+        app.run("library.add", json!({"entry": payload.0, "at": at, "snapToGrid": app.ui.prefs.snap_to_grid}));
     }
 
     // Keys over the canvas

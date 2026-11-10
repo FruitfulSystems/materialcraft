@@ -2,10 +2,12 @@ use super::ExplorerTarget;
 use crate::{MaterialCraftApp, i18n::tr};
 use serde_json::json;
 
+/// Activate the target package before dispatching its Explorer action.
 pub(super) fn activate(app: &mut MaterialCraftApp, document: u64) -> bool {
     document == app.session.document_id || app.run("package.activate", json!({"document": document})).is_some()
 }
 
+/// Dispatch an Explorer action using the selected item and its owning package.
 pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: ExplorerTarget, command: &str) {
     if command == "graph.resource.add" {
         let mut parameters = target.parameters();
@@ -106,11 +108,13 @@ fn compute_outputs(app: &mut MaterialCraftApp, target: &ExplorerTarget) {
     }
 }
 
+/// Return the active package path for native file actions.
 #[cfg(not(target_arch = "wasm32"))]
 fn package_path(app: &MaterialCraftApp) -> Option<String> {
     app.session.open_packages().into_iter().find(|entry| entry.0 == app.session.document_id).and_then(|entry| entry.2.map(str::to_string))
 }
 
+/// Reveal the active package file when supported by the platform.
 #[cfg(not(target_arch = "wasm32"))]
 fn show_in_folder(app: &mut MaterialCraftApp) {
     let Some(path) = package_path(app) else { return };
@@ -119,6 +123,7 @@ fn show_in_folder(app: &mut MaterialCraftApp) {
     }
 }
 
+/// Reveal the active package file when supported by the platform.
 #[cfg(target_arch = "wasm32")]
 fn show_in_folder(_: &mut MaterialCraftApp) {}
 
@@ -133,9 +138,11 @@ fn open_dependencies(app: &mut MaterialCraftApp) {
     activate(app, document);
 }
 
+/// Native dependency-file actions are unavailable in the browser.
 #[cfg(target_arch = "wasm32")]
 fn open_dependencies(_: &mut MaterialCraftApp) {}
 
+/// Apply a validated graph or folder rename through the engine.
 pub(super) fn rename_dialog(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let Some((target, mut name)) = app.ui.explorer.rename.clone() else { return };
     let mut open = true;

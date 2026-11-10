@@ -2,9 +2,9 @@
 
 use serde_json::{Value as J, json};
 
-use materialcraft_core::{ExposedParameter, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Pin, Value};
+use materialcraft_core::{ExposedParameter, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Value};
 
-use crate::commands::{CommandSpec, always, bad, boolp, f32p, has_graph, has_selection, i64p, ids_param, point, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, boolp, f32p, has_graph, has_selection, i64p, ids_param, strp, u64p};
 use crate::{Result, Session, cmd};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
@@ -31,8 +31,6 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             has_graph,
             cook
         ),
-        cmd!("graph.pin.add", "Add Navigation pin", [], None, "{name?, at? [x, y]}", has_graph, pin_add),
-        cmd!("graph.pin.delete", "Delete pin", [], None, "{id}", has_graph, pin_delete),
         cmd!(
             "graph.exposed.add",
             "Expose parameter",
@@ -192,25 +190,6 @@ pub fn nodes_rect(s: &Session, ids: &[NodeId]) -> Option<[f32; 4]> {
         r = [r[0].min(n.pos[0]), r[1].min(n.pos[1]), r[2].max(n.pos[0] + 96.0), r[3].max(n.pos[1] + 110.0)];
     }
     (r[0] < f32::MAX).then(|| [r[0], r[1], r[2] - r[0], r[3] - r[1]])
-}
-
-fn pin_add(s: &mut Session, p: &J) -> Result<J> {
-    let at = point(p, "at").unwrap_or([0.0, 0.0]);
-    s.edit("Add pin", |s| {
-        let g = s.graph_mut()?;
-        let id = g.alloc_id();
-        let name = strp(p, "name").map(str::to_string).unwrap_or_else(|| format!("Pin {}", g.pins.len() + 1));
-        g.pins.push(Pin { id, name, pos: at });
-        Ok(json!({"id": id}))
-    })
-}
-
-fn pin_delete(s: &mut Session, p: &J) -> Result<J> {
-    let id = u64p(p, "id").ok_or_else(|| bad("graph.pin.delete", "`id` is required"))?;
-    s.edit("Delete pin", |s| {
-        s.graph_mut()?.pins.retain(|c| c.id != id);
-        Ok(J::Null)
-    })
 }
 
 fn exposed_add(s: &mut Session, p: &J) -> Result<J> {

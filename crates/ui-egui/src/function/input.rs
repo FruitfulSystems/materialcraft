@@ -30,11 +30,7 @@ pub(super) fn handle(
         && !on_annotation
         && !ui.input(|input| input.modifiers.alt)
         && crate::graph::wire_selection::handle(&mut editor.selected_wires, &mut editor.selection, ui, response, &geometry.wires);
-    if on_wire
-        && matches!(editor.target, super::FunctionTarget::Graph)
-        && app.session.annotation_selection.is_some()
-        && (ui.input(|input| input.pointer.primary_pressed()) || response.secondary_clicked())
-    {
+    if on_wire && app.session.annotation_selection.is_some() && (ui.input(|input| input.pointer.primary_pressed()) || response.secondary_clicked()) {
         app.run("graph.annotation.select", serde_json::json!({}));
     }
 
@@ -68,7 +64,7 @@ pub(super) fn handle(
         && !on_annotation
         && !on_wire
     {
-        if matches!(editor.target, super::FunctionTarget::Graph) && app.session.annotation_selection.is_some() {
+        if app.session.annotation_selection.is_some() {
             app.run("graph.annotation.select", serde_json::json!({}));
         }
         editor.drag = Some(FunctionDrag::Box { start });
@@ -167,6 +163,20 @@ pub(super) fn handle(
             editor.selection = vec![id];
             editor.selected_wires.clear();
             editor.inspected_node = Some(id);
+        }
+    }
+
+    if let Some(payload) = crate::widgets::dnd_release::<crate::graph::LibraryDrag>(response)
+        && let Some(pointer) = pointer
+    {
+        let at = camera.to_graph(pointer);
+        if let Some(result) = app.run("library.add", serde_json::json!({"entry": payload.0, "at": [at.x, at.y], "snapToGrid": snap})) {
+            editor.selection = if app.session.annotation_selection.is_some() {
+                Vec::new()
+            } else {
+                result["result"]["id"].as_u64().and_then(|id| u32::try_from(id).ok()).into_iter().collect()
+            };
+            editor.selected_wires.clear();
         }
     }
 

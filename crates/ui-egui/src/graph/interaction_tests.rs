@@ -867,3 +867,58 @@ fn wires_pulled_from_an_unconnected_input_connect_on_an_output() {
     frames.app.session.undo().unwrap();
     assert_eq!(wires(&frames).len(), 2);
 }
+
+/// A library drop uses the same snapping preference as other node additions.
+#[test]
+fn review_library_drop_respects_grid_preference() {
+    for snapping in [true, false] {
+        let mut frames = Frames::new(new_session());
+        frames.app.ui.prefs.snap_to_grid = snapping;
+        let position = frames.app.graph.view.center() + vec2(113.0, 77.0);
+        frames.run(vec![Event::PointerMoved(position)], Modifiers::NONE);
+        frames.run(vec![Event::PointerButton { pos: position, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        egui::DragAndDrop::set_payload(&frames.ctx, super::LibraryDrag("node:blur".into()));
+        let camera =
+            super::GraphCamera { origin: frames.app.graph.view.min, pan: frames.app.ui.graph_camera.pan.into(), zoom: frames.app.ui.graph_camera.zoom };
+        let graph_position = camera.to_graph(position);
+        let expected = materialcraft_engine::graph_grid::snap_position([graph_position.x - super::NODE_W * 0.5, graph_position.y - 20.0], snapping);
+        let before = frames.app.session.graph().unwrap().nodes.len();
+
+        frames.run(vec![Event::PointerButton { pos: position, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE }], Modifiers::NONE);
+
+        let graph = frames.app.session.graph().unwrap();
+        assert_eq!(graph.nodes.len(), before + 1);
+        assert_eq!(graph.nodes.last().unwrap().pos, expected, "snapping: {snapping}");
+    }
+}
+
+/// Both standalone canvases hit the pin marker and description and preserve drag undo.
+#[test]
+fn navigation_pins_can_be_selected_dragged_and_deleted() {
+    for function in [false, true] {
+        let mut session = new_session();
+        if function {
+            materialcraft_engine::execute(&mut session, "file.new", &json!({"kind": "function"})).unwrap();
+        }
+        let mut frames = Frames::new(session);
+        let camera = &frames.app.ui.graph_camera;
+        let position = egui::Pos2::from(camera.pan) + frames.app.graph.view.size() * 0.5 / camera.zoom;
+        let id = frames.app.run("graph.pin.add", json!({"at": [position.x, position.y], "name": "Review checkpoint"})).unwrap()["id"].as_u64().unwrap();
+        frames.app.run("graph.annotation.select", json!({}));
+        frames.run(Vec::new(), Modifiers::NONE);
+        let from = frames.app.graph.view.center() + vec2(30.0, -10.0);
+        frames.click(from, Modifiers::NONE);
+        assert_eq!(serde_json::to_value(frames.app.session.annotation_selection).unwrap(), json!({"kind": "pin", "id": id}));
+        assert_eq!(crate::properties::title(&frames.app), "Navigation Pin - Properties");
+        let before = frames.app.session.graph().unwrap().pins[0].pos;
+        let zoom = frames.app.ui.graph_camera.zoom;
+        drag(&mut frames, from, from + vec2(64.0, 32.0) * zoom);
+        let after = frames.app.session.graph().unwrap().pins[0].pos;
+        assert!((after[0] - before[0] - 64.0).abs() < 0.01);
+        assert!((after[1] - before[1] - 32.0).abs() < 0.01);
+        frames.app.session.undo().unwrap();
+        assert_eq!(frames.app.session.graph().unwrap().pins[0].pos, before);
+        menus::invoke(&mut frames.app, &frames.ctx, "edit.delete");
+        assert!(frames.app.session.graph().unwrap().pins.is_empty());
+    }
+}

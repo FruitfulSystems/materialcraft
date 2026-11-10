@@ -6,6 +6,8 @@ use crate::FunctionNode;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FunctionGraph {
+    #[serde(default, skip_serializing_if = "crate::CanvasAnnotations::is_empty")]
+    pub annotations: crate::CanvasAnnotations,
     pub nodes: Vec<FunctionNode>,
     #[serde(default)]
     pub output: Option<u32>,

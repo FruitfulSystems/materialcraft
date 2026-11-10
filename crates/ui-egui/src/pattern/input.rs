@@ -4,7 +4,7 @@ use materialcraft_engine::PatternEdit;
 use super::{PatternDrag, PatternEditor};
 use crate::{MaterialCraftApp, graph::GraphCamera};
 
-pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui: &Ui, response: &Response, camera: &GraphCamera) {
+pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui: &Ui, response: &Response, camera: &GraphCamera, on_annotation: bool) {
     if crate::graph::gesture::cancelled(ui) {
         editor.drag = None;
         return;
@@ -21,7 +21,8 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
     let node = app.graph.rects.iter().rev().find(|(_, bounds)| bounds.contains(pointer)).map(|(id, _)| id.0 as u32);
     let modifiers = ui.input(|input| input.modifiers);
 
-    let on_wire = editor.drag.is_none()
+    let on_wire = !on_annotation
+        && editor.drag.is_none()
         && port.is_none()
         && node.is_none()
         && !modifiers.alt
@@ -32,7 +33,16 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
         && !(port.is_some() && modifiers.alt && ui.input(|input| input.pointer.primary_pressed()))
     {
         editor.drag = Some(PatternDrag::Pan(crate::graph::gesture::pan_button(ui)));
-    } else if editor.drag.is_none() && !on_wire && response.hovered() && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary)) {
+    } else if !on_annotation
+        && !app.graph.is_dragging()
+        && editor.drag.is_none()
+        && !on_wire
+        && response.hovered()
+        && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary))
+    {
+        if app.session.annotation_selection.is_some() {
+            app.run("graph.annotation.select", serde_json::json!({}));
+        }
         crate::graph::node_selection::select(&mut editor.selected_wires, None, modifiers);
         if let Some((id, slot)) = port {
             if modifiers.alt {
@@ -86,6 +96,17 @@ pub(super) fn handle(app: &mut MaterialCraftApp, editor: &mut PatternEditor, ui:
             }
             _ => {}
         }
+    }
+    if let Some(payload) = crate::widgets::dnd_release::<crate::graph::LibraryDrag>(response)
+        && let Some(result) =
+            app.run("library.add", serde_json::json!({"entry": payload.0, "at": [position.x, position.y], "snapToGrid": app.ui.prefs.snap_to_grid}))
+    {
+        editor.selection = if app.session.annotation_selection.is_some() {
+            Vec::new()
+        } else {
+            result["result"]["id"].as_u64().and_then(|id| u32::try_from(id).ok()).into_iter().collect()
+        };
+        editor.selected_wires.clear();
     }
     if response.secondary_clicked() {
         editor.menu_at = position;

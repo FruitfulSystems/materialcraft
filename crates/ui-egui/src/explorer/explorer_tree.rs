@@ -163,7 +163,8 @@ impl ExplorerTree<'_> {
                 _ => package.graphs.iter().any(|graph| graph.function.is_none()),
             };
             let dependencies = package.dependencies.keys().any(|path| super::actions::is_package_file(path));
-            let state = context_menu::MenuState { paste: self.session.explorer_clipboard.is_some(), saved: reload, dependencies, outputs };
+            let state =
+                super::explorer_menu_state::ExplorerMenuState { paste: self.session.explorer_clipboard.is_some(), saved: reload, dependencies, outputs };
             if let Some(command) = context_menu::show(ui, target, &state) {
                 self.action = Some((target.clone(), command));
             }

@@ -13,6 +13,9 @@ pub struct GraphView {
     pub ports: Vec<PortHit>,
     pub frames: Vec<(u64, Rect)>,
     pub comments: Vec<(u64, Rect)>,
+    pub pins: Vec<(u64, Rect)>,
+    pub(crate) annotation_target: materialcraft_engine::AnnotationTarget,
+    pub(crate) pin_description_focus: Option<u64>,
     /// The canvas rectangle last frame
     pub view: Rect,
     /// Graph point of the last right-click (context menu actions add things there)
@@ -28,10 +31,14 @@ pub struct GraphView {
 }
 
 impl GraphView {
-    pub(crate) fn cancel_gesture(&mut self) {
+    pub(crate) fn cancel_drag(&mut self) {
         self.drag = None;
         self.search = None;
         self.menu_wire = None;
+    }
+
+    pub(crate) fn cancel_gesture(&mut self) {
+        self.cancel_drag();
         self.framed_graph = None;
     }
     pub(crate) fn is_dragging(&self) -> bool {
@@ -51,6 +58,9 @@ impl Default for GraphView {
             ports: Vec::new(),
             frames: Vec::new(),
             comments: Vec::new(),
+            pins: Vec::new(),
+            annotation_target: Default::default(),
+            pin_description_focus: None,
             view: Rect::NOTHING,
             menu_at: Pos2::ZERO,
             framed_graph: None,

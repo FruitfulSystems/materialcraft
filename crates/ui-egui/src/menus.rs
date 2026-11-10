@@ -1,6 +1,7 @@
 //! Menu actions and shortcuts share stable command ids
 
 use craft_keymap::{Active, Bindable, Binding, Chord, Keymap, Platform, Scope, Scopes};
+use egui::class::HasClasses as _;
 use serde_json::Value;
 
 use crate::MaterialCraftApp;
@@ -27,15 +28,7 @@ pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 pub(crate) const EXPLORER_NEW: &[(&str, &str)] = &[("Graph", "ui.newGraph"), ("Function Graph", "ui.newFunctionGraph"), ("Folder", "folder.create")];
 pub(crate) const EXPLORER_IMPORT: &[(&str, &str)] = &[("Bitmap", "file.importBitmap"), ("Vector graphics", "file.importVector")];
 pub(crate) const EXPLORER_RESOURCE: &[(&str, &str)] = &[("Add to graph", "graph.resource.add")];
-/// A row of an Explorer context menu
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ExplorerRow {
-    /// A label, the action id (empty: not available yet) and the shortcut shown beside it
-    Item(&'static str, &'static str, Option<&'static str>),
-    /// A submenu of (label, action id); an empty id is not available yet
-    Sub(&'static str, &'static [(&'static str, &'static str)]),
-    Separator,
-}
+pub(crate) use crate::explorer::explorer_row::ExplorerRow;
 use ExplorerRow::{Item, Separator, Sub};
 
 /// Linking keeps a resource outside the package; MaterialCraft only embeds resources so far
@@ -294,44 +287,49 @@ pub fn shortcut_of(id: &str) -> Option<&'static str> {
     CATALOG.iter().find(|i| i.id == id).and_then(|i| i.shortcut).or_else(|| materialcraft_engine::find(id).and_then(|c| c.shortcut))
 }
 
+/// Draw menu bars with aligned labels and a separate gutter for checkmarks.
 pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
-    let tk = Tokens::get(ui.ctx());
-    egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(6, 0))).show(ui, |ui| {
+    let tokens = Tokens::get(ui.ctx());
+    egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(tokens.chrome).inner_margin(egui::Margin::symmetric(6, 0))).show(ui, |ui| {
         #[cfg(not(target_arch = "wasm32"))]
         let window_layout = app.window_layout.clone();
         #[cfg(not(target_arch = "wasm32"))]
         if window_layout.is_some() {
             craft_window::title_bar::empty_area(ui, ui.max_rect());
         }
+
         egui::MenuBar::new().ui(ui, |ui| {
-            let ctx = ui.ctx().clone();
+            let context = ui.ctx().clone();
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(layout) = &window_layout {
-                crate::window_controls::buttons(ui, &ctx, &layout.left);
+                crate::window_controls::buttons(ui, &context, &layout.left);
             }
             for top in TOP {
                 ui.menu_button(tr(top), |ui| {
                     ui.set_min_width(220.0);
-                    let mut current_sub: Option<&str> = None;
-                    let items: Vec<MenuItem> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
+                    let mut current_submenu: Option<&str> = None;
+                    let items: Vec<MenuItem> = CATALOG.iter().filter(|item| item.menu == top).copied().collect();
                     for item in &items {
-                        if let Some(s) = item.sub {
-                            if current_sub == Some(s) {
+                        if let Some(submenu) = item.sub {
+                            if current_submenu == Some(submenu) {
                                 continue;
                             }
-                            current_sub = Some(s);
-                            ui.menu_button(tr(s), |ui| {
-                                for x in items.iter().filter(|x| x.sub == Some(s)) {
-                                    menu_item(app, &ctx, ui, x);
+
+                            current_submenu = Some(submenu);
+                            ui.menu_button(menu_label(tr(submenu)), |ui| {
+                                for entry in items.iter().filter(|entry| entry.sub == Some(submenu)) {
+                                    menu_item(app, &context, ui, entry);
                                 }
                             });
                             continue;
                         }
+
                         if item.label == "-" {
                             ui.separator();
                             continue;
                         }
-                        menu_item(app, &ctx, ui, item);
+
+                        menu_item(app, &context, ui, item);
                     }
                 });
             }
@@ -340,46 +338,71 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut right = layout.right.clone();
                     right.reverse();
-                    crate::window_controls::buttons(ui, &ctx, &right);
+                    crate::window_controls::buttons(ui, &context, &right);
                 });
             }
         });
     });
 }
 
-fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
-    let modality = Modality::capture(app, ctx);
-    let on = modality.allows(item.id) && enabled(app, item.id);
-    let mut b = egui::Button::new(tr(item.label));
-    if let Some(sc) = item.shortcut {
-        b = b.shortcut_text(shortcut_label(ctx, sc));
+/// Reserve the same checkmark gutter for commands, toggles and submenus.
+fn menu_label(label: &str) -> (egui::Atom<'_>, &str) {
+    (egui::Atom::custom(egui::IdSalt::new("menu-checkmark"), egui::vec2(12.0, 12.0)), label)
+}
+
+/// Draw a command with an optional checkmark and dispatch it when activated.
+fn menu_item(app: &mut MaterialCraftApp, context: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
+    let modality = Modality::capture(app, context);
+    let is_enabled = modality.allows(item.id) && enabled(app, item.id);
+    let mut button = egui::Button::new(menu_label(tr(item.label)));
+    if let Some(shortcut) = item.shortcut {
+        button = button.shortcut_text(shortcut_label(context, shortcut));
     }
     let checked = match item.id {
         "ui.view.graph" => Some(true),
         "ui.graph.snapToGrid" => Some(app.ui.prefs.snap_to_grid),
-        id if id.starts_with("ui.preview.") => id.strip_prefix("ui.preview.").and_then(|s| s.parse::<u32>().ok()).map(|s| s == app.ui.prefs.preview_size),
-        id => crate::docking::view_panel(id).map(|p| app.ui.dock.is_open(p)),
+        id if id.starts_with("ui.preview.") => {
+            id.strip_prefix("ui.preview.").and_then(|size| size.parse::<u32>().ok()).map(|size| size == app.ui.prefs.preview_size)
+        }
+        id => crate::docking::view_panel(id).map(|panel| app.ui.dock.is_open(panel)),
     };
-
-    if let Some(c) = checked {
-        b = b.selected(c);
+    if let Some(checked) = checked {
+        // Keep the accessible toggle state without styling the entire row as selected
+        button = button.selected(checked);
+        button.remove_class(egui::Button::CLASS_SELECTED);
     }
-    if ui.add_enabled(on, b).clicked() {
-        invoke(app, ctx, item.id);
+
+    let response = ui.add_enabled(is_enabled, |ui: &mut egui::Ui| {
+        let response = button.atom_ui(ui);
+        if checked == Some(true)
+            && let Some(rect) = response.rect(egui::IdSalt::new("menu-checkmark"))
+        {
+            let center = rect.center();
+            let color = ui.style().interact(&response).fg_stroke.color;
+            ui.painter().add(egui::Shape::line(
+                vec![center + egui::vec2(-4.0, 0.0), center + egui::vec2(-1.0, 3.0), center + egui::vec2(4.0, -3.0)],
+                egui::Stroke::new(1.5, color),
+            ));
+        }
+        response.response
+    });
+    if response.clicked() {
+        invoke(app, context, item.id);
         ui.close();
     }
+
     #[cfg(not(target_arch = "wasm32"))]
     if item.id == "file.open" {
         ui.add_enabled_ui(!modality.is_blocked() && !app.ui.recent.is_empty(), |ui| {
-            ui.menu_button(tr("Recent packages"), |ui| {
+            ui.menu_button(menu_label(tr("Recent packages")), |ui| {
                 for path in app.ui.recent.clone() {
-                    if ui.button(&path).clicked() {
+                    if ui.button(menu_label(&path)).clicked() {
                         crate::windows::open_path(app, &path);
                         ui.close();
                     }
                 }
                 ui.separator();
-                if ui.button(tr("Clear recent packages")).clicked() {
+                if ui.button(menu_label(tr("Clear recent packages"))).clicked() {
                     app.ui.recent.clear();
                     ui.close();
                 }
@@ -641,6 +664,7 @@ mod tests {
         assert!(app.ui.windows.export);
     }
 
+    /// Explorer shortcuts affect the hovered selection and leave graph shortcuts elsewhere.
     #[test]
     fn explorer_keys_act_on_its_selection_only_while_hovered() {
         use crate::explorer::ExplorerTarget;
@@ -666,6 +690,7 @@ mod tests {
         assert_eq!(app.session.pkg.graphs.len(), graphs, "removing a graph undoes");
     }
 
+    /// Explorer menu actions resolve through their documented UI or engine handler.
     #[test]
     fn explorer_menus_name_only_actions_that_exist() {
         for rows in [EXPLORER_PACKAGE, EXPLORER_FOLDER, EXPLORER_GRAPH] {
@@ -822,5 +847,18 @@ mod tests {
         assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Cmd+Shift+E");
         ctx.set_os(egui::os::OperatingSystem::Windows);
         assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Ctrl+Shift+E");
+    }
+    /// A hidden Explorer must not delete its selection using stale hover state.
+    #[test]
+    fn review_hidden_explorer_ignores_delete() {
+        let mut app = app();
+        let graphs = app.session.pkg.graphs.len();
+        app.ui.explorer.selected = Some(crate::explorer::ExplorerTarget::Graph { document: app.session.document_id, index: 0 });
+        app.ui.explorer.hovered = true;
+        app.ui.dock.close(crate::docking::Panel::Explorer);
+
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+
+        assert_eq!(app.session.pkg.graphs.len(), graphs);
     }
 }

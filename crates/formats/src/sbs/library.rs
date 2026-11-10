@@ -10,6 +10,7 @@ pub fn relative_path(uri: &str) -> Result<&str, String> {
     {
         return Err("invalid SBS library path".into());
     }
+
     Ok(path)
 }
 
@@ -51,15 +52,18 @@ pub fn root() -> std::path::PathBuf {
     if let Some(root) = std::env::var_os("MATERIALCRAFT_SBS_DIR") {
         return root.into();
     }
+
     if let Ok(executable) = std::env::current_exe()
         && let Some(parent) = executable.parent()
         && parent.join("assets/sbs").is_dir()
     {
         return parent.join("assets/sbs");
     }
+
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/sbs")
 }
 
+/// Read a validated library alias from the configured directory or the embedded fallback.
 pub fn read(uri: &str) -> Result<Vec<u8>, String> {
     let relative = relative_path(uri)?;
     #[cfg(not(target_arch = "wasm32"))]
@@ -106,6 +110,7 @@ pub fn files() -> Vec<String> {
     BUNDLED.iter().map(|uri| uri.to_string()).collect()
 }
 
+/// Discover packages in deterministic order within the depth and file limits.
 #[cfg(not(target_arch = "wasm32"))]
 fn scan(directory: &std::path::Path, prefix: &str, depth: usize, found: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(directory) else { return };
@@ -115,9 +120,11 @@ fn scan(directory: &std::path::Path, prefix: &str, depth: usize, found: &mut Vec
         if found.len() >= MAX_FILES {
             return;
         }
+
         let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
         let Ok(kind) = entry.file_type() else { continue };
         let uri = format!("sbs://{prefix}{name}");
+
         // Symlinks are skipped: `read` refuses files that leave the asset folder anyway
         if kind.is_dir() && depth < MAX_DEPTH && !name.ends_with(".resources") && !name.starts_with('.') {
             scan(&entry.path(), &format!("{prefix}{name}/"), depth + 1, found);
@@ -132,6 +139,7 @@ fn scan(directory: &std::path::Path, prefix: &str, depth: usize, found: &mut Vec
 mod tests {
     use super::*;
 
+    /// Discovered packages have unique valid aliases and the embedded fallback is present.
     #[test]
     fn the_library_lists_every_package_once_and_bundles_a_fallback() {
         let files = files();

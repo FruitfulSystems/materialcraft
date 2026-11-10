@@ -167,8 +167,18 @@ fn bundled_library_has_complete_bodies_and_current_export_metadata() {
         assert!(function.output.is_some(), "{}", graph.sbs_path());
         assert!(function.nodes.iter().all(|node| node.missing.is_none()), "{}", graph.sbs_path());
         assert!(!graph.attributes.description.is_empty());
-        assert!(graph.attributes.author.is_empty() && graph.attributes.tags.is_empty());
+        assert!(graph.attributes.author.is_empty());
         assert!(graph.frames.is_empty() && graph.comments.is_empty() && graph.pins.is_empty());
+    }
+    let pi = &read.pkg.graph_by_name("Functions/Math/Pi").unwrap().1.attributes;
+    assert!(pi.category.is_empty());
+    assert_eq!(pi.tags, "Constant");
+    let saved = write_sbs(&read.pkg).unwrap();
+    let reopened = read_sbs(&saved, "functions.sbs", &|_| None).unwrap();
+    for graph in &read.pkg.graphs {
+        let reloaded = reopened.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
+        assert_eq!(reloaded.attributes.category, graph.attributes.category);
+        assert_eq!(reloaded.attributes.tags, graph.attributes.tags);
     }
     assert!(!xml.descendants().any(|element| element.has_tag_name("icon")));
 }

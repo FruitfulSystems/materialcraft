@@ -4,6 +4,7 @@
 //! which frame titles are library categories.
 
 use super::{
+    LayoutFrame, LayoutItem,
     constant::MAX_XML_NODES,
     filter_map::FILTERS,
     xml::{child_element, child_value, children_named, parse_floats},
@@ -15,33 +16,6 @@ use std::collections::HashMap;
 /// Bounds for hostile layouts: frames and placed nodes kept per file
 const MAX_FRAMES: usize = 4096;
 const MAX_ITEMS: usize = 65_536;
-
-/// A titled frame and the nodes inside it, top to bottom
-#[derive(Clone, Debug, PartialEq)]
-pub struct LayoutFrame {
-    pub title: String,
-    /// The frame groups function nodes (it sits in a function graph or a parameter function)
-    pub function: bool,
-    pub items: Vec<LayoutItem>,
-}
-
-/// One node placed in a layout frame
-#[derive(Clone, Debug, PartialEq)]
-pub enum LayoutItem {
-    /// An atomic SBS filter by its SBS name, with the MaterialCraft node it reads as (`None`
-    /// when MaterialCraft has no counterpart yet)
-    Atomic { filter: String, node: Option<&'static str> },
-    /// A graph input (`input_color`, `input_grayscale`, `input_value`) or `output`
-    Node(&'static str),
-    /// An instance of graph `graph` from the library package `package`
-    Instance { package: String, graph: String, outputs: Vec<String> },
-    /// A native function operation, e.g. `add`
-    Operation(String),
-    /// An instance of function graph `graph` from the library package `package`
-    FunctionInstance { package: String, graph: String },
-    /// A bitmap showing one of the layout package's own resources, e.g. an environment image
-    Bitmap { resource: String },
-}
 
 /// The frames of every graph and parameter function in `bytes`, in document order
 pub fn read_layout(bytes: &[u8], uri: &str) -> Result<Vec<LayoutFrame>> {
@@ -57,8 +31,8 @@ pub fn read_layout(bytes: &[u8], uri: &str) -> Result<Vec<LayoutFrame>> {
     let mut dependencies = HashMap::new();
     for dependency in child_element(root, "dependencies").into_iter().flat_map(|d| children_named(d, "dependency")) {
         if let (Some(uid), Some(file)) = (child_value(dependency, "uid"), child_value(dependency, "filename")) {
-            let file = if file == "?himself" { uri } else { file };
-            dependencies.insert(uid, file.to_string());
+            let file = if file == "?himself" { uri.to_string() } else { super::library::resolve(uri, file).map_err(FormatError::BadPackage)? };
+            dependencies.insert(uid, file);
         }
     }
 
@@ -85,6 +59,7 @@ pub fn read_layout(bytes: &[u8], uri: &str) -> Result<Vec<LayoutFrame>> {
             if items >= MAX_ITEMS {
                 break;
             }
+
             // The smallest frame holding the node wins, so nested frames keep their own nodes
             let Some(frame) = scope_frames
                 .iter()
@@ -95,6 +70,7 @@ pub fn read_layout(bytes: &[u8], uri: &str) -> Result<Vec<LayoutFrame>> {
             else {
                 continue;
             };
+
             let item = if function { function_item(node, &dependencies) } else { graph_item(scope, node, &dependencies) };
             if let Some(item) = item {
                 placed.push((frame, at, item));
@@ -112,6 +88,7 @@ pub fn read_layout(bytes: &[u8], uri: &str) -> Result<Vec<LayoutFrame>> {
             if frames.len() >= MAX_FRAMES {
                 break;
             }
+
             frames.push(LayoutFrame { title, function, items });
         }
     }
@@ -136,6 +113,7 @@ fn scope_frames(scope: XmlNode) -> Vec<(String, [f32; 4])> {
         .collect()
 }
 
+/// Read a node position when its layout has both coordinates.
 fn position(node: XmlNode) -> Option<[f32; 2]> {
     let at = parse_floats(child_value(child_element(node, "GUILayout")?, "gpos")?);
     Some([*at.first()?, *at.get(1)?])
@@ -151,6 +129,7 @@ fn reference(path: &str, dependencies: &HashMap<&str, String>) -> Option<(String
     (!graph.is_empty()).then(|| (graph.chars().take(1024).collect(), package))
 }
 
+/// Translate a graph node into a library placement without cooking it.
 fn graph_item(graph: XmlNode, node: XmlNode, dependencies: &HashMap<&str, String>) -> Option<LayoutItem> {
     let implementation = child_element(node, "compImplementation")?.children().find(|c| c.is_element())?;
     match implementation.tag_name().name() {
@@ -163,6 +142,7 @@ fn graph_item(graph: XmlNode, node: XmlNode, dependencies: &HashMap<&str, String
                 let resource = resource.split_once('?').map_or(resource, |(path, _)| path);
                 return Some(LayoutItem::Bitmap { resource: resource.chars().take(1024).collect() });
             }
+
             Some(LayoutItem::Atomic { filter: filter.chars().take(128).collect(), node: FILTERS.iter().find(|f| f.sbs == filter).map(|f| f.def) })
         }
         "compInstance" => {
@@ -193,6 +173,7 @@ fn graph_item(graph: XmlNode, node: XmlNode, dependencies: &HashMap<&str, String
     }
 }
 
+/// Translate a native operation or reusable function reference into a placement.
 fn function_item(node: XmlNode, dependencies: &HashMap<&str, String>) -> Option<LayoutItem> {
     let operation = child_value(node, "function")?;
     if operation != "instance" {
@@ -209,6 +190,7 @@ fn function_item(node: XmlNode, dependencies: &HashMap<&str, String>) -> Option<
     Some(LayoutItem::FunctionInstance { package, graph })
 }
 
+/// Read a named static string parameter from an atomic filter.
 fn string_parameter<'a>(filter: XmlNode<'a, '_>, name: &str) -> Option<&'a str> {
     child_element(filter, "parameters")
         .into_iter()
@@ -251,6 +233,7 @@ mod tests {
           <GUIObject><type v="COMMENT"/><GUILayout><gpos v="0 0 0"/><size v="10 10"/></GUILayout></GUIObject>
         </GUIObjects></graph></content></package>"#;
 
+    /// Frames preserve spatial ordering and distinguish material and function entries.
     #[test]
     fn frames_list_what_sits_inside_them_top_to_bottom() {
         let frames = read_layout(LAYOUT.as_bytes(), "sbs://layout.sbs").unwrap();
@@ -274,11 +257,25 @@ mod tests {
         assert_eq!(function[1].items, vec![LayoutItem::FunctionInstance { package: "sbs://functions.sbs".into(), graph: "Functions/Math/Pi".into() }]);
     }
 
+    /// Missing layouts and malformed input remain nonfatal.
     #[test]
     fn packages_without_frames_have_no_layout_and_bad_input_errors() {
         assert!(read_layout(b"<package><content><graph><compNodes/></graph></content></package>", "sbs://x.sbs").unwrap().is_empty());
         assert!(read_layout(b"<nope/>", "sbs://x.sbs").is_err());
         assert!(read_layout(b"\xff\xfe", "sbs://x.sbs").is_err());
         assert!(read_layout(b"<package><content><graph><compNodes><compNode><GUILayout><gpos v=\"nan\"/></GUILayout></compNode></compNodes><GUIObjects><GUIObject><type v=\"COMMENT\"/><GUILayout><gpos v=\"0 0\"/><size v=\"-5 1e40\"/></GUILayout><title v=\"X\"/></GUIObject></GUIObjects></graph></content></package>", "sbs://x.sbs").unwrap().is_empty());
+    }
+
+    /// Relative layout references resolve beside the layout, including parent directories.
+    #[test]
+    fn review_layout_resolves_relative_dependencies() {
+        let layout = LAYOUT.replace("sbs://noise.sbs", "../noise.sbs").replace("sbs://functions.sbs", "functions.sbs");
+
+        let frames = read_layout(layout.as_bytes(), "sbs://layouts/library.sbs").unwrap();
+
+        assert!(frames.iter().flat_map(|frame| &frame.items).any(|item| matches!(item,
+            LayoutItem::Instance { package, .. } if package == "sbs://noise.sbs")));
+        assert!(frames.iter().flat_map(|frame| &frame.items).any(|item| matches!(item,
+            LayoutItem::FunctionInstance { package, .. } if package == "sbs://layouts/functions.sbs")));
     }
 }

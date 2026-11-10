@@ -122,8 +122,9 @@ saved files still needs external verification.
 
 Function Graphs share the main canvas card geometry and styling, including compact Dot nodes.
 The Graph, Function Graph and FX-Map Add node menus remain flat and preserve their native catalog
-order, also used by the Library. The regular graph menu separates primitives, inputs and output;
-Dot is excluded from every Add node list and is added through its separate action. The function
-and Pixel Processor menus list 84 operations; Value Processor omits the two samplers. FX-Map lists
+order; Library previews are sorted by name. The regular graph menu separates primitives, inputs and output;
+Dot is excluded from every Add node list and is added through its separate action. Function
+Graph and both processor menus include Sample gray and Sample color. These samplers can also be
+dragged from the Library into either processor function. FX-Map lists
 Quadrant, Switch, Iterate in that order. Type a letter to enable names starting
 with it while keeping the full list visible; Backspace clears the filter.

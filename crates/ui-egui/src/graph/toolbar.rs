@@ -7,7 +7,6 @@ use serde_json::json;
 pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     let function = app.function_editor.is_some();
     let pattern = !function && crate::pattern::active(app);
-    let embedded_function = app.function_editor.as_ref().is_some_and(|editor| editor.target != crate::function::FunctionTarget::Graph);
     let function_target = app.function_editor.as_ref().and_then(|editor| editor.command_target());
     let selection: Vec<u64> = if pattern {
         app.pattern_editor.as_ref().map(|editor| editor.selection.iter().copied().map(u64::from).collect()).unwrap_or_default()
@@ -32,10 +31,10 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
         }) {
             app.ui.frame_all = true;
         }
-        if !pattern && !embedded_function {
+        {
             ui.separator();
             if b(ui, icon::SELECTION, tr("Add frame around the selection")) {
-                let parameters = if function { function_frame(app, &selection) } else { json!({}) };
+                let parameters = annotation_frame(app, &selection);
                 app.run("graph.frame.add", parameters);
             }
             if b(ui, icon::NOTE, tr("Add comment")) {
@@ -169,8 +168,9 @@ fn parent_size(app: &mut MaterialCraftApp, ui: &mut Ui) {
     }
 }
 
-fn function_frame(app: &MaterialCraftApp, selection: &[u64]) -> serde_json::Value {
-    let camera = super::GraphCamera { origin: app.graph.view.min, pan: app.ui.graph_camera.pan.into(), zoom: app.ui.graph_camera.zoom };
+fn annotation_frame(app: &MaterialCraftApp, selection: &[u64]) -> serde_json::Value {
+    let camera = crate::annotation::camera(app);
+    let camera = super::GraphCamera { origin: app.graph.view.min, pan: camera.pan.into(), zoom: camera.zoom };
     let bounds = app.graph.rects.iter().filter(|(id, _)| selection.contains(&id.0)).fold(egui::Rect::NOTHING, |bounds, (_, rect)| bounds.union(*rect));
     if !bounds.is_finite() {
         return json!({});

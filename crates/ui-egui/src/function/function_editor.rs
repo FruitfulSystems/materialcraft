@@ -26,6 +26,10 @@ impl FunctionEditor {
         Self::with_target(graph, None, FunctionTarget::Graph)
     }
 
+    pub(crate) fn camera(&self) -> crate::state::GraphCamera {
+        crate::state::GraphCamera { pan: self.pan.into(), zoom: self.zoom }
+    }
+
     pub(crate) fn set_camera(&mut self, camera: crate::state::GraphCamera) {
         self.pan = camera.pan.into();
         self.zoom = camera.zoom;

@@ -1,13 +1,21 @@
 //! The node library. Every SBS package in the library folder (`assets/sbs`, or the bundled copies)
 //! is loaded once per process and lends its graphs: function graphs go under Functions (sorted by
-//! their folder), other graphs under their attribute category. Native nodes, function operations,
+//! their classification tags, with folder fallbacks), other graphs under their attribute category. Native nodes, function operations,
 //! FX-Map nodes and graph items fill the rest of the tree. A package whose titled frames are library
 //! categories ("Filters - Blurs") can also lay the library out: each node inside a frame becomes an
 //! entry in that category, listed as missing until a package provides it.
 
+mod library_canvas;
+mod library_entry;
+mod library_item;
+mod library_placement;
+pub use library_canvas::LibraryCanvas;
+pub use library_entry::LibraryEntry;
+pub use library_item::LibraryItem;
+use library_placement::LibraryPlacement;
+
 use materialcraft_core::{Package, PatternNodeKind};
 use materialcraft_formats::sbs::{LayoutItem, library};
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -47,86 +55,6 @@ const SUB_KEYWORDS: &[(&str, &str, &[&str])] = &[
     ("PBR materials", "Stone", &["stone", "rock", "marble", "granite"]),
 ];
 
-/// The graph kind that can take an entry
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum LibraryCanvas {
-    Material,
-    Function,
-    Pattern,
-}
-
-/// What adding an entry puts in the graph
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum LibraryItem {
-    /// A native node, by catalog id
-    Node {
-        def: String,
-    },
-    Comment,
-    Frame,
-    Pin,
-    /// An instance of a graph from a library package
-    Instance {
-        package: String,
-        graph: String,
-    },
-    /// A native function operation
-    Operation {
-        operation: String,
-    },
-    /// An instance of a function graph from a library package
-    FunctionInstance {
-        package: String,
-        graph: String,
-    },
-    /// An FX-Map node
-    Pattern {
-        kind: PatternNodeKind,
-    },
-    /// An environment image
-    Bitmap {
-        resource: String,
-    },
-}
-
-impl LibraryItem {
-    pub fn canvas(&self) -> LibraryCanvas {
-        match self {
-            Self::Operation { .. } | Self::FunctionInstance { .. } => LibraryCanvas::Function,
-            Self::Pattern { .. } => LibraryCanvas::Pattern,
-            _ => LibraryCanvas::Material,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct LibraryEntry {
-    /// Stable id, e.g. `node:blur`, `function:add`, `sbs://functions.sbs#Functions/Math/Pi`
-    pub id: String,
-    pub label: String,
-    /// `Top` or `Top/Sub`, from [`CATEGORIES`]
-    pub category: String,
-    pub description: String,
-    #[serde(flatten)]
-    pub item: LibraryItem,
-    pub canvas: LibraryCanvas,
-    /// Why the entry can't be added yet (the package it needs is not in MaterialCraft)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub missing: Option<String>,
-    /// It can be added, but is incomplete (it uses operations MaterialCraft lacks)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub warning: Option<String>,
-}
-
-/// A layout placement, before it is resolved against the loaded packages
-#[derive(Clone, Debug)]
-struct Placement {
-    category: String,
-    item: LayoutItem,
-}
-
 /// Everything loaded from the library folder
 #[derive(Debug, Default)]
 pub struct NodeLibrary {
@@ -135,7 +63,7 @@ pub struct NodeLibrary {
     /// The `sbs://` files that laid the library out
     pub layouts: Vec<String>,
     pub warnings: Vec<String>,
-    placements: Vec<Placement>,
+    placements: Vec<LibraryPlacement>,
 }
 
 static SHARED: Mutex<Option<Arc<NodeLibrary>>> = Mutex::new(None);
@@ -165,6 +93,7 @@ impl NodeLibrary {
                     continue;
                 }
             };
+
             // A layout's frames name library categories; anything else is a package of graphs
             let placements = match materialcraft_formats::sbs::read_layout(&bytes, uri) {
                 Ok(frames) => placements(&frames),
@@ -178,6 +107,7 @@ impl NodeLibrary {
                 out.layouts.push(uri.clone());
                 continue;
             }
+
             match materialcraft_formats::sbs::read_sbs(&bytes, uri, &crate::file_cmds::linked_files(uri)) {
                 Ok(mut read) => {
                     crate::linked_files::normalize_references(&mut read.pkg, uri);
@@ -202,6 +132,13 @@ impl NodeLibrary {
         let mut ids = BTreeSet::new();
         let mut placed_graphs = BTreeSet::new();
         let mut push = |out: &mut Vec<LibraryEntry>, mut entry: LibraryEntry| {
+            // Reroute nodes are placed through the shared Graph items entry
+            if matches!(&entry.item, LibraryItem::Operation { operation } if operation == "passthrough")
+                || matches!(&entry.item, LibraryItem::Pattern { kind: PatternNodeKind::Dot })
+                || matches!(&entry.item, LibraryItem::Node { def } if def == "dot" && entry.category != "Graph items")
+            {
+                return;
+            }
             // The same node may sit in two categories; the id keeps each placement apart
             if !ids.insert(entry.id.clone()) {
                 entry.id = format!("{}@{}", entry.id, entry.category);
@@ -233,7 +170,9 @@ impl NodeLibrary {
             if definition.id == "graph_instance" || listed.contains(&id) {
                 continue;
             }
+
             let item = LibraryItem::Node { def: definition.id.into() };
+
             // Graph inputs and outputs sit with the atomic nodes; Graph items holds annotations and the Dot
             let category =
                 if matches!(definition.id, "input_color" | "input_grayscale" | "input_value" | "output") { "Atomic nodes" } else { definition.category };
@@ -241,13 +180,14 @@ impl NodeLibrary {
         }
         for operation in materialcraft_nodes::function::FUNCTIONS {
             let id = format!("function:{}", operation.id);
-            if listed.contains(&id) {
+            if operation.id == "passthrough" || listed.contains(&id) {
                 continue;
             }
+
             let category = category_path("Function nodes", Some(operation.category));
             push(&mut out, entry(id, operation.label, &category, "", LibraryItem::Operation { operation: operation.id.into() }, None));
         }
-        for kind in PatternNodeKind::ALL {
+        for kind in PatternNodeKind::ALL.into_iter().filter(|kind| *kind != PatternNodeKind::Dot) {
             let id = format!("pattern:{}", kind.native_id());
             push(&mut out, entry(id, kind.label(), "FxMap nodes", "", LibraryItem::Pattern { kind }, None));
         }
@@ -258,15 +198,24 @@ impl NodeLibrary {
                 if placed_graphs.contains(&(path.clone(), name.clone())) {
                     continue;
                 }
-                let placement = if graph.function.is_some() {
-                    let category = known_category(&graph.attributes.category).unwrap_or_else(|| function_category(&name));
-                    Placement { category, item: LayoutItem::FunctionInstance { package: path.clone(), graph: name } }
-                } else if graph.nodes.iter().any(|node| node.def == "output") {
+
+                if graph.function.is_some() {
+                    for category in function_categories(graph) {
+                        let placement = LibraryPlacement { category, item: LayoutItem::FunctionInstance { package: path.clone(), graph: name.clone() } };
+                        if let Some(entry) = resolve(&placement, dependencies) {
+                            push(&mut out, entry);
+                        }
+                    }
+                    continue;
+                }
+
+                let placement = if graph.nodes.iter().any(|node| node.def == "output") {
                     let category = known_category(&graph.attributes.category).unwrap_or_else(|| "Other".into());
-                    Placement { category, item: LayoutItem::Instance { package: path.clone(), graph: name, outputs: Vec::new() } }
+                    LibraryPlacement { category, item: LayoutItem::Instance { package: path.clone(), graph: name, outputs: Vec::new() } }
                 } else {
                     continue;
                 };
+
                 if let Some(entry) = resolve(&placement, dependencies) {
                     push(&mut out, entry);
                 }
@@ -276,13 +225,14 @@ impl NodeLibrary {
     }
 }
 
+/// Build an entry with a canvas derived from its item kind.
 fn entry(id: String, label: &str, category: &str, description: &str, item: LibraryItem, missing: Option<String>) -> LibraryEntry {
     let canvas = item.canvas();
     LibraryEntry { id, label: label.into(), category: category.into(), description: description.into(), item, canvas, missing, warning: None }
 }
 
 /// A layout item as an entry, its label and availability taken from the loaded packages
-fn resolve(placement: &Placement, dependencies: &BTreeMap<String, Arc<Package>>) -> Option<LibraryEntry> {
+fn resolve(placement: &LibraryPlacement, dependencies: &BTreeMap<String, Arc<Package>>) -> Option<LibraryEntry> {
     let category = placement.category.as_str();
     Some(match &placement.item {
         LayoutItem::Atomic { node: Some(def), .. } | LayoutItem::Node(def) => {
@@ -319,6 +269,7 @@ fn resolve(placement: &Placement, dependencies: &BTreeMap<String, Arc<Package>>)
                 .map(|_| "This function uses nodes MaterialCraft does not have yet".to_string());
             out
         }
+
         // A bitmap anywhere but the 3D view stands for the atomic Bitmap node, not its image
         LayoutItem::Bitmap { .. } if !category.starts_with("3D view") => {
             let definition = materialcraft_nodes::find("bitmap")?;
@@ -333,12 +284,12 @@ fn resolve(placement: &Placement, dependencies: &BTreeMap<String, Arc<Package>>)
 }
 
 /// The categories of a layout's frames, and what each places
-fn placements(frames: &[materialcraft_formats::sbs::LayoutFrame]) -> Vec<Placement> {
+fn placements(frames: &[materialcraft_formats::sbs::LayoutFrame]) -> Vec<LibraryPlacement> {
     let mut out = Vec::new();
     for frame in frames {
         let native = frame.items.iter().any(|item| matches!(item, LayoutItem::Operation(_)));
         let Some(category) = frame_category(&frame.title, frame.function, native) else { continue };
-        out.extend(frame.items.iter().map(|item| Placement { category: category.clone(), item: item.clone() }));
+        out.extend(frame.items.iter().map(|item| LibraryPlacement { category: category.clone(), item: item.clone() }));
     }
     out
 }
@@ -374,6 +325,7 @@ fn known_category(text: &str) -> Option<String> {
     let mut parts = text.split('/');
     let top = parts.next()?;
     let (top, subs) = CATEGORIES.iter().find(|(name, _)| key(name) == key(top))?;
+
     // A sub-category the tree doesn't have names no category ("Functions/colorValues" is a folder)
     let sub = match parts.next() {
         None => None,
@@ -382,6 +334,27 @@ fn known_category(text: &str) -> Option<String> {
     Some(category_path(top, sub))
 }
 
+/// Function tags select filters; explicit category paths and package paths remain fallbacks.
+fn function_categories(graph: &materialcraft_core::Graph) -> Vec<String> {
+    let subcategories = CATEGORIES.iter().find(|(name, _)| *name == "Functions").map_or(&[][..], |(_, subcategories)| *subcategories);
+    let mut categories = Vec::new();
+    for tag in graph.attributes.tags.split([',', ';']) {
+        let tag = key(tag);
+        let tag = if tag == "easing" { "easings" } else { tag.as_str() };
+        if let Some(subcategory) = subcategories.iter().find(|subcategory| key(subcategory) == tag) {
+            let category = category_path("Functions", Some(subcategory));
+            if !categories.contains(&category) {
+                categories.push(category);
+            }
+        }
+    }
+    if categories.is_empty() {
+        categories.push(known_category(&graph.attributes.category).unwrap_or_else(|| function_category(&graph.sbs_path())));
+    }
+    categories
+}
+
+/// Join a top-level category with its optional subcategory.
 fn category_path(top: &str, sub: Option<&str>) -> String {
     match sub {
         Some(sub) => format!("{top}/{sub}"),
@@ -394,6 +367,7 @@ fn sub_category(category: &str, graph: &str) -> String {
     if category.contains('/') {
         return category.to_string();
     }
+
     let name = graph.rsplit('/').next().unwrap_or(graph).to_ascii_lowercase();
     SUB_KEYWORDS
         .iter()
@@ -471,6 +445,7 @@ pub fn humanize(identifier: &str) -> String {
             if let Some((_, known)) = WORDS.iter().find(|(from, _)| *from == lower) {
                 return (*known).to_string();
             }
+
             let mut chars = word.chars();
             chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
         })

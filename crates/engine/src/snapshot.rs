@@ -7,6 +7,7 @@ pub(crate) struct Snapshot {
     pub(crate) graph: usize,
     pub(crate) selection: Vec<NodeId>,
     pub(crate) annotation_selection: Option<AnnotationSelection>,
+    pub(crate) annotation_target: crate::AnnotationTarget,
     pub(crate) material_preview: crate::MaterialPreview,
     pub(crate) label: String,
     pub(crate) modified: bool,

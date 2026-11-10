@@ -113,8 +113,8 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
 | `view.3d.loadMesh` | `{path}` shows an OBJ, glTF or GLB mesh (scene `custom`) |
 | `library.list` | `{filter?, category?}`: every node with ports and parameters |
-| `library.tree` | `{filter?, category? (Top or Top/Sub), canvas? (material\|function\|pattern)}`: the Library panel's category tree and its entries. Each entry has `id`, `label`, `category`, `type` (`node`, `comment`, `frame`, `pin`, `instance`, `operation`, `functionInstance`, `pattern`, `bitmap`), the `canvas` that takes it, `missing` when MaterialCraft lacks the library package it needs, and `warning` when it can be added but is incomplete |
-| `library.add` | `{entry, at?, snapToGrid?, function?: FunctionGraphTarget}`: add a `library.tree` entry to the open graph (function entries to a Function canvas; FX-Map nodes use `graph.pattern.edit`). Entries with `missing` refuse with the reason |
+| `library.tree` | `{filter?, category? (Top or Top/Sub), canvas? (material\|function\|pattern)}`: the Library panel's category tree and its entries. Each entry has `id`, `label`, `category`, `type` (`node`, `comment`, `frame`, `pin`, `instance`, `operation`, `functionInstance`, `pattern`, `bitmap`), the `canvas` that takes it (`any` for shared graph items), `missing` when MaterialCraft lacks the library package it needs, and `warning` when it can be added but is incomplete |
+| `library.add` | `{entry, at?, snapToGrid?, function?: FunctionGraphTarget, pattern?: owner node id}`: add a `library.tree` entry to the open graph (function entries to a Function canvas; FX-Map nodes use `graph.pattern.edit`). Entries with `missing` refuse with the reason |
 | `library.reload` | `{}`: read the SBS library folder again |
 | `graph.cook` | `{full?, graph?: index}`: cook now and return per-node timings and errors; another material graph of the package cooks at full size into the cache |
 
@@ -122,9 +122,9 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 
 Every `.sbs` file in the library folder (`assets/sbs`, or `MATERIALCRAFT_SBS_DIR`; installed and
 browser builds use the bundled `functions.sbs`) loads once per process, and its graphs join every
-session's dependencies. Function graphs are listed under Functions, in the sub-category their folder
-names (`Functions/colorValues` → Color, `Functions/easings` → Easings); other graphs under the
-category in their attributes. A package whose graphs group nodes in titled frames lays the library
+session's dependencies. Function graphs are listed under Functions using recognized Tags, then
+Category or package-path fallbacks (`Functions/colorValues` → Color, `Functions/easings` → Easings).
+Other graphs use the category in their attributes. A package whose graphs group nodes in titled frames lays the library
 out instead: a frame titled `Top - Sub` (or `Top`) is a Library category, and every node inside it
 becomes an entry there, `missing` until its package is in the folder. Function frames name only the
 sub-category. The older category name "SDF functions" reads as MCF functions.
@@ -270,12 +270,12 @@ The catalog in `crates/nodes/src/function/catalog.rs` defines all native operati
 Processors and dynamic parameters use the same function representation. Graph validation and
 execution use bounded iterative traversal and reject cycles.
 
-`graph.annotation.select {"kind": "frame"|"comment", "id": ...}` selects an annotation.
+`graph.annotation.select {"kind": "frame"|"comment"|"pin", "id": ...}` selects an annotation.
 `graph.frame.edit` accepts `title`, `titleVisible`, `description`, `color` and `rect`.
 `graph.frame.move {"id": ..., "by": [dx, dy], "snapToGrid": true}` moves enclosed nodes,
 comments, nested frames and pins together. `graph.comment.edit` accepts `text`, `at` and `size`.
 `session.inspect` includes annotation selection and the standalone function; `ui.inspect`
-includes frame and comment rectangles for synthetic input.
+includes frame, comment and pin rectangles for synthetic input.
 
 ## Portable materials (TextureCraft)
 
@@ -347,3 +347,19 @@ Bitmap Color space selects sRGB or Linear. `graph.input.bind` accepts `linear: t
 height and other data maps. Input preview bindings persist in native SBS graph options with the
 `materialcraft.previewImage.` and `materialcraft.previewLinear.` prefixes; these options describe
 MaterialCraft editor previews and do not establish external application interoperability.
+
+### Shared graph items and classification metadata
+
+The Library sorts previews by their displayed names. Graph items (Comment, Dot node, Frame and
+Pin) are available in material, standalone Function, embedded Function and FX-Map canvases.
+Dot node appears only in Graph items. To address an embedded canvas, annotation commands and
+`library.add` accept `function: FunctionGraphTarget` or `pattern: owner node id`.
+`graph.pin.edit {id, description?, at?}` edits a pin's description or position. Selecting a pin
+shows its Description field; creating one focuses that field. Delete and undo apply to the
+selected pin. `session.inspect` reports `annotationTarget`; `ui.inspect` also reports pin bounds.
+Frames, comments and pins are saved in the owning canvas's SBS `GUIObjects` section.
+
+Function-library conversion preserves Category and Tags, including empty values. Recognized
+function tags select Library filters before category-path and package-path fallbacks; multiple
+recognized tags can place the function in multiple filters. The tag `Easing` maps to the
+`Functions/Easings` filter. This does not implement project-configurable Library filters.
