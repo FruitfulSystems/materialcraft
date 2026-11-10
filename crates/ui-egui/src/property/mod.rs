@@ -1,4 +1,5 @@
 mod curve;
+mod expose_parameter_dialog;
 mod folder_property_draft;
 mod gradient;
 mod graph;
@@ -7,9 +8,11 @@ mod graph_property_draft;
 mod input;
 mod node;
 mod parameter;
+mod parameter_control;
 mod section;
 
 pub use curve::curve_editor;
+pub(crate) use expose_parameter_dialog::ExposeParameterDialog;
 pub(crate) use folder_property_draft::FolderPropertyDraft;
 pub use gradient::gradient_editor;
 pub(crate) use graph_property_draft::GraphPropertyDraft;
@@ -34,7 +37,15 @@ pub fn title(app: &MaterialCraftApp) -> String {
         EditorTarget::Pattern if !EditorTarget::annotation_active(app) => return crate::pattern::properties::title(app),
         EditorTarget::Function if !EditorTarget::annotation_active(app) => {
             return crate::function::properties::title(app).unwrap_or_else(|| {
-                let name = app.session.graph().ok().filter(|graph| graph.function.is_some()).map_or(tr("Function Graph"), |graph| graph.name.as_str());
+                let owner = app
+                    .function_editor
+                    .as_ref()
+                    .and_then(|editor| editor.node)
+                    .and_then(|id| app.session.graph().ok()?.node(id).ok())
+                    .map(crate::graph::node_label);
+                let name = owner
+                    .or_else(|| app.session.graph().ok().filter(|graph| graph.function.is_some()).map(|graph| graph.name.clone()))
+                    .unwrap_or_else(|| tr("Function Graph").into());
                 format!("{name} - {}", tr("Properties"))
             });
         }
@@ -82,6 +93,10 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
                 if !crate::function::properties::show(app, ui) {
                     if app.function_editor.as_ref().is_some_and(|editor| matches!(editor.target, crate::function::FunctionTarget::Graph)) {
                         graph::show(app, ui, materialcraft_engine::GraphTarget::active(&app.session));
+                    } else if let Some(owner) =
+                        app.function_editor.as_ref().and_then(|editor| editor.node).and_then(|id| app.session.graph().ok()?.node(id).ok()).cloned()
+                    {
+                        node::show(app, ui, &owner);
                     } else {
                         ui.label(tr("Select a node"));
                     }

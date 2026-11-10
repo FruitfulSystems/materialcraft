@@ -1,3 +1,6 @@
+#[path = "snapshot/parameter_functions.rs"]
+mod parameter_functions;
+
 #[path = "snapshot/graph_items.rs"]
 mod graph_items;
 

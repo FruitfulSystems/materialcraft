@@ -30,28 +30,17 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             [],
             None,
             "{id?, param, value} (numbers, [x, y], \"#rrggbb\", enum index, typed {t, v})",
-            has_selection,
+            has_graph,
             set_param
         ),
-        cmd!("graph.node.reset", "Reset parameters", [], None, "{id?, param? (default: all)}", has_selection, reset),
         cmd!(
             "graph.node.base",
             "Set base parameters",
             [],
             None,
-            "{id?, sizeMode? (relativeToInput|relativeToParent|absolute), size? [w, h] (log2 offset, or log2 size when absolute), format? (inherit|u8|u16|f16|f32), seed?, tiling?: bool|[bool,bool], pixelRatio?: 0|1, tilingMode?, pixelRatioMode? (relativeToInput|relativeToParent|absolute)}",
-            has_selection,
+            "{id?, param?: outputsize|format|pixelsize|pixelratio|tiling|randomseed, value?, inheritance?: relativeToInput|relativeToParent|absolute}; legacy fields: {sizeMode?, size?: [w, h] (log2), format?: inherit|u8|u16|f16|f32, seed?, tiling?: bool|[bool,bool], pixelRatio?: 0|1, tilingMode?, pixelRatioMode?}",
+            has_graph,
             base
-        ),
-        cmd!("graph.node.bind", "Bind parameter to input", [], None, "{id?, param, input (exposed id); input null unbinds}", has_selection, bind),
-        cmd!(
-            "graph.node.function",
-            "Set parameter function",
-            [],
-            None,
-            "{id?, param, function?: {nodes, output} (default: a constant of the current value), remove?: bool} drives a parameter with a function graph of the graph's inputs",
-            has_selection,
-            set_function
         ),
     ]
 }
@@ -166,71 +155,83 @@ fn disable(s: &mut Session, p: &J) -> Result<J> {
     })
 }
 
-fn set_param(s: &mut Session, p: &J) -> Result<J> {
-    let id = node_param(s, "graph.node.param", p, "id")?;
-    let param = strp(p, "param").ok_or_else(|| bad("graph.node.param", "`param` is required"))?.to_string();
-    let v = p.get("value").ok_or_else(|| bad("graph.node.param", "`value` is required"))?;
-    let node = s.graph()?.node(id)?.clone();
-    let value = if node.def == "input_value" && param == "default" {
+fn set_param(session: &mut Session, parameters: &J) -> Result<J> {
+    let id = node_param(session, "graph.node.param", parameters, "id")?;
+    let parameter = strp(parameters, "param").ok_or_else(|| bad("graph.node.param", "`param` is required"))?.to_string();
+    let supplied = parameters.get("value").ok_or_else(|| bad("graph.node.param", "`value` is required"))?;
+    let node = session.graph()?.node(id)?.clone();
+    let value = if node.def == "input_value" && parameter == "default" {
         let current = node.params.get("default").cloned().unwrap_or(Value::Float(0.0));
-        serde_json::from_value::<Value>(v.clone())
+        serde_json::from_value::<Value>(supplied.clone())
             .ok()
-            .or_else(|| current.coerce_json(v))
+            .or_else(|| current.coerce_json(supplied))
             .filter(|value| materialcraft_core::ValueType::of(value).is_some())
             .ok_or_else(|| bad("graph.node.param", "default must be a scalar or vector value"))?
     } else if node.def == "graph_instance" {
-        // Instance parameters: the sub-graph's exposed inputs (and `graph`)
-        if param == "graph" {
-            Value::Text(v.as_str().ok_or_else(|| bad("graph.node.param", "`graph` is a graph name"))?.into())
+        // Instance parameters come from the source graph's exposed inputs
+        if parameter == "graph" {
+            Value::Text(supplied.as_str().ok_or_else(|| bad("graph.node.param", "`graph` is a graph name"))?.into())
         } else {
-            let sub =
-                materialcraft_eval::instance_graph(&s.pkg, &node).map(|(_, g)| g).ok_or_else(|| bad("graph.node.param", "the instanced graph is missing"))?;
-            let e = sub.exposed.iter().find(|e| e.id == param).ok_or_else(|| bad("graph.node.param", format!("the graph has no input `{param}`")))?;
-            e.default.coerce_json(v).ok_or_else(|| bad("graph.node.param", format!("`{param}` takes a {}", e.default.type_name())))?
+            let source = materialcraft_eval::instance_graph(&session.pkg, &node)
+                .map(|(_, g)| g)
+                .ok_or_else(|| bad("graph.node.param", "the instanced graph is missing"))?;
+            let input = source
+                .exposed
+                .iter()
+                .find(|input| input.id == parameter)
+                .ok_or_else(|| bad("graph.node.param", format!("the graph has no input `{parameter}`")))?;
+            input.default.coerce_json(supplied).ok_or_else(|| bad("graph.node.param", format!("`{parameter}` takes a {}", input.default.type_name())))?
         }
     } else {
-        let def = materialcraft_nodes::find(&node.def).ok_or_else(|| bad("graph.node.param", format!("unknown node `{}`", node.def)))?;
-        let pd = def.param(&param).ok_or_else(|| bad("graph.node.param", format!("`{}` has no parameter `{param}`", node.def)))?;
-        let mut v = pd.default.coerce_json(v).ok_or_else(|| bad("graph.node.param", format!("`{param}` takes a {}", pd.default.type_name())))?;
-        if let Value::Enum(i) = &mut v
-            && !pd.options.is_empty()
+        let definition = materialcraft_nodes::find(&node.def).ok_or_else(|| bad("graph.node.param", format!("unknown node `{}`", node.def)))?;
+        let descriptor = definition.param(&parameter).ok_or_else(|| bad("graph.node.param", format!("`{}` has no parameter `{parameter}`", node.def)))?;
+        let mut value = descriptor
+            .default
+            .coerce_json(supplied)
+            .ok_or_else(|| bad("graph.node.param", format!("`{parameter}` takes a {}", descriptor.default.type_name())))?;
+        if let Value::Enum(i) = &mut value
+            && !descriptor.options.is_empty()
         {
-            *i = (*i).min(pd.options.len() as u32 - 1);
+            *i = (*i).min(descriptor.options.len() as u32 - 1);
         }
-        v
+
+        value
     };
 
     crate::graph_validation::value(&value).map_err(|error| bad("graph.node.param", error))?;
 
-    s.edit_merged(&format!("param:{}:{param}", id.0), "Set parameter", |s| {
-        s.graph_mut()?.node_mut(id)?.params.insert(param.clone(), value);
-        Ok(J::Null)
-    })
-}
-
-fn reset(s: &mut Session, p: &J) -> Result<J> {
-    let id = node_param(s, "graph.node.reset", p, "id")?;
-    let param = strp(p, "param").map(str::to_string);
-    s.edit("Reset parameters", |s| {
-        let n = s.graph_mut()?.node_mut(id)?;
-        match &param {
-            Some(k) => {
-                n.params.remove(k);
-                n.bindings.remove(k);
-                n.functions.remove(k);
-            }
-            None => {
-                n.params.retain(|k, _| k == "graph" || k == "identifier");
-                n.bindings.clear();
-                n.functions.clear();
-            }
-        }
+    session.edit_merged(&format!("param:{}:{parameter}", id.0), "Set parameter", |session| {
+        let node = session.graph_mut()?.node_mut(id)?;
+        node.functions.remove(&parameter);
+        node.bindings.remove(&parameter);
+        node.params.insert(parameter.clone(), value);
         Ok(J::Null)
     })
 }
 
 fn base(session: &mut Session, parameters: &J) -> Result<J> {
     let id = node_param(session, "graph.node.base", parameters, "id")?;
+    if let Some(identifier) = strp(parameters, "param") {
+        let parameter = materialcraft_core::BaseParameter::named(identifier).ok_or_else(|| bad("graph.node.base", "unknown base parameter"))?;
+        let mut base = session.graph()?.node(id)?.base.clone();
+        let inheritance = parameter.inheritance(&base);
+        if let Some(value) = parameters.get("value") {
+            let value = parameter.value(&base).coerce_json(value).ok_or_else(|| bad("graph.node.base", "incorrect base parameter type"))?;
+            parameter.set_value(&mut base, &value).map_err(|error| bad("graph.node.base", error))?;
+            parameter.set_inheritance(&mut base, inheritance);
+            base.functions.remove(&parameter);
+        }
+        if let Some(inheritance) = parameters.get("inheritance") {
+            let inheritance = serde_json::from_value(inheritance.clone()).map_err(|error| bad("graph.node.base", format!("invalid inheritance: {error}")))?;
+            parameter.set_inheritance(&mut base, inheritance);
+        }
+
+        return session.edit_merged(&format!("base:{}:{identifier}", id.0), "Set base parameter", |session| {
+            session.graph_mut()?.node_mut(id)?.base = base;
+            Ok(J::Null)
+        });
+    }
+
     let mode = match strp(parameters, "sizeMode") {
         None => None,
         Some("relativeToInput") => Some(SizeMode::RelativeToInput),
@@ -283,15 +284,20 @@ fn base(session: &mut Session, parameters: &J) -> Result<J> {
         }
         if let Some(size) = size {
             base.size = size;
+            base.functions.remove(&materialcraft_core::BaseParameter::OutputSize);
         }
         if let Some(format) = format {
             base.format = format;
+            base.format_mode = materialcraft_core::ParameterInheritance::Absolute;
+            base.functions.remove(&materialcraft_core::BaseParameter::Format);
         }
         if let Some(seed) = seed {
             base.seed = seed;
+            base.functions.remove(&materialcraft_core::BaseParameter::RandomSeed);
         }
         if let Some(tiling) = tiling {
             base.tiling = tiling;
+            base.functions.remove(&materialcraft_core::BaseParameter::Tiling);
             base.tiling_mode = materialcraft_core::ParameterInheritance::Absolute;
         }
         if let Some(mode) = tiling_mode {
@@ -299,64 +305,13 @@ fn base(session: &mut Session, parameters: &J) -> Result<J> {
         }
         if let Some(value) = pixel_ratio {
             base.pixel_ratio = value;
+            base.functions.remove(&materialcraft_core::BaseParameter::PixelRatio);
             base.pixel_ratio_mode = materialcraft_core::ParameterInheritance::Absolute;
         }
         if let Some(mode) = pixel_ratio_mode {
             base.pixel_ratio_mode = mode;
         }
 
-        Ok(J::Null)
-    })
-}
-
-fn bind(s: &mut Session, p: &J) -> Result<J> {
-    let id = node_param(s, "graph.node.bind", p, "id")?;
-    let param = strp(p, "param").ok_or_else(|| bad("graph.node.bind", "`param` is required"))?.to_string();
-    let input = strp(p, "input").map(str::to_string);
-    if let Some(i) = &input
-        && !s.graph()?.exposed.iter().any(|e| &e.id == i)
-    {
-        return Err(bad("graph.node.bind", format!("no input `{i}`")));
-    }
-    s.edit("Bind parameter", |s| {
-        let n = s.graph_mut()?.node_mut(id)?;
-        match input {
-            Some(i) => n.bindings.insert(param, i),
-            None => n.bindings.remove(&param),
-        };
-
-        Ok(J::Null)
-    })
-}
-
-fn set_function(s: &mut Session, p: &J) -> Result<J> {
-    let id = node_param(s, "graph.node.function", p, "id")?;
-    let param = strp(p, "param").ok_or_else(|| bad("graph.node.function", "`param` is required"))?.to_string();
-    let node = s.graph()?.node(id)?.clone();
-    let def = materialcraft_nodes::find(&node.def).ok_or_else(|| bad("graph.node.function", "unknown node type"))?;
-    let pd = def.param(&param).ok_or_else(|| bad("graph.node.function", format!("`{}` has no parameter `{param}`", node.def)))?;
-    if matches!(pd.default, Value::Text(_) | Value::Curve(_) | Value::Gradient(_) | Value::Function(_)) {
-        return Err(bad("graph.node.function", format!("`{param}` is a {} and can't take a function", pd.default.type_name())));
-    }
-    if boolp(p, "remove") == Some(true) {
-        return s.edit("Remove parameter function", |s| {
-            s.graph_mut()?.node_mut(id)?.functions.remove(&param);
-            Ok(J::Null)
-        });
-    }
-    let f = match p.get("function") {
-        Some(f) if !f.is_null() => {
-            serde_json::from_value::<materialcraft_core::FunctionGraph>(f.clone()).map_err(|e| bad("graph.node.function", format!("bad function: {e}")))?
-        }
-        _ => match node.functions.get(&param) {
-            Some(f) => f.clone(),
-            None => materialcraft_core::FunctionGraph::constant(node.params.get(&param).cloned().unwrap_or_else(|| pd.default.clone())),
-        },
-    };
-
-    crate::graph_validation::function(&f).map_err(|error| bad("graph.node.function", error))?;
-    s.edit_merged(&format!("fn:{}:{param}", id.0), "Set parameter function", |s| {
-        s.graph_mut()?.node_mut(id)?.functions.insert(param.clone(), f);
         Ok(J::Null)
     })
 }

@@ -25,6 +25,7 @@ pub struct MaterialCraftApp {
     pub(crate) inspected_graph: Option<materialcraft_engine::GraphTarget>,
     pub(crate) inspected_folder: Option<(u64, String)>,
     pub(crate) folder_property_draft: Option<crate::properties::FolderPropertyDraft>,
+    pub(crate) expose_parameter_dialog: Option<crate::properties::ExposeParameterDialog>,
     pub(crate) graph_property_draft: Option<crate::properties::GraphPropertyDraft>,
     pub(crate) graph_parents: Vec<graph::graph_parent::GraphParent>,
     /// Synthetic input from the control channel, fed to egui on the next frames
@@ -100,6 +101,7 @@ impl MaterialCraftApp {
             inspected_folder: None,
             folder_property_draft: None,
             graph_property_draft: None,
+            expose_parameter_dialog: None,
             graph_parents: Vec::new(),
             pattern_editor: None,
             input_queue: VecDeque::new(),
@@ -225,6 +227,18 @@ impl MaterialCraftApp {
                     self.ui.prefs.history = self.session.history_prefs;
                 }
                 self.close_subgraph_after(id);
+                if id == "graph.node.function.edit"
+                    && let Ok(target) = serde_json::from_value::<materialcraft_engine::FunctionGraphTarget>(v["target"].clone())
+                {
+                    let target = match target {
+                        materialcraft_engine::FunctionGraphTarget::Base { node, parameter } => Some((node, function::FunctionTarget::Base(parameter))),
+                        materialcraft_engine::FunctionGraphTarget::Dynamic { node, parameter } => Some((node, function::FunctionTarget::Dynamic(parameter))),
+                        _ => None,
+                    };
+                    if let Some((node, target)) = target {
+                        crate::graph::subgraph_navigation::open_function(self, node, target);
+                    }
+                }
                 if matches!(id, "view.3d.assign" | "view.3d.outputs") {
                     self.ui.dock.focus(docking::Panel::View3d);
                 }

@@ -10,6 +10,7 @@ pub(super) fn definition() -> NodeDefinition {
         .atomic()
         .any_in("foreground", "Foreground")
         .any_in("background", "Background")
+        .primary_input("background")
         .gray_in("mask", "Opacity")
         .float("opacity", "Opacity", 1.0, 0.0, 1.0)
         .choice("mode", "Blending mode", BLEND_MODES, 0)

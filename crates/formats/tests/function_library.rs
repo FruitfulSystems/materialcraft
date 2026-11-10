@@ -109,10 +109,15 @@ fn supplied_function_package_round_trip() {
         let replacement = bundled.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
         assert_eq!(graph.function_type, replacement.function_type, "{}", graph.sbs_path());
         assert_eq!(graph.function_type, other.function_type, "{}", graph.sbs_path());
-        assert_eq!(graph.exposed, replacement.exposed, "{}", graph.sbs_path());
+        let mut expected_inputs = graph.exposed.clone();
+        for input in &mut expected_inputs {
+            input.description.clear();
+        }
+        assert_eq!(expected_inputs, replacement.exposed, "{}", graph.sbs_path());
         assert_ne!(graph.attributes.description, replacement.attributes.description, "{}", graph.sbs_path());
         assert!(replacement.attributes.author.is_empty());
-        assert!(replacement.attributes.tags.is_empty());
+        assert_eq!(replacement.attributes.category, graph.attributes.category);
+        assert_eq!(replacement.attributes.tags, graph.attributes.tags);
         assert!(replacement.frames.is_empty() && replacement.comments.is_empty() && replacement.pins.is_empty());
         assert_same_body(graph, replacement);
         assert_eq!(graph.name, other.name);

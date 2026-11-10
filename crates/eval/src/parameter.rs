@@ -1,59 +1,54 @@
-use materialcraft_core::{Node, Value};
-use materialcraft_nodes::{NodeDefinition, clamp_params, resolve_params};
+use materialcraft_core::{Node, Package, Value, ValueType};
+use materialcraft_nodes::{NodeDefinition, ParameterDescriptor, clamp_params, resolve_params};
 use std::collections::BTreeMap;
 
 pub(crate) fn resolve_parameters(
+    package: &Package,
     node: &Node,
-    def: Option<&NodeDefinition>,
-    vars: &BTreeMap<String, Value>,
+    definition: Option<&NodeDefinition>,
+    variables: &BTreeMap<String, Value>,
     seed: u32,
     size: [u32; 2],
 ) -> Result<BTreeMap<String, Value>, String> {
-    // Parameters: defaults, overrides, then bindings to exposed inputs
-    let mut params = match def {
-        Some(d) if node.def != "graph_instance" => resolve_params(d, &node.params),
-        _ => node.params.clone(),
+    let mut parameters = match definition {
+        Some(definition) if node.def != "graph_instance" => resolve_params(definition, &node.params),
+        _ => {
+            let mut parameters = node.instance.as_ref().map(|instance| instance.defaults.clone()).unwrap_or_default();
+            parameters.extend(node.params.clone());
+            parameters
+        }
     };
-
-    for (param, exposed) in &node.bindings {
-        if let (Some(v), Some(cur)) = (vars.get(exposed), params.get(param))
-            && let Some(c) = cur.coerce_json(&serde_json::to_value(v).unwrap_or_default())
+    for parameter in node.bindings.keys().chain(node.functions.keys()) {
+        if !parameters.contains_key(parameter)
+            && let Some(descriptor) = ParameterDescriptor::for_node(package, node, parameter)
         {
-            params.insert(param.clone(), c);
+            parameters.insert(parameter.clone(), descriptor.default);
         }
     }
-    // Dynamic parameters: functions of the graph's inputs, evaluated once per cook
-    for (param, f) in &node.functions {
-        let Some(cur) = params.get(param) else { continue };
 
-        match materialcraft_nodes::function::compile(f, seed) {
-            Ok(prog) => {
-                let context = materialcraft_nodes::function::EvaluationContext {
-                    scope: Default::default(),
-                    position: [0.5; 2],
-                    size: size.map(|side| side as f32),
-                    images: &[],
-                    tile: true,
-                    variables: vars,
-                };
-
-                let value = match prog.evaluate(&context, &mut materialcraft_nodes::function::EvaluationState::default()) {
-                    Ok(value) => value,
-                    Err(error) => return Err(format!("function of `{param}`: {error}")),
-                };
-
-                if let Some(c) = cur.coerce_json(&serde_json::to_value(value).unwrap_or_default()) {
-                    params.insert(param.clone(), c);
-                }
-            }
-            Err(e) => return Err(format!("function of `{param}`: {e}")),
+    for (parameter, exposed) in &node.bindings {
+        if let (Some(value), Some(current)) = (variables.get(exposed), parameters.get(parameter))
+            && let Some(coerced) = current.coerce_json(&serde_json::to_value(value).unwrap_or_default())
+        {
+            parameters.insert(parameter.clone(), coerced);
         }
     }
-    // Hard limits on whatever files, bindings and functions supplied (a value can't hang a cook)
-    if let Some(d) = def
+
+    for (parameter, function) in &node.functions {
+        let current = parameters.get(parameter).ok_or_else(|| format!("unknown function parameter `{parameter}`"))?;
+        let expected = ValueType::of(current).ok_or_else(|| format!("parameter `{parameter}` cannot have a function"))?;
+        let value =
+            crate::parameter_function::evaluate(function, expected, variables, seed, size).map_err(|error| format!("function of `{parameter}`: {error}"))?;
+        let value = current.coerce_json(&serde_json::to_value(value).unwrap_or_default()).ok_or_else(|| format!("invalid function value for `{parameter}`"))?;
+        parameters.insert(parameter.clone(), value);
+    }
+
+    // Catalog limits keep values from files and functions within safe cook bounds
+    if let Some(definition) = definition
         && node.def != "graph_instance"
     {
-        clamp_params(d, &mut params);
+        clamp_params(definition, &mut parameters);
     }
-    Ok(params)
+
+    Ok(parameters)
 }
