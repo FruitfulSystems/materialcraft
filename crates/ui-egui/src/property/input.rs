@@ -184,7 +184,8 @@ mod tests {
     fn editing_a_slider_with_reversed_imported_limits_does_not_panic() {
         let mut harness = Harness::new_ui_state(
             |ui, value: &mut f32| {
-                crate::widgets::slider(ui, "Amount", value, 3.0..=2.0, 3);
+                let (min, max) = (3.0, 2.0);
+                crate::widgets::slider(ui, "Amount", value, min..=max, 3);
             },
             2.5,
         );
