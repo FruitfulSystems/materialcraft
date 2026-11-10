@@ -5,6 +5,30 @@ mod lib_tests {
     use materialcraft_engine::sample_session;
     use serde_json::json;
 
+    #[test]
+    fn copy_and_cut_fill_the_system_clipboard_in_material_and_function_canvases() {
+        use crate::function::{FunctionEditor, FunctionTarget};
+        use materialcraft_engine::core::{FunctionGraph, NodeId, Value};
+
+        let mut app = MaterialCraftApp::headless(materialcraft_engine::new_session(), UiState::default());
+        let owner = NodeId(app.run("graph.node.add", json!({"def": "pixel_processor"})).unwrap()["id"].as_u64().unwrap());
+        let target = materialcraft_engine::FunctionGraphTarget::Parameter { node: owner, parameter: "function".into() };
+        app.run("graph.function.set", json!({"target": target, "function": FunctionGraph::constant(Value::Float(0.5))})).unwrap();
+        let context = egui::Context::default();
+
+        crate::menus::invoke(&mut app, &context, "edit.selectAll");
+        crate::menus::invoke(&mut app, &context, "edit.copy");
+        let material = app.system_clipboard.take().unwrap();
+        app.function_editor = Some(FunctionEditor::new(app.session.graph, owner, FunctionTarget::Parameter("function".into())));
+        crate::menus::invoke(&mut app, &context, "edit.selectAll");
+        crate::menus::invoke(&mut app, &context, "edit.cut");
+        let function = app.system_clipboard.take().unwrap();
+
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&material).unwrap()["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&function).unwrap(), serde_json::to_value(&app.session.embedded_clipboard).unwrap());
+        assert!(app.session.embedded_clipboard.is_some());
+    }
+
     /// A frame which does not draw Explorer clears hover state left by its previous frame.
     #[test]
     fn review_hidden_explorer_drawing_clears_hover() {

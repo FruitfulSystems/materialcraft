@@ -56,6 +56,8 @@ pub struct MaterialCraftApp {
     /// Keyboard shortcuts and their dispatch
     pub(crate) keymap: craft_keymap::Keymap,
     pub(crate) dispatcher: craft_keymap::egui::Dispatcher,
+    /// What Copy or Cut put on the clipboard this frame, for the system clipboard
+    pub(crate) system_clipboard: Option<String>,
     /// Fallback fonts for Arabic
     pub fonts: fonts::UiFonts,
     /// The icon font is installed (it takes effect on the frame after `set_fonts`)
@@ -118,8 +120,9 @@ impl MaterialCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             window_layout: None,
             keymap: menus::keymap(craft_keymap::Platform::current()),
-            // The web build sends a key press with each clipboard event, and the option lets that press run its command
-            dispatcher: craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(cfg!(target_arch = "wasm32")),
+            // The desktop sends Copy, Cut and Paste events in place of their key presses and the web sends both: the option lets them run their commands
+            dispatcher: craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(true),
+            system_clipboard: None,
             fonts: fonts::UiFonts::default(),
             fonts_ready: false,
             ui_gesture_active: false,
@@ -201,6 +204,12 @@ impl MaterialCraftApp {
 
         match cook::execute_guarded(&mut self.session, id, &params) {
             Ok(v) => {
+                // The desktop sends no Paste event while the system clipboard is empty, so Copy and Cut fill it
+                if matches!(id, "edit.copy" | "edit.cut")
+                    && let Some(clip) = v.get("clip")
+                {
+                    self.system_clipboard = Some(clip.to_string());
+                }
                 if matches!(id, "graph.pin.add" | "library.add")
                     && let Some(materialcraft_engine::AnnotationSelection::Pin(pin)) = self.session.annotation_selection
                 {
@@ -399,9 +408,17 @@ impl MaterialCraftApp {
         crate::updates_ui::tick(self, ctx);
         self.reconcile_editors();
         menus::shortcuts(self, ctx);
+        self.publish_clipboard(ctx);
         self.toasts.retain(|t| t.until > now);
         if !self.input_queue.is_empty() {
             ctx.request_repaint();
+        }
+    }
+
+    /// Hand what Copy or Cut put on the clipboard to the system clipboard
+    fn publish_clipboard(&mut self, ctx: &egui::Context) {
+        if let Some(text) = self.system_clipboard.take() {
+            ctx.copy_text(text);
         }
     }
 
@@ -431,6 +448,7 @@ impl MaterialCraftApp {
             self.session.finish_edit();
         }
         self.ui_gesture_active = gesture_active;
+        self.publish_clipboard(&ctx);
         crate::toast::show(self, &ctx);
         control::request_screenshots(self, &ctx);
         let dt = (now_ms() - t0) as f32;

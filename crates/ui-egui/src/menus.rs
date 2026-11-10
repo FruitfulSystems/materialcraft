@@ -416,7 +416,10 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
-    if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
+    // The desktop sends Copy, Cut and Paste events in place of their key presses
+    if !ctx
+        .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))))
+    {
         return;
     }
 
@@ -434,9 +437,12 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     // Selected label text copies through egui's Copy and Cut events, which a hit would remove
     let label_selected = label_text_selected(ctx);
+    // A clipboard chord with nothing to copy or paste leaves its event to egui instead of reporting an error
+    let unavailable_clipboard_commands: Vec<&str> = ["edit.copy", "edit.cut", "edit.paste"].into_iter().filter(|id| !enabled(app, id)).collect();
     let hits = ctx.input_mut(|i| {
         app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| {
-            modality.allows(&hit.command.id) && !(label_selected && matches!(hit.command.id.as_str(), "edit.copy" | "edit.cut"))
+            let id = hit.command.id.as_str();
+            modality.allows(id) && !(label_selected && matches!(id, "edit.copy" | "edit.cut")) && !unavailable_clipboard_commands.contains(&id)
         })
     });
     for hit in hits {
@@ -792,13 +798,49 @@ mod tests {
     }
 
     #[test]
-    fn the_desktops_copy_event_stays_with_egui() {
+    fn the_desktops_copy_event_copies_the_selected_nodes() {
         let mut app = app();
         app.run("edit.selectAll", serde_json::json!({}));
         let ctx = egui::Context::default();
+
         let kept = copy_event_kept(&mut app, &ctx, egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() });
-        assert!(kept, "selected label text copies through this event");
-        assert!(app.session.clipboard.is_none(), "the desktop's Copy event does not run edit.copy");
+
+        assert!(!kept, "edit.copy takes the event");
+        assert!(app.session.clipboard.is_some());
+    }
+
+    #[test]
+    fn selected_label_text_keeps_the_desktops_copy_event() {
+        let mut app = app();
+        app.run("edit.selectAll", serde_json::json!({}));
+        let ctx = egui::Context::default();
+        select_label_text(&ctx);
+
+        let kept = copy_event_kept(&mut app, &ctx, egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() });
+
+        assert!(kept, "egui copies the label's text from this event");
+        assert!(app.session.clipboard.is_none(), "the event does not also copy the selected nodes");
+    }
+
+    #[test]
+    fn clipboard_events_with_nothing_to_copy_or_paste_stay_with_egui() {
+        let mut app = app();
+        app.run("edit.selectNone", serde_json::json!({}));
+        app.session.clipboard = None;
+        let toasts = app.toasts.len();
+        let events = vec![egui::Event::Copy, egui::Event::Cut, egui::Event::Paste("text from another app".into())];
+        let ctx = egui::Context::default();
+
+        let mut left = Vec::new();
+        ctx.run_ui(egui::RawInput { events: events.clone(), ..Default::default() }, |ui| {
+            shortcuts(&mut app, ui.ctx());
+            left = ui.input(|i| i.events.clone());
+        })
+        .textures_delta
+        .clear();
+
+        assert_eq!(left, events);
+        assert_eq!(app.toasts.len(), toasts, "no error toast for a chord that runs nothing");
     }
 
     #[test]
