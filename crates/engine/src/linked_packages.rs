@@ -37,6 +37,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
                 if node.def != "graph_instance" {
                     return None;
                 }
+
                 let materialcraft_core::Value::Text(name) = node.params.get("graph")? else { return None };
                 Some(GraphInstance {
                     label: String::new(),
@@ -52,7 +53,9 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             if graph.function.is_some() {
                 return None;
             }
+
             let (mut inputs, mut outputs) = materialcraft_nodes::graph_interface::graph_ports(graph);
+
             // Keep connected missing ports so saving cannot silently discard the user's wires
             for port in &instance.inputs {
                 if owner.connections.iter().any(|wire| wire.to == node.id && wire.to_port == port.identifier)
@@ -68,18 +71,23 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
                     outputs.push(port.clone());
                 }
             }
+
             instance.inputs = inputs;
             instance.outputs = outputs;
+            instance.defaults =
+                graph.exposed.iter().map(|parameter| (parameter.id.clone(), graph.input_value(&parameter.id).unwrap_or(&parameter.default).clone())).collect();
             instance.label = graph.display_name().into();
             (node.instance.as_ref() != Some(&instance)).then_some((graph_index, node_index, instance))
         })
         .collect();
+
     let mut changed = !updates.is_empty();
     for (graph, node, instance) in updates {
         if let Some(node) = package.graphs.get_mut(graph).and_then(|graph| graph.nodes.get_mut(node)) {
             node.instance = Some(instance);
         }
     }
+
     let local = package.clone();
     for function in package.graphs.iter_mut().flat_map(|graph| graph.functions_mut()) {
         if function.nodes.iter().any(|node| node.instance.is_some()) {
@@ -88,6 +96,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             changed |= *function != previous;
         }
     }
+
     changed
 }
 

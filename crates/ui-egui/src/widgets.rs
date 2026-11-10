@@ -22,15 +22,44 @@ pub fn dnd_release<T: std::any::Any + Send + Sync>(resp: &Response) -> Option<st
 /// A labelled slider in two rows: "Label ........ value" over a slim track with a round knob.
 /// Returns the track response (`.changed()` on a drag or valid numeric edit).
 pub fn slider(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>, decimals: usize) -> Response {
+    slider_with_settings(ui, label, value, range, decimals, None)
+}
+
+pub(crate) fn input_slider(ui: &mut Ui, label: &str, value: &mut f32, input: &materialcraft_engine::core::ExposedParameter, decimals: usize) -> Response {
+    let range = if input.clamp { input.min..=input.max } else { input.min.min(*value)..=input.max.max(*value) };
+    slider_with_settings(ui, label, value, range, decimals, Some(input))
+}
+
+fn slider_with_settings(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    settings: Option<&materialcraft_engine::core::ExposedParameter>,
+) -> Response {
     let tk = Tokens::get(ui.ctx());
-    let (lo, hi) = (*range.start(), *range.end());
+
+    // Imported widget limits may be reversed or non-finite
+    let first = if range.start().is_finite() { *range.start() } else { 0.0 };
+    let last = if range.end().is_finite() { *range.end() } else { 1.0 };
+    let (lo, hi) = (first.min(last), first.max(last));
+    let constrain = |value: f32, clamp: bool| {
+        let value = if let Some(step) = settings.and_then(|input| input.step).filter(|step| step.is_finite() && *step > 0.0) {
+            let snapped = ((f64::from(value) / f64::from(step)).round() * f64::from(step)) as f32;
+            if snapped.is_finite() { snapped } else { value }
+        } else {
+            value
+        };
+        if clamp { value.clamp(lo, hi) } else { value }
+    };
     let w = ui.available_width();
     let mut edited = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).color(tk.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let id = ui.next_auto_id();
-            // Keep incomplete input (such as "-") across frames while editing.
+            // Keep incomplete input (such as "-") across frames while editing
             let draft = id.with("numeric-draft");
             let editing = ui.memory(|m| m.has_focus(id) || m.had_focus_last_frame(id));
             let mut text = editing.then(|| ui.data(|d| d.get_temp::<String>(draft))).flatten().unwrap_or_else(|| format!("{:.*}", decimals, value));
@@ -41,7 +70,7 @@ pub fn slider(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeI
                 && let Ok(v) = text.trim().parse::<f32>()
                 && v.is_finite()
             {
-                let v = v.clamp(lo, hi);
+                let v = constrain(v, settings.is_none_or(|input| input.clamp));
                 edited = v != *value;
                 *value = v;
             }
@@ -68,11 +97,11 @@ pub fn slider(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeI
             let t = ((x - rect.left() - 5.0) / (rect.width() - 10.0).max(1.0)).clamp(0.0, 1.0);
             f64::from(lo) + (f64::from(hi) - f64::from(lo)) * f64::from(t)
         };
-        // Snap to a round value only within half a physical pixel (in points), so
-        // round values are reachable by aiming at them while fractional values
-        // between round steps remain reachable.
+
+        // Snap only within half a pixel so intermediate values remain reachable
         let radius = 0.5 / ui.ctx().pixels_per_point();
         let v = egui::emath::smart_aim::best_in_range_f64(value_at(p.x - radius), value_at(p.x + radius)) as f32;
+        let v = constrain(v, true);
         if (v - *value).abs() > f32::EPSILON {
             *value = v;
             resp.mark_changed();

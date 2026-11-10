@@ -105,9 +105,14 @@ Types: `move`, `down`, `up`, `click`, `doubleClick`, `drag`, `scroll`, `key` (eg
 | `graph.wire.insertDot` | `{to, toPort, at?}`: split the wire feeding `to.toPort` with a reroute Dot node at `at` (graph point, default midway), selected |
 | `graph.wire.swap` / `graph.wire.delete` | `{wires: [{to, toPort}, ...]}`: exchange the sources of exactly two wires / delete any listed wires, one undo step each |
 | `graph.node.param` | `{id?, param, value}`: numbers, `[x, y]`, `"#rrggbb"`, enum index, curve `[[x, y], …]`, gradient `[[pos, color], …]`, or a typed value `{"t": "function", "v": {...}}` |
-| `graph.node.base` | `{id?, sizeMode?, size?, format?, seed?, tiling?}` |
-| `graph.exposed.add` / `graph.exposed.set` | `{id, label?, default?, bind?: {node, param}}` (with `bind`, `id` may be omitted: the input is named after the parameter, `opacity`, `opacity_1`…) / `{id, value}` |
-| `graph.node.function` | `{id?, param, function}` drives a parameter by a function graph of the graph's inputs (dynamic parameter); `{id?, param, remove: true}` removes it |
+| `graph.node.base` | `{id?, param, value?, inheritance?}` edits one base parameter; legacy `{sizeMode?, size?, format?, seed?, tiling?}` fields remain supported |
+| `graph.exposed.prepare` | `{bind: {node, param}, default?}` returns editable input settings without changing the graph; only Specific Parameters can be exposed |
+| `graph.exposed.add` / `graph.exposed.set` | `{id?, label?, group?, description?, default?, min?, max?, editor?, clamp?, step?, bind?: {node, param}}` (with `bind`, `id` may be omitted: `opacity`, `opacity_1`…) / `{id, value}`; `editor` is `slider`, `input`, `color`, `dropdown`, `toggle` or `text`, subject to the parameter type |
+| `graph.node.function` | `{id?, param, base?, mode?: empty\|constant, value?, function?, remove?}` attaches an owned parameter function; constant creation captures its current value, or uses the supplied `value`; empty creation has no output |
+| `graph.node.bind` | `{id?, param, base?, input}` attaches a typed input function; `input: null` clears the driver |
+| `graph.node.function.edit` | `{id?, param, base?}` resolves the function target and opens it when dispatched by the UI |
+| `graph.node.parameterInfo` | `{id?, param, base?}` returns the expected type, current value or error, function, input link, inheritance and warnings |
+| `graph.node.reset` | `{id?, param?, base?}` removes the driver and restores defaults; omit `param` to reset the selected parameter section |
 | `graph.preset.save` / `.apply` / `.delete` | `{name}`: store, restore or remove the current input values |
 | `graph.createFromSelection` | `{name?, ids?}`: move nodes into a sub-graph and replace them with an instance |
 | `view.2d` / `view.3d` | which node the 2D view shows, channel, tiling, histogram; scene, environment, camera, tiling, `heightScale` (how far the height output raises the mesh, in mesh radii) and `heightLevel` (the height that stays on the surface; 0 = the relief rises out of it), `normalYFlip` (interpret DirectX normal maps; default false/OpenGL), `transparency` (see through where the alpha is below one: the opacity output, else the base color's alpha), `alphaView` (show the alpha channel) |
@@ -201,8 +206,22 @@ Omit `kind`, or use `"material"`, for a Graph. `graph.function.set {"function": 
 the active standalone function through one validated, undoable command.
 Both `graph.function.set` and `graph.function.edit` accept an optional `target`: `{"kind":"graph"}`
 (the default), `{"kind":"parameter","node":12,"parameter":"function"}`,
-`{"kind":"dynamic","node":12,"parameter":"opacity"}`, or
+`{"kind":"dynamic","node":12,"parameter":"opacity"}`,
+`{"kind":"base","node":12,"parameter":"outputsize"}`, or
 `{"kind":"pattern","owner":12,"node":3,"parameter":"patternrotation"}`.
+
+Base function identifiers are `outputsize` (Integer2), `pixelsize` (Float2), and `format`,
+`pixelratio`, `tiling`, `randomseed` (Integer). Their inheritance is independent of the driver.
+`graph.node.base {id, param, inheritance}` changes inheritance while keeping its function;
+add `value` to replace the function with a literal. Output size uses log2 dimensions in absolute
+mode and log2 offsets in relative modes. Its relative-mode function reads the inherited nominal
+`$size` and `$sizelog2`, before preview limits. Instances pass their resolved size to their child graph.
+Exposing or binding a parameter creates an editable, typed Get-node function. Literal edits and
+reset remove the old driver. Native parameters and instance inputs require their declared output
+type; color parameters use Float4 and enum parameters use Integer. Invalid functions remain editable
+and cook with a diagnostic. `session.inspect` includes evaluated `base`, `baseValues` and `parameters`
+in each node's `cooked` result; `parameters` contains scalar and vector values, while authoring
+graphs and curves remain in `params`. `baseValues` is populated for nodes with base functions.
 
 `graph.function.edit` accepts `edit: {action: add|move|connect|value|output, ...}`.
 Explicit output selection rejects a type incompatible with the target parameter. Existing

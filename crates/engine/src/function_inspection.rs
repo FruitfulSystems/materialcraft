@@ -24,6 +24,9 @@ pub fn warnings(graph: &Graph) -> Vec<(FunctionGraphTarget, Vec<String>)> {
     }
 
     for node in &graph.nodes {
+        for (parameter, function) in &node.base.functions {
+            inspect(FunctionGraphTarget::Base { node: node.id, parameter: *parameter }, function);
+        }
         for (parameter, function) in &node.functions {
             inspect(FunctionGraphTarget::Dynamic { node: node.id, parameter: parameter.clone() }, function);
         }

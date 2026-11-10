@@ -58,7 +58,7 @@ fn bottom_library_drags_functions_into_function_and_processor_canvases() {
 
         harness.state_mut().ui.library_search = "GlobalRandom".into();
         settle(&mut harness, 3);
-        drag(&mut harness, "GlobalRandom", vec2(160.0, 0.0));
+        drag(&mut harness, "Global random", vec2(160.0, 0.0));
 
         let random = target
             .current(&harness.state().session)
@@ -72,6 +72,7 @@ fn bottom_library_drags_functions_into_function_and_processor_canvases() {
 
         let mut missing = harness.state().session.pkg.dependencies["sbs://functions.sbs"].graph_by_name("Functions/Random/GlobalRandom").unwrap().1.clone();
         missing.name = "MissingFunction".into();
+        missing.attributes.label.clear();
         missing.folder = "Functions/Test".into();
         missing.function = Some(Default::default());
         let mut package = materialcraft_engine::core::Package::new("Missing library");

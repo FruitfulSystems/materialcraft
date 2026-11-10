@@ -234,7 +234,7 @@ fn canvas(app: &mut MaterialCraftApp, ui: &mut Ui) {
             // Footer: size and format
             let footer = Rect::from_min_max(pos2(screen_rect.left(), body.bottom()), screen_rect.max);
             if let Some(img) = result.and_then(|r| r.outputs.first().and_then(materialcraft_engine::eval::NodeOutput::as_image)) {
-                let bits = if node.base.format == materialcraft_engine::core::OutputFormat::Inherit { graph.format.bits() } else { node.base.format.bits() };
+                let bits = result.map_or(graph.format.bits(), |result| result.base.format.bits());
 
                 let format = format!("{}{bits}", if img.is_gray() { "L" } else { "C" });
                 let txt = if let Some(limit) = app.session.preview_size {

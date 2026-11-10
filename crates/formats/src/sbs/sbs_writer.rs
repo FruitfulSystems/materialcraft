@@ -150,7 +150,7 @@ impl SbsWriter {
             tiling_mode: graph.tiling_mode,
             ..Default::default()
         };
-        out.push_str(&super::base_parameters::base_params_xml(&base));
+        out.push_str(&super::base_parameters::base_params_xml(&base, self).map_err(FormatError::Io)?);
         out.push_str("</baseParameters>");
 
         write_canvas_items(out, graph, self);
@@ -196,14 +196,15 @@ impl SbsWriter {
 
             let _ = write!(
                 out,
-                "<paraminput><identifier v=\"{}\"/><uid v=\"{}\"/><attributes><label v=\"{}\"/></attributes><type v=\"{}\"/><defaultValue>{default}</defaultValue><defaultWidget><name v=\"slider\"/><options><option><name v=\"min\"/><value v=\"{}\"/></option><option><name v=\"max\"/><value v=\"{}\"/></option></options></defaultWidget>{group}</paraminput>",
+                "<paraminput><identifier v=\"{}\"/><uid v=\"{}\"/><attributes><label v=\"{}\"/><description v=\"{}\"/></attributes><type v=\"{}\"/><defaultValue>{default}</defaultValue>",
                 xml_escape(&exposed.id),
                 self.next_uid(),
                 xml_escape(&exposed.label),
-                exposed_type_code(&exposed.default),
-                format_float(exposed.min),
-                format_float(exposed.max)
+                xml_escape(&exposed.description),
+                exposed_type_code(&exposed.default)
             );
+            super::parameter_widget::write(out, exposed);
+            let _ = write!(out, "{group}</paraminput>");
         }
 
         out.push_str("</paraminputs>");
@@ -242,7 +243,7 @@ impl SbsWriter {
         ids: NodeIdentifiers,
         package: &Package,
     ) -> Result<()> {
-        let base = base_params_xml(&node.base);
+        let base = base_params_xml(&node.base, self).map_err(FormatError::Io)?;
 
         match node.def.as_str() {
             "output" => {

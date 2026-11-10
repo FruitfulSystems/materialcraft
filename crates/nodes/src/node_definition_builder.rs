@@ -15,6 +15,7 @@ pub(crate) fn node(id: &'static str, label: &'static str, category: &'static str
         category,
         description: "",
         inputs: Vec::new(),
+        primary_input: None,
         outputs: Vec::new(),
         params: Vec::new(),
         generator: false,
@@ -41,6 +42,11 @@ impl NodeDefinitionBuilder {
 
     pub fn input(mut self, id: &'static str, label: &'static str, kind: PortKind) -> NodeDefinitionBuilder {
         self.0.inputs.push(PortDefinition { id, label, kind });
+        self
+    }
+
+    pub fn primary_input(mut self, identifier: &'static str) -> Self {
+        self.0.primary_input = Some(identifier);
         self
     }
 

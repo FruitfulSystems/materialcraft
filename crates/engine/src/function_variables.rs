@@ -44,7 +44,7 @@ pub(crate) fn suggestions(target: &FunctionGraphTarget, session: &Session, id: u
     }
 
     let owner = match target {
-        FunctionGraphTarget::Parameter { node, .. } | FunctionGraphTarget::Dynamic { node, .. } => Some(*node),
+        FunctionGraphTarget::Parameter { node, .. } | FunctionGraphTarget::Dynamic { node, .. } | FunctionGraphTarget::Base { node, .. } => Some(*node),
         FunctionGraphTarget::Pattern { owner, .. } => Some(*owner),
         FunctionGraphTarget::Graph => None,
     };

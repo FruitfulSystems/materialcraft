@@ -105,13 +105,19 @@ impl Graph {
 
     /// All editable Function canvases, including processor and parameter functions
     pub fn functions(&self) -> impl Iterator<Item = &crate::FunctionGraph> {
-        self.function.iter().chain(self.nodes.iter().flat_map(|node| node.functions.values().chain(node.params.values().flat_map(value_functions))))
+        self.function.iter().chain(
+            self.nodes
+                .iter()
+                .flat_map(|node| node.base.functions.values().chain(node.functions.values()).chain(node.params.values().flat_map(value_functions))),
+        )
     }
 
     pub fn functions_mut(&mut self) -> impl Iterator<Item = &mut crate::FunctionGraph> {
-        self.function
-            .iter_mut()
-            .chain(self.nodes.iter_mut().flat_map(|node| node.functions.values_mut().chain(node.params.values_mut().flat_map(value_functions_mut))))
+        self.function.iter_mut().chain(
+            self.nodes.iter_mut().flat_map(|node| {
+                node.base.functions.values_mut().chain(node.functions.values_mut()).chain(node.params.values_mut().flat_map(value_functions_mut))
+            }),
+        )
     }
 
     pub fn instances(&self) -> impl Iterator<Item = &crate::GraphInstance> {
@@ -125,8 +131,10 @@ impl Graph {
         self.function.iter_mut().flat_map(|function| function.nodes.iter_mut().filter_map(|node| node.instance.as_mut())).chain(self.nodes.iter_mut().flat_map(
             |node| {
                 node.instance.iter_mut().chain(
-                    node.functions
+                    node.base
+                        .functions
                         .values_mut()
+                        .chain(node.functions.values_mut())
                         .chain(node.params.values_mut().flat_map(value_functions_mut))
                         .flat_map(|function| function.nodes.iter_mut().filter_map(|node| node.instance.as_mut())),
                 )
