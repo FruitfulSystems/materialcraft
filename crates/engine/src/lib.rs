@@ -73,8 +73,14 @@ pub mod wire_swap;
 pub use commands::{CommandSpec, command_specs, execute, find};
 pub use session::{CameraPrefs, Session, View2d, View3d, WARNING_PREFIX};
 mod clip;
+mod color_space;
 mod connection_commands;
+mod export_request;
+mod export_size;
 pub use clip::Clip;
+pub use color_space::ColorSpace;
+pub use export_request::ExportRequest;
+pub use export_size::ExportSize;
 
 pub use materialcraft_core as core;
 pub use materialcraft_eval as eval;

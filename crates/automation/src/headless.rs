@@ -185,13 +185,14 @@ impl Headless {
     /// Export every output of a graph into folder `dir`
     pub fn export(&mut self, p: &Value) -> Result<Value, AutomationError> {
         let dir = p.get("dir").and_then(Value::as_str).ok_or_else(|| bad("`dir` is required"))?;
-        let (gi, ext, pattern, depth, size) = file_cmds::export_params(&self.session, p)?;
-        let files = file_cmds::export_outputs(&self.session, gi, &ext, &pattern, depth, size)?;
+        let request = materialcraft_engine::ExportRequest::from_params(&self.session, p)?;
+        let files = file_cmds::export_outputs(&self.session, &request)?;
         self.create_dir_all(dir)?;
+
         let mut written = Vec::new();
-        for f in files {
-            let path = if dir == "." { f.file.clone() } else { format!("{}/{}", dir.trim_end_matches('/'), f.file) };
-            self.write(&path, &f.bytes)?;
+        for exported in files {
+            let path = if dir == "." { exported.file.clone() } else { format!("{}/{}", dir.trim_end_matches('/'), exported.file) };
+            self.write(&path, &exported.bytes)?;
             written.push(path);
         }
         Ok(json!({"files": written}))

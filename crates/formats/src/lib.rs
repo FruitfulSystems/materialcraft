@@ -26,7 +26,7 @@ pub type Result<T> = std::result::Result<T, FormatError>;
 pub(crate) const MAX_JSON: u64 = 64 << 20;
 pub(crate) const MAX_RESOURCE: u64 = 256 << 20;
 pub const EXPORT_FORMATS: &[(&str, &str)] =
-    &[("png", "PNG"), ("jpg", "JPEG"), ("tga", "TGA"), ("tif", "TIFF"), ("bmp", "BMP"), ("webp", "WEBP"), ("exr", "OpenEXR"), ("hdr", "Radiance HDR")];
+    &[("png", "PNG"), ("jpg", "JPEG"), ("tga", "TGA"), ("bmp", "BMP"), ("webp", "WEBP"), ("exr", "OpenEXR"), ("hdr", "Radiance HDR")];
 pub const VECTOR_EXTENSIONS: &[&str] = &["svg"];
 pub const VECTOR_FORMATS: &[(&str, &[&str])] = &[("All formats", VECTOR_EXTENSIONS), ("Scalable Vector Graphics", VECTOR_EXTENSIONS)];
 pub const BITMAP_EXTENSIONS: &[&str] = &["dds", "webp", "gif", "hdr", "exr", "jpg", "jif", "jpeg", "jpe", "pgm", "png", "tif", "tiff", "tga", "targa", "bmp"];

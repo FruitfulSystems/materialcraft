@@ -268,15 +268,14 @@ fn a_picked_package_opens() {
 }
 
 #[test]
-fn an_exported_material_is_written_for_the_active_graph() {
+fn export_material_opens_the_export_window_on_the_mcmat_tab() {
     let mut app = app();
+
     crate::windows::file_action(&mut app, &egui::Context::default(), "file.exportMaterial");
-    let path = temp("exported.mcmat");
-    let target = path.clone();
-    answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
-    assert!(path.exists());
-    assert!(app.toasts.iter().all(|toast| !toast.error), "{}", app.toasts.len());
-    std::fs::remove_file(path).ok();
+
+    assert!(app.ui.windows.export);
+    assert_eq!(app.ui.export_tab, crate::export::ExportTab::Mcmat);
+    assert!(!app.dialogs.is_open() && app.dialogs.queued() == 0, "the window picks the destination, not a dialog of its own");
 }
 
 fn png(name: &str) -> std::path::PathBuf {
@@ -429,13 +428,22 @@ fn saving_a_package_that_closed_meanwhile_does_not_write() {
 }
 
 #[test]
-fn the_export_folder_dialog_fills_the_field() {
+fn export_destination_dialogs_fill_their_tab_field() {
+    use crate::export::ExportTab;
+
     let mut app = app();
-    app.dialogs.ask(FileDialog::folder(), Then::ExportFolder);
-    let dir = std::env::temp_dir();
-    let target = dir.clone();
-    answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
-    assert_eq!(app.ui.export_dir, dir.display().to_string());
+    for (tab, name) in [(ExportTab::FromGraph, "images"), (ExportTab::MaterialX, "materialx"), (ExportTab::Mcmat, "material.mcmat")] {
+        app.dialogs.ask(FileDialog::folder(), Then::ExportDestination(tab));
+        let target = std::env::temp_dir().join(name);
+        answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
+    }
+
+    let draft = app.ui.export_draft.as_ref().unwrap();
+    let picked = |name: &str| std::env::temp_dir().join(name).display().to_string();
+    assert_eq!(draft.destination, picked("images"));
+    assert_eq!(draft.material.folder, picked("materialx"));
+    assert_eq!(draft.material.archive, picked("material.mcmat"));
+    assert_eq!(app.ui.export, crate::export::ExportSettings::default(), "picking edits the window's copy until it is saved");
 }
 
 #[test]
@@ -497,16 +505,4 @@ fn a_mesh_picked_for_another_package_is_not_loaded() {
     app.dialogs.ask(FileDialog::open(), Then::LoadMesh { document });
     answer_all(&mut app, || Answer::Paths(vec!["does-not-exist.obj".into()]));
     assert!(app.toasts.iter().any(|toast| toast.text.starts_with("Not applied")), "{}", app.toasts.len());
-}
-
-#[test]
-fn an_exported_material_is_not_written_after_the_graph_changed() {
-    let mut app = app();
-    let target = GraphRef { graph: app.session.graph + 1, ..GraphRef::active(&app) };
-    app.dialogs.ask(FileDialog::save(), Then::ExportMaterial(target));
-    let path = temp("gone.mcmat");
-    let target = path.clone();
-    answer_all(&mut app, move || Answer::Paths(vec![target.clone()]));
-    assert!(!path.exists());
-    assert!(app.toasts.iter().any(|toast| toast.error), "{}", app.toasts.len());
 }

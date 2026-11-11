@@ -33,13 +33,11 @@ pub struct UiState {
     pub new_graph_template: String,
     pub new_graph_name: String,
     pub new_graph_size: u32,
-    /// Export dialog fields
-    pub export_dir: String,
-    pub export_format: String,
-    pub export_depth: u32,
-    /// Export size in pixels; 0 = the graph's own size
-    pub export_size: u32,
-    pub export_pattern: String,
+    /// Export window: the saved settings, the open tab and the copy the open window edits
+    pub export: crate::export::ExportSettings,
+    pub export_tab: crate::export::ExportTab,
+    #[serde(skip)]
+    pub export_draft: Option<crate::export::ExportSettings>,
     /// Frame the whole graph on the next frame
     #[serde(skip)]
     pub frame_all: bool,
@@ -66,11 +64,9 @@ impl Default for UiState {
             new_graph_template: "pbr".into(),
             new_graph_name: "New_graph".into(),
             new_graph_size: 1024,
-            export_dir: String::new(),
-            export_format: "png".into(),
-            export_depth: 0,
-            export_size: 0,
-            export_pattern: "$(graph)_$(identifier)".into(),
+            export: crate::export::ExportSettings::default(),
+            export_tab: crate::export::ExportTab::default(),
+            export_draft: None,
             frame_all: true,
         }
     }

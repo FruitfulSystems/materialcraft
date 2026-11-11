@@ -37,7 +37,7 @@ when resaving a file from an older release. `formatVersion` identifies the SBS s
 | `session.inspect` | all | package, graphs, the open graph's nodes (def, params, bindings, base, ports, cook error/size/mean/ms), wires, frames, comments, pins, exposed inputs, views, history |
 | `package.open {path}` / `package.save {path?}` | headless | workspace-scoped package I/O |
 | `bitmap.import {path, name?}` | headless | embed an image as a resource |
-| `outputs.export {dir, format?, pattern?, depth?, size?, graph?}` | headless | cook at full size and write every output |
+| `outputs.export {dir, format?, pattern?, depth?, size?, graph?, outputs?, colorSpaces?}` | headless | cook at full size and write the outputs: `size` is the larger side or `[width, height]`, `outputs` lists identifiers (default all), `colorSpaces` maps identifiers to `srgb`, `linear` or `raw` (default by usage) |
 | `material.export {path, graph?, size?, values?}` | headless | write a portable `.mcmat` below the write root |
 | `render {view?, width?, height?, yaw?, pitch?, scene?, node?, port?, full?, tiling?, hq?, displacement?}` | headless | PNG (base64) of the 3D view or of one node; `hq` is the beauty render (displaced mesh, ray-traced AO, shadowed key light, 3×3 supersampling), `displacement` its depth in scene radii |
 | `ui.inspect` | app | UI state, the graph view rectangle, every node's screen rectangle, every port's identifier, display label and screen position, fps, toasts |
@@ -331,7 +331,7 @@ each has its own reader and writer (`crates/formats/src/material.rs` here), so k
 
 | Command | Params |
 |---|---|
-| `file.exportMaterial` | `{path, graph?, size? (px), values? {input: value}, inputs? {identifier: image path}}`: cook and write a `.mcmat`. TextureCraft runs `materialcraft-cli run source.sbs file.exportMaterial {...}` to re-cook at its texture set's resolution with its own values and baked mesh maps |
+| `file.exportMaterial` | `{path, graph?, size? (px), values? {input: value}, inputs? {identifier: image path}}`: cook and write a `.mcmat`. TextureCraft runs `materialcraft-cli run source.sbs file.exportMaterial {...}` to re-cook at its texture set's resolution with its own values and baked mesh maps. In the app, Export material... (and `ui.menu.invoke file.exportMaterial`) opens the Export window on its MCMAT tab, whose #190 options wait for the new exporter |
 | `file.sendToTextureCraft` | `{graph?}`: export into TextureCraft's library folder (`Documents/TextureCraft/library`), where its shelf lists it |
 | `graph.input.bind` / `graph.input.unbind` | `{identifier, resource? \| path?, linear?}` / `{identifier}`: a preview image for an input node (a mesh map exported from TextureCraft), saved in the package |
 | `file.open` | `{path}` opens `.sbs` XML or an independent `.mcraft` ZIP. Also opens a `.mcmat`'s source without a save path. Returns `warnings` for unsupported content; also in `session.inspect` as `package.warnings` |

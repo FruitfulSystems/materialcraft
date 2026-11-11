@@ -6,6 +6,7 @@ pub mod control;
 pub mod cook;
 pub mod docking;
 pub mod explorer;
+pub mod export;
 pub mod fonts;
 pub mod function;
 pub mod graph;

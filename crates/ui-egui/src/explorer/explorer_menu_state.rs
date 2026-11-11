@@ -21,7 +21,7 @@ impl ExplorerMenuState {
             "explorer.paste" => self.paste,
             "file.reload" | menus::EXPLORER_SHOW_IN_FOLDER => self.saved,
             menus::EXPLORER_OPEN_DEPENDENCIES => self.dependencies,
-            menus::EXPLORER_COMPUTE | menus::EXPLORER_VIEW_OUTPUTS | menus::EXPLORER_EXPORT_OUTPUTS => self.outputs,
+            menus::EXPLORER_COMPUTE | menus::EXPLORER_VIEW_OUTPUTS | menus::EXPLORER_EXPORT_OUTPUTS | menus::EXPLORER_EXPORT_MATERIAL => self.outputs,
             _ => true,
         }
     }

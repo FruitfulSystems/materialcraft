@@ -41,6 +41,7 @@ pub(crate) const EXPLORER_SHOW_IN_FOLDER: &str = "ui.explorer.showInFolder";
 pub(crate) const EXPLORER_OPEN_DEPENDENCIES: &str = "ui.explorer.openDependencies";
 pub(crate) const EXPLORER_VIEW_OUTPUTS: &str = "ui.explorer.viewOutputs";
 pub(crate) const EXPLORER_EXPORT_OUTPUTS: &str = "ui.explorer.exportOutputs";
+pub(crate) const EXPLORER_EXPORT_MATERIAL: &str = "ui.explorer.exportMaterial";
 pub(crate) const EXPLORER_PACKAGE: &[ExplorerRow] = &[
     Sub("New", EXPLORER_NEW),
     Sub("Import", EXPLORER_IMPORT),
@@ -80,6 +81,7 @@ pub(crate) const EXPLORER_GRAPH: &[ExplorerRow] = &[
     Item("View outputs in 3D view", EXPLORER_VIEW_OUTPUTS, None),
     Item("Compute outputs", EXPLORER_COMPUTE, None),
     Item("Export outputs...", EXPLORER_EXPORT_OUTPUTS, None),
+    Item("Export material...", EXPLORER_EXPORT_MATERIAL, None),
 ];
 
 /// The menu catalog (the target menu tree with our ids)
@@ -215,7 +217,7 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
                 if id == "ui.newFunctionGraph" { materialcraft_engine::core::GraphKind::Function } else { materialcraft_engine::core::GraphKind::Material };
             app.ui.windows.new_graph = true;
         }
-        "ui.export" => app.ui.windows.export = true,
+        "ui.export" => crate::export::open(app, crate::export::ExportTab::FromGraph),
         "ui.quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         "ui.preferences" => app.ui.windows.preferences = true,
         "ui.view.graph" => {}

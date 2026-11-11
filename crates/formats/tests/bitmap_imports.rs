@@ -19,16 +19,21 @@ fn bitmap_filters_are_specific_and_match_supported_extensions() {
 #[test]
 fn common_bitmap_formats_decode() {
     let pixels = Image::filled(4, 4, Kind::Color, [0.25, 0.5, 0.75, 1.0]);
-    for extension in ["png", "jpeg", "tga", "tiff", "bmp", "webp", "exr", "hdr"] {
+    for extension in ["png", "jpeg", "tga", "bmp", "webp", "exr", "hdr"] {
         let bytes = encode(&pixels, extension, Depth::U8, true).unwrap();
         let image = decode(&bytes, false).unwrap();
 
         assert_eq!((image.w, image.h), (4, 4), "{extension}");
     }
-    let mut gif = Cursor::new(Vec::new());
-    image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255])).write_to(&mut gif, image::ImageFormat::Gif).unwrap();
 
-    assert_eq!(decode(gif.get_ref(), false).unwrap().w, 2);
+    // GIF and TIFF import only, so another writer makes them
+    for format in [image::ImageFormat::Gif, image::ImageFormat::Tiff] {
+        let mut bytes = Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255])).write_to(&mut bytes, format).unwrap();
+
+        assert_eq!(decode(bytes.get_ref(), false).unwrap().w, 2, "{format:?}");
+    }
+    assert!(encode(&pixels, "tif", Depth::U8, true).is_err(), "TIFF is not an export format");
 
     for pgm in [&b"P2\n2 1\n255\n0 255\n"[..], &b"P5\n2 1\n255\n\0\xff"[..]] {
         let image = decode(pgm, false).unwrap();

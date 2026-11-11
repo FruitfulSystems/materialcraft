@@ -1,7 +1,6 @@
 //! The desktop's file dialogs: queued on [`craft_dialogs::Dialogs`], shown at the end of a frame and answered on a later one
 
 use craft_dialogs::{Answer, FileDialog};
-use materialcraft_engine::formats::material::MATERIAL_EXT;
 use materialcraft_engine::image::Image;
 use serde_json::{Value, json};
 
@@ -19,14 +18,14 @@ pub(crate) enum Then {
         copy: bool,
         before_action: bool,
     },
-    ExportMaterial(GraphRef),
     ImportBitmap(GraphRef),
     ImportResource {
         document: u64,
         vector: bool,
         folder: String,
     },
-    ExportFolder,
+    /// The Export window's destination for this tab
+    ExportDestination(crate::export::ExportTab),
     LoadMesh {
         document: u64,
     },
@@ -91,13 +90,6 @@ pub(crate) fn save_before_action(app: &mut MaterialCraftApp) {
     app.dialogs.ask(dialog, then);
 }
 
-/// File ▸ Export material: choose where to write the active graph's material
-pub(crate) fn export_material(app: &mut MaterialCraftApp) {
-    let name = format!("{}.{MATERIAL_EXT}", materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default()));
-    let then = Then::ExportMaterial(GraphRef::active(app));
-    ask(app, FileDialog::save().file_name(name).filter("MaterialCraft material", &[MATERIAL_EXT]), then);
-}
-
 /// Apply the answers that arrived since the last frame. Call once per frame
 pub(crate) fn poll(app: &mut MaterialCraftApp) {
     for (then, answer) in app.dialogs.take_answers() {
@@ -131,13 +123,6 @@ fn chosen(app: &mut MaterialCraftApp, then: Then, path: &std::path::Path) {
                 crate::unsaved::finish_save_dialog(app, saved);
             }
         }
-        Then::ExportMaterial(target) => {
-            if GraphRef::active(app) != target {
-                not_applied(app);
-            } else if let Some(r) = app.run("file.exportMaterial", json!({"path": picked})) {
-                app.toast(format!("{} {}", tr("Exported"), r["path"].as_str().unwrap_or_default()), false);
-            }
-        }
         Then::ImportBitmap(target) => {
             if GraphRef::active(app) == target {
                 crate::graph::import_bitmap_file(app, &picked);
@@ -154,7 +139,14 @@ fn chosen(app: &mut MaterialCraftApp, then: Then, path: &std::path::Path) {
             let command = if vector { "file.importVector" } else { "file.importBitmap" };
             app.run(command, json!({"path": picked, "folder": folder}));
         }
-        Then::ExportFolder => app.ui.export_dir = picked,
+        Then::ExportDestination(tab) => {
+            let settings = app.ui.export_draft.get_or_insert_with(|| app.ui.export.clone());
+            match tab {
+                crate::export::ExportTab::MaterialX => settings.material.folder = picked,
+                crate::export::ExportTab::Mcmat => settings.material.archive = picked,
+                crate::export::ExportTab::FromGraph | crate::export::ExportTab::Batch => settings.destination = picked,
+            }
+        }
         Then::LoadMesh { document } => {
             if app.session.document_id == document {
                 app.run("view.3d.loadMesh", json!({"path": picked}));

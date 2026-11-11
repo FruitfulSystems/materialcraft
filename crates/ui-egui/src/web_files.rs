@@ -292,34 +292,29 @@ mod web {
         super::PackageSave::save_then(app, action, download);
     }
 
-    /// File ▸ Export material: download the open graph as `<graph>.mcmat`
-    pub fn export_material(app: &mut MaterialCraftApp) {
-        use materialcraft_engine::material_cmds::{MaterialOptions, material_bytes};
-        let name = format!("{}.mcmat", materialcraft_engine::formats::safe_file_name(&app.session.graph().map(|g| g.name.clone()).unwrap_or_default()));
-        match material_bytes(&app.session, app.session.graph, &MaterialOptions::default()).map_err(|e| e.to_string()).and_then(|b| download(&name, &b)) {
-            Ok(()) => app.toast(format!("{} {name}", tr("Downloaded")), false),
-            Err(e) => app.toast(format!("{}: {e}", tr("Couldn't export")), true),
-        }
-    }
-
     /// Export outputs: one file downloads as is, several as `<graph>_outputs.zip`
     pub fn export(app: &mut MaterialCraftApp, params: &serde_json::Value) {
-        let result = materialcraft_engine::file_cmds::export_params(&app.session, params)
-            .and_then(|(gi, ext, pattern, depth, size)| materialcraft_engine::file_cmds::export_outputs(&app.session, gi, &ext, &pattern, depth, size))
-            .map_err(|e| e.to_string())
-            .and_then(|files| {
-                let files: Vec<(String, Vec<u8>)> = files.into_iter().map(|f| (f.file, f.bytes)).collect();
+        let result = materialcraft_engine::ExportRequest::from_params(&app.session, params)
+            .and_then(|request| {
+                let files = materialcraft_engine::file_cmds::export_outputs(&app.session, &request)?;
+                let graph = app.session.pkg.graph(request.graph)?.name.clone();
+                Ok((graph, files))
+            })
+            .map_err(|error| error.to_string())
+            .and_then(|(graph, files)| {
+                let files: Vec<(String, Vec<u8>)> = files.into_iter().map(|exported| (exported.file, exported.bytes)).collect();
                 match files.as_slice() {
                     [(name, bytes)] => download(name, bytes).map(|()| name.clone()),
                     _ => {
-                        let name = format!("{}_outputs.zip", app.session.graph().map(|g| g.name.clone()).unwrap_or_default());
+                        let name = format!("{graph}_outputs.zip");
                         download(&name, &zip_files(&files)?).map(|()| name)
                     }
                 }
             });
+
         match result {
             Ok(name) => app.toast(format!("{} {name}", tr("Downloaded")), false),
-            Err(e) => app.toast(format!("{}: {e}", tr("Couldn't export")), true),
+            Err(error) => app.toast(format!("{}: {error}", tr("Couldn't export")), true),
         }
     }
 
