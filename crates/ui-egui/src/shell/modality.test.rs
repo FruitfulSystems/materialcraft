@@ -34,7 +34,11 @@ fn every_blocking_source_blocks() {
         ("web save", |app| crate::web_files::PackageSave::request(app, false), Blocker::Dialog),
         ("unsaved prompt", |app| app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit), Blocker::UnsavedPrompt),
         ("awaited save", |app| app.awaiting_save = Some(crate::unsaved::Guarded::Quit), Blocker::UnsavedPrompt),
-        ("queued file dialog", |app| app.dialogs.ask(craft_dialogs::FileDialog::save(), crate::native_dialogs::Then::ExportFolder), Blocker::FileDialog),
+        (
+            "queued file dialog",
+            |app| app.dialogs.ask(craft_dialogs::FileDialog::save(), crate::native_dialogs::Then::ExportDestination(crate::export::ExportTab::FromGraph)),
+            Blocker::FileDialog,
+        ),
         ("update prompt", |app| crate::updates_ui::open_prompt_for_test(app), Blocker::Update),
     ];
 
@@ -60,9 +64,10 @@ fn a_blocker_lets_only_its_own_commands_through() {
     }
 
     let file_dialog = Modality::Blocked(Blocker::FileDialog);
-    for id in ["file.open", "file.saveAs", "file.saveCopyAs", "file.exportMaterial", "file.importBitmap", "file.importVector"] {
+    for id in ["file.open", "file.saveAs", "file.saveCopyAs", "file.importBitmap", "file.importVector"] {
         assert!(file_dialog.allows(id), "{id}");
     }
+    assert!(!file_dialog.allows("file.exportMaterial"), "Export material opens the Export window, which waits for the file dialog");
     assert!(!file_dialog.allows("file.save"), "File > Save writes without showing a dialog when the package has a path");
     assert!(!file_dialog.allows("edit.delete"));
 }

@@ -7,6 +7,9 @@ mod graph_items;
 #[path = "snapshot/explorer.rs"]
 mod explorer;
 
+#[path = "snapshot/export.rs"]
+mod export;
+
 #[path = "snapshot/function_instances.rs"]
 mod function_instances;
 

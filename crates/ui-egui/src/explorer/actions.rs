@@ -68,11 +68,12 @@ pub(super) fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, target: Ex
                 app.ui.dock.focus(crate::docking::Panel::View3d);
             }
         }
-        crate::menus::EXPLORER_EXPORT_OUTPUTS => {
+        crate::menus::EXPLORER_EXPORT_OUTPUTS | crate::menus::EXPLORER_EXPORT_MATERIAL => {
             if let ExplorerTarget::Graph { index, .. } = target
                 && (index == app.session.graph || app.run("graph.open", json!({"graph": index})).is_some())
             {
-                app.ui.windows.export = true;
+                let tab = if command == crate::menus::EXPLORER_EXPORT_MATERIAL { crate::export::ExportTab::Mcmat } else { crate::export::ExportTab::FromGraph };
+                crate::export::open(app, tab);
             }
         }
         crate::menus::EXPLORER_SHOW_IN_FOLDER => show_in_folder(app),

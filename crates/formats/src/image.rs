@@ -76,7 +76,6 @@ pub fn encode(img: &Image, ext: &str, depth: Depth, srgb: bool) -> Result<Vec<u8
         "png" => image::ImageFormat::Png,
         "jpg" | "jpeg" => image::ImageFormat::Jpeg,
         "tga" => image::ImageFormat::Tga,
-        "tif" | "tiff" => image::ImageFormat::Tiff,
         "bmp" => image::ImageFormat::Bmp,
         "webp" => image::ImageFormat::WebP,
         "exr" => image::ImageFormat::OpenExr,
@@ -85,7 +84,7 @@ pub fn encode(img: &Image, ext: &str, depth: Depth, srgb: bool) -> Result<Vec<u8
     };
 
     let float_only = matches!(fmt, image::ImageFormat::OpenExr | image::ImageFormat::Hdr);
-    let sixteen_ok = matches!(fmt, image::ImageFormat::Png | image::ImageFormat::Tiff);
+    let sixteen_ok = fmt == image::ImageFormat::Png;
     let q8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     let q16 = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
     let dynimg: image::DynamicImage = if float_only {

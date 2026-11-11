@@ -22,7 +22,7 @@ material artists exchange.
 | PNG | Yes (8/16-bit, gray and color) | Yes (8/16-bit) | 16-bit gray round-trips within 1/65535 | `formats::tests::export_every_format` |
 | JPEG | Yes | Yes (8-bit) | Lossy | same |
 | TGA | Yes | Yes (8-bit) | Lossless | same |
-| TIFF | Yes | Yes (8/16-bit) | Lossless | same |
+| TIFF | Yes | No: import only | Lossless | — |
 | BMP | Yes | Yes (8-bit) | Lossless | same |
 | WEBP | Yes | Yes (8-bit lossless) | Lossless | same |
 | OpenEXR | Yes | Yes (32-bit float RGB) | Float | same |

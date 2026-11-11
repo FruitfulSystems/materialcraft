@@ -3,6 +3,7 @@
 
 mod clipboard_shortcuts;
 mod dialogs;
+mod export_window;
 mod graph_properties;
 mod interface_scale;
 mod normal_maps;

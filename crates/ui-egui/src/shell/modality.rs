@@ -7,7 +7,7 @@ use crate::MaterialCraftApp;
 
 /// The commands that show a file dialog: behind an open one they bring it forward
 #[cfg(not(target_arch = "wasm32"))]
-const SHOW_A_FILE_DIALOG: &[&str] = &["file.open", "file.saveAs", "file.saveCopyAs", "file.exportMaterial", "file.importBitmap", "file.importVector"];
+const SHOW_A_FILE_DIALOG: &[&str] = &["file.open", "file.saveAs", "file.saveCopyAs", "file.importBitmap", "file.importVector"];
 
 /// What is holding input back
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
