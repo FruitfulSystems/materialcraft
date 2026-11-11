@@ -1,94 +1,52 @@
-use super::sbs_value::sbs_constant;
 use super::xml::{child_element, child_value, children_named};
-use materialcraft_core::{BaseParameters, MAX_SIZE_LOG2, OutputFormat, ParameterInheritance, SizeMode};
+use super::{
+    function_graph,
+    sbs_value::{constant_xml, sbs_constant, to_natural_value},
+    sbs_writer::SbsWriter,
+    warnings::Warnings,
+};
+use materialcraft_core::{BaseParameter, BaseParameters, ParameterInheritance};
 use roxmltree::Node as XmlNode;
 use std::fmt::Write as _;
 
-pub(super) fn read_base_params(params: Option<XmlNode>) -> BaseParameters {
+pub(super) fn read_base_params(params: Option<XmlNode>, warnings: &mut Warnings) -> BaseParameters {
     let mut base = BaseParameters::default();
-    for param in params.into_iter().flat_map(|p| children_named(p, "parameter")) {
-        let relative_to = child_value(param, "relativeTo").and_then(|r| r.trim().parse::<i32>().ok()).unwrap_or(1);
-        let inheritance = match relative_to {
-            0 => ParameterInheritance::Absolute,
-            2 => ParameterInheritance::RelativeToParent,
+    for element in params.into_iter().flat_map(|parameters| children_named(parameters, "parameter")) {
+        let Some(parameter) = child_value(element, "name").and_then(BaseParameter::named) else { continue };
+        let inheritance = match child_value(element, "relativeTo").unwrap_or("1") {
+            "0" => ParameterInheritance::Absolute,
+            "2" => ParameterInheritance::RelativeToParent,
             _ => ParameterInheritance::RelativeToInput,
         };
-        match child_value(param, "name") {
-            Some("tiling") => base.tiling_mode = inheritance,
-            Some("pixelratio") => base.pixel_ratio_mode = inheritance,
-            _ => {}
-        }
+        let Some(value) = child_element(element, "paramValue") else { continue };
 
-        let Some(value) = child_element(param, "paramValue").and_then(sbs_constant) else { continue };
-
-        match child_value(param, "name") {
-            Some("outputsize") => {
-                base.size_mode = match relative_to {
-                    0 => SizeMode::Absolute,
-                    2 => SizeMode::RelativeToParent,
-                    _ => SizeMode::RelativeToInput,
-                };
-
-                let limit = |log2: i32| log2.clamp(-(MAX_SIZE_LOG2 as i32), MAX_SIZE_LOG2 as i32);
-                base.size = [limit(value.int(0)), limit(value.int(1))];
-            }
-            Some("format") if relative_to == 0 => {
-                base.format = match value.int(0) {
-                    0 => OutputFormat::U8,
-                    1 => OutputFormat::U16,
-                    2 => OutputFormat::F16,
-                    3 => OutputFormat::F32,
-                    _ => OutputFormat::Inherit,
+        if let Some(dynamic) = child_element(value, "dynamicValue") {
+            match function_graph::read(dynamic) {
+                Ok(function) => {
+                    base.functions.insert(parameter, function);
                 }
+                Err(error) => warnings.add(format!("{} function: {error}", parameter.label())),
             }
-            Some("randomseed") if relative_to == 0 => base.seed = value.int(0),
-            Some("tiling") => base.tiling = [value.int(0) & 1 != 0, value.int(0) & 2 != 0],
-            Some("pixelratio") => base.pixel_ratio = value.int(0).clamp(0, 1),
-            _ => {}
+        } else if let Some(value) = sbs_constant(value)
+            && let Err(error) = parameter.set_value(&mut base, &to_natural_value(&value))
+        {
+            warnings.add(error);
         }
+
+        parameter.set_inheritance(&mut base, inheritance);
     }
+
     base
 }
 
-pub(super) fn base_params_xml(base: &BaseParameters) -> String {
-    let mut out = String::new();
-
-    if base.size_mode != SizeMode::RelativeToInput || base.size != [0, 0] {
-        let relative_to = match base.size_mode {
-            SizeMode::Absolute => 0,
-            SizeMode::RelativeToInput => 1,
-            SizeMode::RelativeToParent => 2,
-        };
-
-        let [width, height] = base.size;
-        let _ = write!(
-            out,
-            "<parameter><name v=\"outputsize\"/><relativeTo v=\"{relative_to}\"/><paramValue><constantValueInt2 v=\"{width} {height}\"/></paramValue></parameter>"
-        );
-    }
-
-    let format = match base.format {
-        OutputFormat::Inherit => None,
-        OutputFormat::U8 => Some(0),
-        OutputFormat::U16 => Some(1),
-        OutputFormat::F16 => Some(2),
-        OutputFormat::F32 => Some(3),
-    };
-
-    if let Some(format) = format {
-        let _ = write!(out, "<parameter><name v=\"format\"/><relativeTo v=\"0\"/><paramValue><constantValueInt32 v=\"{format}\"/></paramValue></parameter>");
-    }
-
-    if base.seed != 0 {
-        let _ = write!(
-            out,
-            "<parameter><name v=\"randomseed\"/><relativeTo v=\"0\"/><paramValue><constantValueInt32 v=\"{}\"/></paramValue></parameter>",
-            base.seed
-        );
-    }
-    let tiling = i32::from(base.tiling[0]) | (i32::from(base.tiling[1]) << 1);
-    for (name, value, inheritance, default) in [("tiling", tiling, base.tiling_mode, 3), ("pixelratio", base.pixel_ratio, base.pixel_ratio_mode, 0)] {
-        if inheritance == ParameterInheritance::RelativeToInput && value == default {
+pub(super) fn base_params_xml(base: &BaseParameters, writer: &mut SbsWriter) -> Result<String, String> {
+    let mut output = String::new();
+    let defaults = BaseParameters::default();
+    for parameter in BaseParameter::ALL {
+        let function = base.functions.get(&parameter);
+        let value = parameter.value(base);
+        let inheritance = parameter.inheritance(base);
+        if function.is_none() && value == parameter.value(&defaults) && inheritance == parameter.inheritance(&defaults) {
             continue;
         }
 
@@ -97,10 +55,13 @@ pub(super) fn base_params_xml(base: &BaseParameters) -> String {
             ParameterInheritance::RelativeToInput => 1,
             ParameterInheritance::RelativeToParent => 2,
         };
-        let _ = write!(
-            out,
-            "<parameter><name v=\"{name}\"/><relativeTo v=\"{relative_to}\"/><paramValue><constantValueInt32 v=\"{value}\"/></paramValue></parameter>"
-        );
+        let body = match function {
+            Some(function) => function_graph::write(function, writer)?,
+            None => constant_xml(&value).ok_or("invalid base parameter value")?,
+        };
+        let _ =
+            write!(output, "<parameter><name v=\"{}\"/><relativeTo v=\"{relative_to}\"/><paramValue>{body}</paramValue></parameter>", parameter.identifier());
     }
-    out
+
+    Ok(output)
 }

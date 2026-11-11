@@ -3,10 +3,14 @@ mod context_menu;
 mod function_drag;
 mod function_editor;
 mod function_library_drag;
+mod function_search;
+mod function_search_candidate;
 mod function_target;
 pub(crate) mod library;
 mod port_label;
 pub(crate) mod properties;
+pub(crate) mod search;
+mod search_wire;
 
 pub(crate) use actions::{enabled, invoke};
 use function_drag::FunctionDrag;

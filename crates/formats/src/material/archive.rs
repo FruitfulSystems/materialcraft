@@ -110,6 +110,10 @@ mod tests {
 
     fn manifest() -> Manifest {
         let param = ExposedParameter {
+            description: String::new(),
+            editor: None,
+            clamp: false,
+            step: None,
             id: "rough".into(),
             label: "Roughness".into(),
             group: String::new(),

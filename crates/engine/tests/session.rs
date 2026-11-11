@@ -91,26 +91,35 @@ fn package_save_and_open_round_trip() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `file.export` `size` is the larger side in pixels; 0 means the graph's size and the proportions are kept
+/// `file.export` `size` is the larger side in pixels or [width, height]; 0 means the graph's size and the proportions are kept
 #[test]
 fn export_size_keeps_proportions_and_clamps() {
+    use materialcraft_engine::{ExportRequest, ExportSize};
+
     let mut s = sample_session();
     s.pkg.graphs[0].size = [7, 6];
     let dims = |s: &Session, size: Value| {
-        let (gi, ext, pattern, depth, size) = materialcraft_engine::file_cmds::export_params(s, &json!({"size": size})).unwrap();
-        let files = materialcraft_engine::file_cmds::export_outputs(s, gi, &ext, &pattern, depth, size).unwrap();
+        let request = ExportRequest::from_params(s, &json!({"size": size})).unwrap();
+        let files = materialcraft_engine::file_cmds::export_outputs(s, &request).unwrap();
         files.iter().map(|f| materialcraft_formats::decode(&f.bytes, false).unwrap()).map(|i| (i.w, i.h)).collect::<Vec<_>>()
     };
+    let parsed = |s: &Session, size: Value| ExportRequest::from_params(s, &json!({"size": size})).map(|request| request.size);
 
     for size in [json!(0), json!(null)] {
         assert!(dims(&s, size).iter().all(|d| *d == (128, 64)));
     }
     assert!(dims(&s, json!(32)).iter().all(|d| *d == (32, 16)));
-    let parsed = |size: Value| materialcraft_engine::file_cmds::export_params(&s, &json!({"size": size})).unwrap().4;
-    assert_eq!(parsed(json!(0)), None);
-    assert_eq!(parsed(json!(u64::MAX)), Some(u32::MAX));
+    assert!(dims(&s, json!([16, 100])).iter().all(|d| *d == (16, 64)), "each side rounds down to a power of two");
+    assert_eq!(parsed(&s, json!(0)).unwrap(), None);
+    assert_eq!(parsed(&s, json!(u64::MAX)).unwrap(), Some(ExportSize::LargerSide(u32::MAX)));
+    assert_eq!(parsed(&s, json!([1, u64::MAX])).unwrap(), Some(ExportSize::Exact([1, u32::MAX])));
+    for invalid in [json!("large"), json!([64]), json!([64, "wide"]), json!([64, 64, 64])] {
+        assert!(parsed(&s, invalid.clone()).is_err(), "{invalid}");
+    }
+
     s.pkg.graphs[0].size = [u32::MAX, u32::MAX];
     assert!(dims(&s, json!(32)).iter().all(|d| *d == (32, 32)));
+    assert!(dims(&s, json!([1, u64::MAX])).iter().all(|d| *d == (16, 8192)), "sides clamp to 16..8192");
 }
 
 /// A scratch folder for one test, removed when dropped
@@ -252,23 +261,26 @@ fn panic_hunt() {
 
 #[test]
 fn dynamic_parameters_follow_graph_inputs() {
-    let mut s = sample_session();
-    run(&mut s, "file.new", json!({"template": "empty"}));
-    let u = run(&mut s, "graph.node.add", json!({"def": "uniform", "params": {"color_mode": false}}))["id"].as_u64().unwrap();
-    run(&mut s, "graph.exposed.add", json!({"id": "level", "default": {"t": "float", "v": 0.25}}));
-    let f = json!({"nodes": [{"id": 1, "op": "get_float1", "value": {"t": "text", "v": "level"}}], "output": 1});
-    run(&mut s, "graph.node.function", json!({"id": u, "param": "color", "function": f}));
-    s.cook();
-    let mean = |s: &Session| s.cooked.image(materialcraft_engine::core::NodeId(u), 0).unwrap().mean()[0];
-    assert!((mean(&s) - 0.25).abs() < 1e-4, "{}", mean(&s));
-    run(&mut s, "graph.exposed.set", json!({"id": "level", "value": 0.75}));
-    s.cook();
-    assert!((mean(&s) - 0.75).abs() < 1e-4);
-    // Text parameters can't take functions; removing restores the plain value
-    assert!(execute(&mut s, "graph.node.function", &json!({"id": u, "param": "nope"})).is_err());
-    run(&mut s, "graph.node.function", json!({"id": u, "param": "color", "remove": true}));
-    s.cook();
-    assert!((mean(&s) - 0.5).abs() < 0.05);
+    use materialcraft_engine::core::{FunctionGraph, NodeId, Value, ValueType};
+
+    let mut session = sample_session();
+    run(&mut session, "file.new", json!({"template": "empty"}));
+    let owner = NodeId(run(&mut session, "graph.node.add", json!({"def": "uniform", "params": {"color_mode": false}}))["id"].as_u64().unwrap());
+    run(&mut session, "graph.exposed.add", json!({"id": "level", "default": Value::Float4([0.25; 4])}));
+    let function = FunctionGraph::input("level", ValueType::Float4);
+    run(&mut session, "graph.node.function", json!({"id": owner, "param": "color", "function": function}));
+
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.25).abs() < 1e-4, "{mean}");
+    run(&mut session, "graph.exposed.set", json!({"id": "level", "value": Value::Float4([0.75; 4])}));
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.75).abs() < 1e-4);
+
+    // Removing the function restores the plain value
+    assert!(execute(&mut session, "graph.node.function", &json!({"id": owner, "param": "nope"})).is_err());
+    run(&mut session, "graph.node.function", json!({"id": owner, "param": "color", "remove": true}));
+    let mean = session.cook().image(owner, 0).unwrap().mean()[0];
+    assert!((mean - 0.5).abs() < 0.05);
 }
 
 #[test]

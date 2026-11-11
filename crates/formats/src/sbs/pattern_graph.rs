@@ -32,7 +32,11 @@ pub(super) fn read(element: XmlNode<'_, '_>) -> Result<PatternGraph, String> {
         }
     }
 
-    let mut graph = PatternGraph { root: child_value(element, "rootnode").and_then(|id| id.parse().ok()), nodes: Vec::new() };
+    let mut graph = PatternGraph {
+        root: child_value(element, "rootnode").and_then(|id| id.parse().ok()),
+        nodes: Vec::new(),
+        annotations: super::canvas::read_embedded(element),
+    };
     for element in child_element(element, "paramsGraphNodes").into_iter().flat_map(|nodes| children_named(nodes, "paramsGraphNode")) {
         if graph.nodes.len() >= 4096 {
             return Err("pattern graph exceeds the 4096-node limit".into());
@@ -111,6 +115,10 @@ pub(super) fn write(graph: &PatternGraph, writer: &mut SbsWriter) -> Result<Stri
         }
         output.push_str("</connections></paramsGraphNode>");
     }
-    output.push_str("</paramsGraphNodes></paramsGraph></paramsGraphs>");
+    output.push_str("</paramsGraphNodes>");
+    if !graph.annotations.is_empty() {
+        super::canvas::write_items(&mut output, &graph.annotations.frames, &graph.annotations.comments, &graph.annotations.pins, writer);
+    }
+    output.push_str("</paramsGraph></paramsGraphs>");
     Ok(output)
 }

@@ -2,7 +2,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod attributes;
+mod base_parameter;
 mod base_parameters;
+mod canvas_annotations;
 mod color;
 mod comment;
 mod component_usage;
@@ -28,11 +30,13 @@ mod node;
 mod node_id;
 mod output_format;
 mod package;
+mod parameter_editor;
 mod parameter_inheritance;
 mod pattern_graph;
 mod pattern_node;
 mod pattern_node_kind;
 mod pin;
+pub use canvas_annotations::CanvasAnnotations;
 mod preset;
 mod resource;
 mod resource_bytes;
@@ -41,6 +45,7 @@ mod value;
 mod value_type;
 
 pub use attributes::Attributes;
+pub use base_parameter::BaseParameter;
 pub use base_parameters::BaseParameters;
 pub use color::{linear_to_srgb, parse_color, srgb_to_linear};
 pub use comment::Comment;
@@ -67,6 +72,7 @@ pub use node::Node;
 pub use node_id::NodeId;
 pub use output_format::OutputFormat;
 pub use package::{PACKAGE_EXT, Package};
+pub use parameter_editor::ParameterEditor;
 pub use parameter_inheritance::ParameterInheritance;
 pub use pattern_graph::PatternGraph;
 pub use pattern_node::PatternNode;

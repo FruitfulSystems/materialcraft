@@ -8,7 +8,7 @@ use materialcraft_formats::{Depth, encode, output_name};
 
 use crate::commands::{CommandSpec, always, bad, has_graph, has_package, strp, u64p};
 use crate::samples::{TEMPLATES, template};
-use crate::{Result, Session, cmd};
+use crate::{ExportRequest, Result, Session, cmd};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
@@ -38,7 +38,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             "Export outputs...",
             ["File"],
             Some("Ctrl+Shift+E"),
-            "{dir, format? (png|jpg|tga|tif|bmp|webp|exr|hdr), pattern? ($(graph)_$(identifier)), depth? (8|16|32), size? (px of the larger side, rounded down to a power of two, 16..8192; default the graph's size, keeping its proportions), graph?} cooks the graph at full size and writes every output",
+            "{dir, format? (png|jpg|tga|bmp|webp|exr|hdr), pattern? ($(graph)_$(identifier)), depth? (8|16|32), size? (px of the larger side, or [width, height]; rounded down to powers of two, 16..8192; default the graph's size, keeping its proportions), outputs? ([identifier]: default every connected output), colorSpaces? ({identifier: srgb|linear|raw}: default sRGB for color usages, raw for data; linear and raw write values unchanged), graph?} cooks the graph at full size and writes the outputs",
             has_graph,
             export
         ),
@@ -301,80 +301,63 @@ fn save(_: &mut Session, _: &J) -> Result<J> {
     Err(bad("file.save", "the browser saves with a download"))
 }
 
-/// Cook graph `gi` at full size and encode every output (`pattern` names files)
-pub fn export_outputs(s: &Session, gi: usize, ext: &str, pattern: &str, depth: Option<Depth>, size: Option<u32>) -> Result<Vec<Exported>> {
-    let mut pkg = s.pkg.clone();
-    if let Some(px) = size {
-        let g = pkg.graph_mut(gi)?;
-        // The larger side becomes `px`; the other keeps its proportion
-        let target = 31 - px.clamp(16, 8192).leading_zeros();
-        let bounded = g.size.map(|l| l.clamp(4, 13));
-        let larger = bounded[0].max(bounded[1]);
-        g.size = bounded.map(|l| (l + target).saturating_sub(larger).max(4));
+/// Cook the requested graph at full size and encode its requested outputs (`pattern` names files)
+pub fn export_outputs(s: &Session, request: &ExportRequest) -> Result<Vec<Exported>> {
+    let mut package = s.pkg.clone();
+    if let Some(size) = request.size {
+        let graph = package.graph_mut(request.graph)?;
+        graph.size = size.log2_size(graph.size);
     }
-    let g = pkg.graph(gi)?;
-    let dec = s.resource_decoder();
-    let mut options = materialcraft_eval::Options::new(&dec);
+
+    let graph = package.graph(request.graph)?;
+    let decoder = s.resource_decoder();
+    let mut options = materialcraft_eval::Options::new(&decoder);
     options.environment = s.environment;
-    let cooked = materialcraft_eval::cook(&pkg, gi, &options, &s.cache);
-    let mut out = Vec::new();
+    let cooked = materialcraft_eval::cook(&package, request.graph, &options, &s.cache);
+
+    let mut files = Vec::new();
     let mut names = std::collections::HashSet::new();
-    for (id, usage, ident, img) in materialcraft_eval::outputs(g, &cooked) {
-        let Some(img) = img else { continue };
-        let file = format!("{}.{}", output_name(pattern, &g.name, &ident, usage), ext.trim_start_matches('.'));
+    for (id, usage, identifier, image) in materialcraft_eval::outputs(graph, &cooked) {
+        let Some(image) = image.filter(|_| request.includes(&identifier)) else { continue };
+
+        let file = format!("{}.{}", output_name(&request.pattern, &graph.name, &identifier, usage), request.format);
         if !names.insert(file.to_lowercase()) {
             return Err(bad("file.export", format!("duplicate export filename `{file}`: use unique output identifiers or a different filename pattern")));
         }
-        let node = g.node(id)?;
-        let depth = depth
-            .unwrap_or_else(|| Depth::from_format(if node.base.format == materialcraft_core::OutputFormat::Inherit { g.format } else { node.base.format }));
-        let bytes = encode(img, ext, depth, materialcraft_formats::material::srgb_usage(usage))?;
-        out.push(Exported { file, bytes });
-    }
-    if out.is_empty() {
-        return Err(bad("file.export", "the graph has no connected output nodes"));
-    }
-    Ok(out)
-}
 
-/// Export params: (graph index, extension, pattern, depth, size)
-pub type ExportArgs = (usize, String, String, Option<Depth>, Option<u32>);
-
-pub fn export_params(s: &Session, p: &J) -> Result<ExportArgs> {
-    let gi = u64p(p, "graph").map_or(s.graph, |g| g as usize);
-    s.pkg.graph(gi)?;
-    let ext = strp(p, "format").unwrap_or("png").trim_start_matches('.').to_ascii_lowercase();
-    if !materialcraft_formats::EXPORT_FORMATS.iter().any(|(e, _)| *e == ext) {
-        return Err(bad("file.export", format!("unknown format `{ext}`")));
+        let node = graph.node(id)?;
+        let output_format = if node.base.format == materialcraft_core::OutputFormat::Inherit { graph.format } else { node.base.format };
+        let depth = request.depth.unwrap_or_else(|| Depth::from_format(output_format));
+        let bytes = encode(image, &request.format, depth, request.color_space(&identifier, usage).encodes_srgb())?;
+        files.push(Exported { file, bytes });
     }
-    let pattern = strp(p, "pattern").unwrap_or("$(graph)_$(identifier)").to_string();
-    let depth = match u64p(p, "depth") {
-        None => None,
-        Some(8) => Some(Depth::U8),
-        Some(16) => Some(Depth::U16),
-        Some(32) => Some(Depth::F32),
-        Some(d) => return Err(bad("file.export", format!("depth must be 8, 16 or 32, not {d}"))),
-    };
 
-    let size = u64p(p, "size").filter(|&px| px > 0).map(|px| px.min(u64::from(u32::MAX)) as u32);
-    Ok((gi, ext, pattern, depth, size))
+    if files.is_empty() {
+        let reason = if request.outputs.is_some() { "the selected outputs are not connected" } else { "the graph has no connected output nodes" };
+        return Err(bad("file.export", reason));
+    }
+    Ok(files)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn export(s: &mut Session, p: &J) -> Result<J> {
     let dir = strp(p, "dir").ok_or_else(|| bad("file.export", "`dir` is required"))?;
-    let (gi, ext, pattern, depth, size) = export_params(s, p)?;
-    let files = export_outputs(s, gi, &ext, &pattern, depth, size)?;
-    std::fs::create_dir_all(dir).map_err(|e| bad("file.export", format!("{dir}: {e}")))?;
-    for f in &files {
-        if std::path::Path::new(dir).join(&f.file).exists() {
-            return Err(bad("file.export", format!("duplicate export filename `{}`: use unique output identifiers or a different filename pattern", f.file)));
-        }
+    let files = export_outputs(s, &ExportRequest::from_params(s, p)?)?;
+    let folder = std::path::Path::new(dir);
+    std::fs::create_dir_all(folder).map_err(|error| bad("file.export", format!("{dir}: {error}")))?;
+
+    // Check every name first so a rejected export leaves the folder untouched
+    if let Some(existing) = files.iter().find(|exported| folder.join(&exported.file).exists()) {
+        return Err(bad(
+            "file.export",
+            format!("duplicate export filename `{}`: use unique output identifiers or a different filename pattern", existing.file),
+        ));
     }
+
     let mut written = Vec::new();
-    for f in files {
-        let path = std::path::Path::new(dir).join(&f.file);
-        materialcraft_formats::write_atomic(&path, &f.bytes)?;
+    for exported in files {
+        let path = folder.join(&exported.file);
+        materialcraft_formats::write_atomic(&path, &exported.bytes)?;
         written.push(path.display().to_string());
     }
     s.log(format!("Exported {} files to {dir}", written.len()));

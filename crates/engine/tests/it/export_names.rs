@@ -1,4 +1,4 @@
-use materialcraft_engine::{Session, core::NodeId, execute, file_cmds::export_outputs, formats, new_session};
+use materialcraft_engine::{ExportRequest, Session, core::NodeId, execute, file_cmds::export_outputs, formats, new_session};
 use serde_json::json;
 
 fn session() -> (Session, Vec<u64>) {
@@ -31,7 +31,7 @@ fn export_rejects_duplicate_final_names_from_patterns_identifiers_and_sanitizati
         for (&id, name) in outputs.iter().zip(identifiers) {
             execute(&mut s, "graph.node.param", &json!({"id": id, "param": "identifier", "value": name})).unwrap();
         }
-        let result = export_outputs(&s, 0, "png", pattern, None, None);
+        let result = export_outputs(&s, &ExportRequest { pattern: pattern.into(), ..ExportRequest::new(0) });
         assert!(result.is_err(), "colliding names were accepted: {identifiers:?}, {pattern}");
         let error = result.err().unwrap().to_string();
         assert!(error.contains("filename") && error.contains("identifier"), "{error}");
@@ -106,5 +106,47 @@ fn unique_export_writes_both_maps_with_their_expected_pixels() {
         let image = formats::decode(&std::fs::read(dir.0.join(name)).unwrap(), false).unwrap();
         assert_eq!((image.w, image.h), (16, 16));
         assert!((image.get(0, 0, false)[0] - value).abs() < 0.001, "{name}");
+    }
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn export_writes_only_the_selected_outputs_in_their_color_spaces() {
+    let (mut s, _) = session();
+    let dir = TempDir::new("selected");
+    let stored = |name: &str| formats::decode(&std::fs::read(dir.0.join(name)).unwrap(), true).unwrap().get(0, 0, false)[0];
+
+    let only_second = json!({"dir": dir.0, "pattern": "$(identifier)", "outputs": ["second"], "colorSpaces": {"second": "srgb"}});
+    let result = execute(&mut s, "file.export", &only_second).unwrap();
+    assert_eq!(result["files"].as_array().unwrap().len(), 1);
+    assert!(!dir.0.join("first.png").exists(), "an unselected output stays unwritten");
+    let srgb = 1.055 * 0.8_f32.powf(1.0 / 2.4) - 0.055;
+    assert!((stored("second.png") - srgb).abs() < 0.005, "sRGB writes through the curve: {}", stored("second.png"));
+
+    std::fs::remove_file(dir.0.join("second.png")).unwrap();
+    execute(&mut s, "file.export", &json!({"dir": dir.0, "pattern": "$(identifier)", "colorSpaces": {"second": "linear"}})).unwrap();
+    assert!((stored("second.png") - 0.8).abs() < 0.005, "linear writes the values unchanged: {}", stored("second.png"));
+    assert!(dir.0.join("first.png").exists(), "without `outputs` every connected output is written");
+}
+
+#[test]
+fn export_requests_name_existing_outputs_and_color_spaces() {
+    let (s, _) = session();
+    let request = ExportRequest::from_params(&s, &json!({"outputs": ["first"], "colorSpaces": {"first": "Linear"}})).unwrap();
+    assert!(request.includes("first") && !request.includes("second"));
+    assert_eq!(request.color_space("first", "baseColor"), materialcraft_engine::ColorSpace::Linear);
+    assert_eq!(request.color_space("second", "baseColor"), materialcraft_engine::ColorSpace::Srgb, "unset outputs follow their usage");
+    assert_eq!(request.color_space("second", "normal"), materialcraft_engine::ColorSpace::Raw);
+
+    for (params, expected) in [
+        (json!({"outputs": []}), "no outputs selected"),
+        (json!({"outputs": ["third"]}), "no output `third`"),
+        (json!({"outputs": "first"}), "list of output identifiers"),
+        (json!({"colorSpaces": {"third": "raw"}}), "no output `third`"),
+        (json!({"colorSpaces": {"first": "cmyk"}}), "srgb, linear or raw"),
+        (json!({"format": "tif"}), "unknown format `tif`"),
+    ] {
+        let error = ExportRequest::from_params(&s, &params).unwrap_err().to_string();
+        assert!(error.contains(expected), "{params}: {error}");
     }
 }

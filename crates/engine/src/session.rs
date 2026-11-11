@@ -123,6 +123,8 @@ pub struct Session {
     pub(crate) next_document_id: u64,
     pub(crate) documents: std::collections::BTreeMap<u64, crate::OpenDocument>,
     pub(crate) linked_sources: std::collections::BTreeMap<String, Arc<Package>>,
+    /// Snapshots inserted by the library, excluding explicitly supplied dependencies
+    pub(crate) library_sources: std::collections::BTreeMap<String, Arc<Package>>,
     pub pkg: Package,
     /// Where the package was opened from or last saved to.
     pub path: Option<String>,
@@ -130,6 +132,7 @@ pub struct Session {
     pub graph: usize,
     pub selection: Vec<NodeId>,
     pub annotation_selection: Option<AnnotationSelection>,
+    pub annotation_target: crate::AnnotationTarget,
     pub view2d: View2d,
     pub view3d: View3d,
     pub material_preview: crate::MaterialPreview,
@@ -157,17 +160,26 @@ pub struct Session {
     pub cache: Arc<Mutex<Cache>>,
     /// A mesh loaded for the 3D view (`scene: "custom"`): its file name and geometry.
     pub custom_mesh: Option<(String, Arc<materialcraft_geom::Mesh>)>,
+    /// The node library loaded from the SBS library folder
+    pub library: Arc<crate::node_library::NodeLibrary>,
     pub(crate) history: crate::document_history::DocumentHistory,
     group: Option<(Snapshot, bool)>,
     decoded: Arc<Mutex<HashMap<(u64, bool), Image>>>,
 }
 
 impl Session {
-    pub fn new(mut pkg: Package) -> Session {
-        let library = crate::function_library::load();
-        if let Ok(library) = &library {
-            for (path, package) in &library.packages {
-                pkg.dependencies.entry(path.clone()).or_insert_with(|| package.clone());
+    /// Open a package with the process's installed node library.
+    pub fn new(pkg: Package) -> Session {
+        Self::with_library(pkg, crate::node_library::NodeLibrary::shared())
+    }
+
+    /// Open a package with an explicit library, preserving dependencies supplied by the caller.
+    pub fn with_library(mut pkg: Package, library: Arc<crate::NodeLibrary>) -> Session {
+        let mut library_sources = std::collections::BTreeMap::new();
+        for (path, package) in &library.packages {
+            if let std::collections::btree_map::Entry::Vacant(entry) = pkg.dependencies.entry(path.clone()) {
+                entry.insert(package.clone());
+                library_sources.insert(path.clone(), package.clone());
             }
         }
         let mut session = Session {
@@ -177,6 +189,7 @@ impl Session {
             next_document_id: 1,
             documents: std::collections::BTreeMap::new(),
             linked_sources: pkg.dependencies.clone(),
+            library_sources,
             material_preview: crate::MaterialPreview::for_graph(&pkg, 0),
             cooked_graph: None,
             material_cooked: std::collections::BTreeMap::new(),
@@ -185,6 +198,7 @@ impl Session {
             graph: 0,
             selection: Vec::new(),
             annotation_selection: None,
+            annotation_target: Default::default(),
             view2d: View2d { channel: "rgba".into(), ..View2d::default() },
             view3d: View3d::default(),
             preview_size: Some(512),
@@ -201,19 +215,19 @@ impl Session {
             cook_epoch: 0,
             cache: Arc::new(Mutex::new(Cache::default())),
             custom_mesh: None,
+            library: Default::default(),
             history: Default::default(),
             group: None,
             decoded: Arc::new(Mutex::new(HashMap::new())),
         };
         session.refresh_links();
-        match library {
-            Ok(library) => {
-                for warning in library.warnings {
-                    session.warn(warning);
-                }
-            }
-            Err(error) => session.warn(format!("Missing function library: {error}")),
+        for warning in &library.warnings {
+            session.warn(warning.clone());
         }
+        if !library.packages.contains_key(crate::function_library::STANDARD_PACKAGE) {
+            session.warn(format!("Missing function library: {} did not load", crate::function_library::STANDARD_PACKAGE));
+        }
+        session.library = library;
         session
     }
 
@@ -232,6 +246,7 @@ impl Session {
             graph: self.graph,
             selection: self.selection.clone(),
             annotation_selection: self.annotation_selection,
+            annotation_target: self.annotation_target.clone(),
             material_preview: self.material_preview.clone(),
             label: label.into(),
             modified: self.modified,
@@ -330,6 +345,7 @@ impl Session {
         self.graph = s.graph.min(self.pkg.graphs.len().saturating_sub(1));
         self.selection = s.selection;
         self.annotation_selection = s.annotation_selection;
+        self.annotation_target = s.annotation_target;
         self.material_preview = s.material_preview;
         self.modified = s.modified;
         self.dirty = s.dirty || self.cook_epoch != s.cook_epoch;

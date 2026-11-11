@@ -146,7 +146,7 @@ impl<'text> SbsReader<'text, '_> {
 
     pub(super) fn read_graph(&mut self, element: XmlNode<'_, 'text>, name: String) -> Graph {
         let mut graph = Graph::new(&name);
-        let base = read_base_params(child_element(element, "baseParameters"));
+        let base = read_base_params(child_element(element, "baseParameters"), self.warnings);
         graph.seed = base.seed;
         graph.pixel_ratio = base.pixel_ratio;
         graph.pixel_ratio_mode = base.pixel_ratio_mode;
@@ -184,7 +184,10 @@ impl<'text> SbsReader<'text, '_> {
             let dynamic = child_element(element, "paramValue").and_then(|value| child_element(value, "dynamicValue"));
             let function = dynamic.ok_or_else(|| "missing function body".to_string()).and_then(super::function_graph::read);
             graph.function = Some(match function {
-                Ok(function) => function,
+                Ok(mut function) => {
+                    function.annotations = Default::default();
+                    function
+                }
                 Err(error) => {
                     self.warnings.add(format!("function graph `{name}`: {error}"));
                     materialcraft_core::FunctionGraph::default()
@@ -276,7 +279,21 @@ impl<'text> SbsReader<'text, '_> {
             }
 
             let group = child_value(input, "group").unwrap_or("").to_string();
-            graph.exposed.push(ExposedParameter { id, label, group, default, min, max, options: Vec::new() });
+            let mut exposed = ExposedParameter {
+                id,
+                label,
+                group,
+                default,
+                min,
+                max,
+                options: Vec::new(),
+                description: String::new(),
+                editor: None,
+                clamp: false,
+                step: None,
+            };
+            super::parameter_widget::read(input, &mut exposed);
+            graph.exposed.push(exposed);
         }
         image_inputs
     }
@@ -375,7 +392,7 @@ impl<'text> SbsReader<'text, '_> {
                     if let Some(input) = input {
                         node.params.insert("default".into(), input.default.clone());
                     }
-                    node.base = read_base_params(params);
+                    node.base = read_base_params(params, self.warnings);
                 }
                 ReadNode { id, index, inputs: HashMap::new(), outputs: all_outputs_to("output"), open_inputs: false }
             }
@@ -399,7 +416,7 @@ impl<'text> SbsReader<'text, '_> {
                         if let Some(node) = node {
                             self.read_filter_params(node, filter, params, &graph_name);
                             super::parameter_array::read(node, implementation);
-                            node.base = read_base_params(params);
+                            node.base = read_base_params(params, self.warnings);
                             if filter.sbs == "fxmaps"
                                 && let Some(pattern) = child_element(implementation, "paramsGraphs").and_then(|graphs| child_element(graphs, "paramsGraph"))
                             {
@@ -484,7 +501,7 @@ impl<'text> SbsReader<'text, '_> {
                         self.set_param(node, child_value(param, "name").unwrap_or(""), &Value::Float(0.0), 0, param, &graph_name);
                     }
                 }
-                node.base = read_base_params(params);
+                node.base = read_base_params(params, self.warnings);
             }
             return ReadNode { id, index, inputs: HashMap::new(), outputs: bridgings, open_inputs: true };
         }

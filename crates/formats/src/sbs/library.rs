@@ -10,6 +10,7 @@ pub fn relative_path(uri: &str) -> Result<&str, String> {
     {
         return Err("invalid SBS library path".into());
     }
+
     Ok(path)
 }
 
@@ -51,15 +52,18 @@ pub fn root() -> std::path::PathBuf {
     if let Some(root) = std::env::var_os("MATERIALCRAFT_SBS_DIR") {
         return root.into();
     }
+
     if let Ok(executable) = std::env::current_exe()
         && let Some(parent) = executable.parent()
         && parent.join("assets/sbs").is_dir()
     {
         return parent.join("assets/sbs");
     }
+
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/sbs")
 }
 
+/// Read a validated library alias from the configured directory or the embedded fallback.
 pub fn read(uri: &str) -> Result<Vec<u8>, String> {
     let relative = relative_path(uri)?;
     #[cfg(not(target_arch = "wasm32"))]
@@ -80,5 +84,72 @@ pub fn read(uri: &str) -> Result<Vec<u8>, String> {
     match relative {
         "functions.sbs" => Ok(include_bytes!("../../../../assets/sbs/functions.sbs").to_vec()),
         _ => Err(format!("Missing library asset {uri}")),
+    }
+}
+
+/// The packages bundled into the binary, for installs and the browser without an asset folder
+pub const BUNDLED: &[&str] = &["sbs://functions.sbs"];
+
+/// Bounds for scanning the library folder: how deep, and how many packages
+const MAX_DEPTH: usize = 6;
+const MAX_FILES: usize = 2048;
+
+/// Every SBS package in the library as `sbs://` paths, sorted: the files under the asset folder
+/// (resource folders skipped), or the bundled packages when there is no folder
+pub fn files() -> Vec<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let root = root();
+        if root.is_dir() {
+            let mut found = Vec::new();
+            scan(&root, "", 0, &mut found);
+            found.sort();
+            return found;
+        }
+    }
+    BUNDLED.iter().map(|uri| uri.to_string()).collect()
+}
+
+/// Discover packages in deterministic order within the depth and file limits.
+#[cfg(not(target_arch = "wasm32"))]
+fn scan(directory: &std::path::Path, prefix: &str, depth: usize, found: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(directory) else { return };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if found.len() >= MAX_FILES {
+            return;
+        }
+
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+        let Ok(kind) = entry.file_type() else { continue };
+        let uri = format!("sbs://{prefix}{name}");
+
+        // Symlinks are skipped: `read` refuses files that leave the asset folder anyway
+        if kind.is_dir() && depth < MAX_DEPTH && !name.ends_with(".resources") && !name.starts_with('.') {
+            scan(&entry.path(), &format!("{prefix}{name}/"), depth + 1, found);
+        } else if kind.is_file() && name.to_ascii_lowercase().ends_with(".sbs") && relative_path(&uri).is_ok() {
+            found.push(uri);
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// Discovered packages have unique valid aliases and the embedded fallback is present.
+    #[test]
+    fn the_library_lists_every_package_once_and_bundles_a_fallback() {
+        let files = files();
+        for uri in BUNDLED {
+            assert!(files.iter().any(|file| file == uri), "{uri} in {files:?}");
+            assert!(!read(uri).unwrap().is_empty());
+        }
+        let mut unique = files.clone();
+        unique.dedup();
+        assert_eq!(unique, files);
+        assert!(files.iter().all(|file| relative_path(file).is_ok() && file.ends_with(".sbs")));
     }
 }

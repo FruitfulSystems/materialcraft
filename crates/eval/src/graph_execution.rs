@@ -49,7 +49,7 @@ pub fn cook(package: &Package, graph_index: usize, options: &Options, cache: &Mu
         }
         let Some(node) = prepared.index.node(id) else { continue };
 
-        let result = cook_node(package, graph_index, graph, &prepared, node, &cooked, &variables, options, cache);
+        let result = cook_node(package, graph_index, &prepared, node, &cooked, &variables, options, cache);
         cooked.nodes.insert(id, result);
     }
     cooked.ms = (now_ms() - started_ms) as f32;

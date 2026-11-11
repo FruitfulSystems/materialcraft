@@ -33,7 +33,19 @@ fn report_failure(app: &mut MaterialCraftApp, msg: String) {
     let ids: Vec<_> = app.session.graph().map(|g| g.nodes.iter().map(|n| n.id).collect()).unwrap_or_default();
     let mut cooked = Cooked::default();
     for id in ids {
-        cooked.nodes.insert(id, NodeResult { outputs: Default::default(), error: Some(msg.clone()), ms: 0.0, key: 0, cached: false });
+        cooked.nodes.insert(
+            id,
+            NodeResult {
+                base: Default::default(),
+                base_values: Default::default(),
+                parameters: Default::default(),
+                outputs: Default::default(),
+                error: Some(msg.clone()),
+                ms: 0.0,
+                key: 0,
+                cached: false,
+            },
+        );
     }
     app.session.accept_preview(PreviewCook { graph: app.session.graph, cooked, ..Default::default() });
     app.toast(msg, true);

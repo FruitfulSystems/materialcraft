@@ -2,9 +2,9 @@
 
 use serde_json::{Value as J, json};
 
-use materialcraft_core::{ExposedParameter, Graph, MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Pin, Value};
+use materialcraft_core::{MAX_SIZE_LOG2, MIN_SIZE_LOG2, NodeId, OutputFormat, Value};
 
-use crate::commands::{CommandSpec, always, bad, boolp, f32p, has_graph, has_selection, i64p, ids_param, point, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, boolp, has_graph, has_selection, i64p, ids_param, strp, u64p};
 use crate::{Result, Session, cmd};
 
 pub(crate) fn specs() -> Vec<CommandSpec> {
@@ -22,17 +22,14 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
             })
         }),
         cmd!("graph.format", "Output format", [], None, "{format: u8|u16|f16|f32, graph?, document?}", always, format),
-        cmd!("graph.cook", "Compute graph", [], None, "{full?: bool} cooks now; returns per-node timings and errors", has_graph, cook),
-        cmd!("graph.pin.add", "Add Navigation pin", [], None, "{name?, at? [x, y]}", has_graph, pin_add),
-        cmd!("graph.pin.delete", "Delete pin", [], None, "{id}", has_graph, pin_delete),
         cmd!(
-            "graph.exposed.add",
-            "Expose parameter",
+            "graph.cook",
+            "Compute graph",
             [],
             None,
-            "{id (optional with bind: then named after the parameter and kept unique), label?, default (a typed value or number), min?, max?, group?, bind?: {node, param}}",
+            "{full?: bool, graph?: index (another graph of the package cooks at full size into the cache)} cooks now; returns per-node timings and errors",
             has_graph,
-            exposed_add
+            cook
         ),
         cmd!("graph.exposed.set", "Set input value", [], None, "{id, value}", has_graph, exposed_set),
         cmd!("graph.exposed.delete", "Delete input", [], None, "{id}", has_graph, exposed_delete),
@@ -153,8 +150,19 @@ fn format(s: &mut Session, p: &J) -> Result<J> {
 }
 
 fn cook(s: &mut Session, p: &J) -> Result<J> {
-    let cooked = if boolp(p, "full") == Some(true) { s.cook_full(s.graph) } else { s.cook().clone() };
-    let g = s.graph()?;
+    let index = match p.get("graph").filter(|graph| !graph.is_null()) {
+        None => s.graph,
+        Some(graph) => {
+            let index = graph.as_u64().and_then(|index| usize::try_from(index).ok()).ok_or_else(|| bad("graph.cook", "`graph` is a graph index"))?;
+            let graph = s.pkg.graph(index)?;
+            if graph.function.is_some() {
+                return Err(bad("graph.cook", "a Function Graph has no outputs to compute"));
+            }
+            index
+        }
+    };
+    let cooked = if index != s.graph || boolp(p, "full") == Some(true) { s.cook_full(index) } else { s.cook().clone() };
+    let g = s.pkg.graph(index)?;
     Ok(json!({
         "ms": cooked.ms,
         "nodes": cooked.nodes.iter().map(|(id, r)| {
@@ -175,85 +183,6 @@ pub fn nodes_rect(s: &Session, ids: &[NodeId]) -> Option<[f32; 4]> {
     (r[0] < f32::MAX).then(|| [r[0], r[1], r[2] - r[0], r[3] - r[1]])
 }
 
-fn pin_add(s: &mut Session, p: &J) -> Result<J> {
-    let at = point(p, "at").unwrap_or([0.0, 0.0]);
-    s.edit("Add pin", |s| {
-        let g = s.graph_mut()?;
-        let id = g.alloc_id();
-        let name = strp(p, "name").map(str::to_string).unwrap_or_else(|| format!("Pin {}", g.pins.len() + 1));
-        g.pins.push(Pin { id, name, pos: at });
-        Ok(json!({"id": id}))
-    })
-}
-
-fn pin_delete(s: &mut Session, p: &J) -> Result<J> {
-    let id = u64p(p, "id").ok_or_else(|| bad("graph.pin.delete", "`id` is required"))?;
-    s.edit("Delete pin", |s| {
-        s.graph_mut()?.pins.retain(|c| c.id != id);
-        Ok(J::Null)
-    })
-}
-
-fn exposed_add(s: &mut Session, p: &J) -> Result<J> {
-    // From a bound node parameter: its value, range and options become the input's
-    let bind = p.get("bind").and_then(|b| Some((NodeId(b.get("node")?.as_u64()?), b.get("param")?.as_str()?.to_string())));
-    let id = match strp(p, "id").map(str::trim).filter(|i| !i.is_empty()) {
-        Some(id) => {
-            if s.graph()?.exposed.iter().any(|e| e.id == id) {
-                return Err(bad("graph.exposed.add", format!("an input is already called `{id}`")));
-            }
-            id.to_string()
-        }
-        // Without an `id`, a bound input is named after its parameter, kept unique across nodes
-        None => {
-            let (_, param) = bind.as_ref().ok_or_else(|| bad("graph.exposed.add", "`id` is required"))?;
-            unique_exposed_id(s.graph()?, param)
-        }
-    };
-    let mut default = Value::Float(0.5);
-    let (mut min, mut max, mut options) = (0.0f32, 1.0f32, Vec::new());
-    if let Some((node, param)) = &bind {
-        let g = s.graph()?;
-        let n = g.node(*node).map_err(|_| bad("graph.exposed.add", format!("no node {}", node.0)))?;
-        let def = materialcraft_nodes::find(&n.def).ok_or_else(|| bad("graph.exposed.add", "unknown node type"))?;
-        let pd = def.param(param).ok_or_else(|| bad("graph.exposed.add", format!("`{}` has no parameter `{param}`", n.def)))?;
-        default = n.params.get(param.as_str()).cloned().unwrap_or_else(|| pd.default.clone());
-        (min, max) = (pd.min, pd.max);
-        options = pd.options.iter().map(|o| o.to_string()).collect();
-    }
-    if let Some(d) = p.get("default") {
-        default =
-            serde_json::from_value::<Value>(d.clone()).ok().or_else(|| default.coerce_json(d)).ok_or_else(|| bad("graph.exposed.add", "bad `default`"))?;
-    }
-    let ep = ExposedParameter {
-        id: id.clone(),
-        label: strp(p, "label").unwrap_or(&id).to_string(),
-        group: strp(p, "group").unwrap_or("").to_string(),
-        default,
-        min: f32p(p, "min").unwrap_or(min),
-        max: f32p(p, "max").unwrap_or(max),
-        options,
-    };
-
-    s.edit("Expose parameter", |s| {
-        let g = s.graph_mut()?;
-        g.exposed.push(ep);
-        if let Some((node, param)) = bind {
-            g.node_mut(node)?.bindings.insert(param, id.clone());
-        }
-        Ok(json!({"id": id}))
-    })
-}
-
-/// An input id not used in `graph`: `base`, `base_1`, `base_2`…
-fn unique_exposed_id(graph: &Graph, base: &str) -> String {
-    let taken = |id: &str| graph.exposed.iter().any(|e| e.id == id);
-    if !taken(base) {
-        return base.to_string();
-    }
-    (1..).map(|i| format!("{base}_{i}")).find(|id| !taken(id)).unwrap_or_else(|| base.to_string())
-}
-
 fn exposed_set(s: &mut Session, p: &J) -> Result<J> {
     let id = strp(p, "id").ok_or_else(|| bad("graph.exposed.set", "`id` is required"))?.to_string();
     let v = p.get("value").ok_or_else(|| bad("graph.exposed.set", "`value` is required"))?;
@@ -265,15 +194,20 @@ fn exposed_set(s: &mut Session, p: &J) -> Result<J> {
     })
 }
 
-fn exposed_delete(s: &mut Session, p: &J) -> Result<J> {
-    let id = strp(p, "id").ok_or_else(|| bad("graph.exposed.delete", "`id` is required"))?.to_string();
-    s.edit("Delete input", |s| {
-        let g = s.graph_mut()?;
-        g.exposed.retain(|e| e.id != id);
-        g.inputs.remove(&id);
-        for n in &mut g.nodes {
-            n.bindings.retain(|_, v| *v != id);
+fn exposed_delete(session: &mut Session, parameters: &J) -> Result<J> {
+    let identifier = strp(parameters, "id").ok_or_else(|| bad("graph.exposed.delete", "`id` is required"))?.to_string();
+    session.edit("Delete input", |session| {
+        let graph = session.graph_mut()?;
+        graph.exposed.retain(|input| input.id != identifier);
+        graph.inputs.remove(&identifier);
+        for node in &mut graph.nodes {
+            node.bindings.retain(|_, input| *input != identifier);
+
+            // Detach direct input links without discarding user-authored function logic
+            node.functions.retain(|_, function| function.input_identifier() != Some(identifier.as_str()));
+            node.base.functions.retain(|_, function| function.input_identifier() != Some(identifier.as_str()));
         }
+
         Ok(J::Null)
     })
 }

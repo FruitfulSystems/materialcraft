@@ -19,11 +19,17 @@ pub struct FunctionEditor {
     pub(super) menu_at: Pos2,
     pub(crate) framed: bool,
     pub(super) open_reference: Option<u32>,
+    /// The open node search (Space, Tab, double-click or a wire dropped on empty canvas)
+    pub(crate) search: Option<super::search::FunctionSearch>,
 }
 
 impl FunctionEditor {
     pub fn standalone(graph: usize) -> Self {
         Self::with_target(graph, None, FunctionTarget::Graph)
+    }
+
+    pub(crate) fn camera(&self) -> crate::state::GraphCamera {
+        crate::state::GraphCamera { pan: self.pan.into(), zoom: self.zoom }
     }
 
     pub(crate) fn set_camera(&mut self, camera: crate::state::GraphCamera) {
@@ -49,6 +55,7 @@ impl FunctionEditor {
             menu_at: Pos2::ZERO,
             framed: false,
             open_reference: None,
+            search: None,
         }
     }
 
@@ -66,6 +73,7 @@ impl FunctionEditor {
             FunctionTarget::Graph => FunctionGraphTarget::Graph,
             FunctionTarget::Parameter(parameter) => FunctionGraphTarget::Parameter { node: self.node?, parameter: parameter.clone() },
             FunctionTarget::Dynamic(parameter) => FunctionGraphTarget::Dynamic { node: self.node?, parameter: parameter.clone() },
+            FunctionTarget::Base(parameter) => FunctionGraphTarget::Base { node: self.node?, parameter: *parameter },
             FunctionTarget::Pattern { node, parameter } => FunctionGraphTarget::Pattern { owner: self.node?, node: *node, parameter: parameter.clone() },
         })
     }

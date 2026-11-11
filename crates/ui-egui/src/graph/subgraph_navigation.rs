@@ -127,7 +127,14 @@ pub(crate) fn breadcrumb(app: &MaterialCraftApp) -> String {
                 }
                 path.push(parameter.clone());
             }
-            FunctionTarget::Dynamic(parameter) => path.push(parameter.clone()),
+            FunctionTarget::Dynamic(parameter) => {
+                let descriptor = editor
+                    .node
+                    .and_then(|id| app.session.graph().ok()?.node(id).ok())
+                    .and_then(|node| materialcraft_engine::nodes::ParameterDescriptor::for_node(&app.session.pkg, node, parameter));
+                path.push(descriptor.map_or_else(|| parameter.clone(), |descriptor| descriptor.label));
+            }
+            FunctionTarget::Base(parameter) => path.push(parameter.label().into()),
             FunctionTarget::Parameter(parameter) if parameter != "function" => path.push(parameter.clone()),
             _ => {}
         }

@@ -5,8 +5,19 @@ use egui_phosphor::regular as icon;
 use materialcraft_engine::core::NodeId;
 use serde_json::json;
 
-pub(super) fn open_search(app: &mut MaterialCraftApp, at: Pos2, connect: Option<(NodeId, String)>) {
-    app.graph.search = Some(NodeSearch { at, text: String::new(), sel: 0, connect, focus: true });
+pub(super) fn open_search(app: &mut MaterialCraftApp, ctx: &egui::Context, at: Pos2, connect: Option<(NodeId, String)>) {
+    if crate::shell::modality::Modality::capture(app, ctx).is_blocked() {
+        return;
+    }
+    app.graph.search = Some(NodeSearch { at, text: String::new(), sel: 0, connect, connect_to: None, focus: true });
+}
+
+/// The search for a node whose output feeds input `to` (a wire dragged off it onto empty canvas)
+pub(super) fn open_search_to(app: &mut MaterialCraftApp, ctx: &egui::Context, at: Pos2, to: (NodeId, String)) {
+    open_search(app, ctx, at, None);
+    if let Some(search) = app.graph.search.as_mut() {
+        search.connect_to = Some(to);
+    }
 }
 
 /// Catalog entries matching `text` (label or id contains every word)
@@ -27,6 +38,7 @@ pub(super) fn matches(text: &str) -> Vec<&'static materialcraft_engine::nodes::N
 }
 
 pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
+    let blocked = crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked();
     let Some(s) = app.graph.search.as_mut() else { return };
 
     let tk = Tokens::get(ui.ctx());
@@ -36,12 +48,16 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
     egui::Area::new(egui::Id::unique("node-search")).fixed_pos(screen).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(260.0);
+            if blocked {
+                ui.disable();
+                s.focus = true;
+            }
             let mut reveal_selection = s.focus;
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(icon::MAGNIFYING_GLASS).color(tk.text_dim));
                 let r = ui.add(egui::TextEdit::singleline(&mut s.text).hint_text(tr("Search nodes...")).desired_width(220.0));
                 crate::widgets::name(&r, egui::Role::SearchInput, "Search nodes");
-                if s.focus {
+                if s.focus && !blocked {
                     r.request_focus();
                     s.focus = false;
                 }
@@ -50,9 +66,14 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
                     reveal_selection = true;
                 }
             });
-            let list = matches(&s.text);
+            // Feeding an input needs a node with an output
+            let mut list = matches(&s.text);
+            if s.connect_to.is_some() {
+                list.retain(|definition| !definition.outputs.is_empty());
+            }
             let (up, down, enter, esc) = ui.input(|i| {
-                (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape))
+                let pressed = |key| !blocked && i.key_pressed(key);
+                (pressed(egui::Key::ArrowUp), pressed(egui::Key::ArrowDown), pressed(egui::Key::Enter), pressed(egui::Key::Escape))
             });
             if down {
                 s.sel = (s.sel + 1).min(list.len().saturating_sub(1));
@@ -86,16 +107,22 @@ pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, cam: &GraphCamera) {
             });
         });
     });
-    let clicked_out = ui.input(|i| i.pointer.any_pressed())
+    let clicked_out = !blocked
+        && ui.input(|i| i.pointer.any_pressed())
         && ui.ctx().pointer_interact_pos().is_some_and(|p| !ui.ctx().layer_id_at(p).is_some_and(|l| l.id == egui::Id::unique("node-search")));
-    if let Some(def) = pick {
+    if let Some(def) = pick.filter(|_| !crate::shell::modality::Modality::capture(app, ui.ctx()).is_blocked()) {
         let s = app.graph.search.take();
         if let Some(s) = s {
             let mut p = json!({"def": def, "at": [s.at.x, s.at.y - 20.0]});
             if let Some((n, port)) = s.connect {
                 p["connectFrom"] = json!({"node": n.0, "port": port});
             }
-            app.run("graph.node.add", p);
+            let added = app.run("graph.node.add", p).and_then(|result| result.get("id").and_then(serde_json::Value::as_u64)).map(NodeId);
+            if let (Some(id), Some((to, port))) = (added, s.connect_to)
+                && let Some(output) = app.session.output_ports(id).first().cloned()
+            {
+                app.run("graph.connect", json!({"from": id.0, "fromPort": output, "to": to.0, "toPort": port}));
+            }
         }
     } else if close || clicked_out {
         app.graph.search = None;

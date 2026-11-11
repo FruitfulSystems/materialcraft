@@ -60,6 +60,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::explorer_clipboard_commands::specs());
         v.extend(crate::graph_instance_commands::specs());
         v.extend(crate::function_library_commands::specs());
+        v.extend(crate::node_library_commands::specs());
         v.extend(crate::node_info_commands::specs());
         v.extend(crate::atomic_sample_commands::specs());
         v.extend(crate::material_cmds::specs());
@@ -67,6 +68,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::document_history_commands::specs());
         v.extend(crate::embedded_edit_commands::specs());
         v.extend(crate::graph_cmds::specs());
+        v.extend(crate::exposed_input_commands::specs());
         v.extend(crate::graph_property_commands::specs());
         v.extend(crate::alignment_commands::specs());
         v.extend(crate::annotation_commands::specs());
@@ -76,7 +78,9 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::function_variable_commands::specs());
         v.extend(crate::evaluation_environment_commands::specs());
         v.extend(crate::comment_commands::specs());
+        v.extend(crate::pin_commands::specs());
         v.extend(crate::node_cmds::specs());
+        v.extend(crate::parameter_function_commands::specs());
         v.extend(crate::node_graph_commands::specs());
         v.extend(crate::pattern_graph_commands::specs());
         v.extend(crate::connection_commands::specs());
@@ -100,7 +104,7 @@ pub fn execute(s: &mut Session, id: &str, params: &J) -> Result<J> {
     }
     (spec.enabled)(s).map_err(|why| EngineError::Disabled { cmd: id.to_string(), why })?;
     let result = (spec.run)(s, params)?;
-    if !s.selection.is_empty() || s.annotation_selection.is_some_and(|selection| !s.graph().is_ok_and(|graph| selection.exists(graph))) {
+    if !s.selection.is_empty() || s.annotation_selection.is_some_and(|selection| !s.annotation_target.items(s).is_ok_and(|items| selection.exists(&items))) {
         s.annotation_selection = None;
     }
 
@@ -116,6 +120,8 @@ pub fn list(s: &Session, filter: Option<&str>) -> J {
             .filter(|c| f.as_ref().is_none_or(|f| c.id.to_ascii_lowercase().contains(f) || c.label.to_ascii_lowercase().contains(f)))
             .map(|c| json!({"id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": if crate::selection_commands::supports(c.id) {
                 format!("{}; optional function: FunctionGraphTarget or pattern: owner node id, graph: owning graph index; embedded targets use explicit ids; copy returns clip", c.params)
+            } else if c.id.starts_with("graph.annotation.") || c.id.starts_with("graph.frame.") || c.id.starts_with("graph.comment.") {
+                format!("{}; optional function: FunctionGraphTarget or pattern: owner node id", c.params)
             } else { c.params.to_string() }, "enabled": crate::selection_commands::enabled(s, c.id, &J::Null).unwrap_or_else(|| (c.enabled)(s).is_ok())}))
             .collect(),
     )

@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(test)]
+extern crate self as materialcraft_engine;
+
 mod document_path;
 mod evaluation_environment_commands;
 mod explorer_clipboard;
@@ -11,6 +14,9 @@ mod folder_property_commands;
 pub use explorer_clipboard::ExplorerClipboard;
 mod function_library;
 mod function_library_commands;
+pub mod node_library;
+mod node_library_commands;
+pub use node_library::{LibraryCanvas, LibraryEntry, LibraryItem, NodeLibrary};
 mod function_variable;
 mod function_variable_commands;
 mod function_variables;
@@ -67,8 +73,14 @@ pub mod wire_swap;
 pub use commands::{CommandSpec, command_specs, execute, find};
 pub use session::{CameraPrefs, Session, View2d, View3d, WARNING_PREFIX};
 mod clip;
+mod color_space;
 mod connection_commands;
+mod export_request;
+mod export_size;
 pub use clip::Clip;
+pub use color_space::ColorSpace;
+pub use export_request::ExportRequest;
+pub use export_size::ExportSize;
 
 pub use materialcraft_core as core;
 pub use materialcraft_eval as eval;
@@ -99,12 +111,15 @@ pub use exported::Exported;
 
 mod annotation_commands;
 mod annotation_selection;
+mod annotation_target;
+pub use annotation_target::AnnotationTarget;
 mod comment_commands;
 mod frame_commands;
 mod frame_contents;
 mod function_commands;
 mod node_graph_commands;
 mod pattern_graph_commands;
+mod pin_commands;
 mod snapshot;
 pub use annotation_selection::AnnotationSelection;
 pub use frame_contents::FrameContents;
@@ -116,7 +131,11 @@ mod function_graph_target;
 mod function_info_commands;
 pub mod function_inspection;
 pub mod function_output;
+mod parameter_function_commands;
+mod parameter_target;
 mod pattern_edit;
 pub use function_edit::FunctionEdit;
 pub use function_graph_target::FunctionGraphTarget;
 pub use pattern_edit::PatternEdit;
+
+mod exposed_input_commands;

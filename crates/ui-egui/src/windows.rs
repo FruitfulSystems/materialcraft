@@ -1,4 +1,4 @@
-//! Dialogs (new graph, export outputs, preferences, shortcuts, about, home), the console and history panels, file actions behind the File menu, and the function editor
+//! Dialogs (new graph, preferences, shortcuts, about, home), the console and history panels, file actions behind the File menu, and the function editor
 
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
+use crate::shell::modality::Modality;
 use crate::theme::{Accent, Brightness, Tokens};
 
 /// Template previews for the New graph dialog (rendered in the background on first open)
@@ -80,7 +81,7 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
         new_graph(app, ctx);
     }
     if app.ui.windows.export {
-        export(app, ctx);
+        crate::export::show(app, ctx);
     }
     if app.ui.windows.preferences {
         preferences(app, ctx);
@@ -96,13 +97,14 @@ pub fn show(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     crate::unsaved::show(app, ctx);
     crate::explorer::dialogs(app, ctx);
+    crate::properties::ExposeParameterDialog::show(app, ctx);
     #[cfg(target_arch = "wasm32")]
     crate::web_files::save_dialog(app, ctx);
     #[cfg(not(target_arch = "wasm32"))]
     crate::updates_ui::show(app, ctx);
 }
 
-fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn modal(ctx: &egui::Context, id: &str, title: &str, open: &mut bool, size: egui::Vec2, body: impl FnOnce(&mut Ui)) {
     egui::Window::new(title)
         .id(egui::Id::unique(id))
         .open(open)
@@ -167,93 +169,6 @@ fn new_graph(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     if !open {
         app.ui.windows.new_graph = false;
-    }
-}
-
-fn export(app: &mut MaterialCraftApp, ctx: &egui::Context) {
-    let mut open = true;
-    let mut go = false;
-    modal(ctx, "export", tr("Export outputs"), &mut open, vec2(460.0, 290.0), |ui| {
-        let tk = Tokens::get(ui.ctx());
-        let g = app.session.graph().map(|g| g.name.clone()).unwrap_or_default();
-        ui.label(RichText::new(format!("{}: {g}", tr("Graph"))).strong());
-        #[cfg(not(target_arch = "wasm32"))]
-        ui.horizontal(|ui| {
-            ui.label(tr("Folder"));
-            let r = ui.add(egui::TextEdit::singleline(&mut app.ui.export_dir).desired_width(280.0));
-            crate::widgets::name(&r, egui::Role::TextInput, "Folder");
-            #[cfg(not(target_arch = "wasm32"))]
-            if ui.button(icon::FOLDER_OPEN).clicked() {
-                crate::native_dialogs::ask(app, craft_dialogs::FileDialog::folder(), crate::native_dialogs::Then::ExportFolder);
-            }
-        });
-        crate::widgets::combo(ui, tr("Format"), app.ui.export_format.to_uppercase(), |ui| {
-            for (ext, label) in materialcraft_engine::formats::EXPORT_FORMATS {
-                ui.selectable_value(&mut app.ui.export_format, ext.to_string(), *label);
-            }
-        });
-        let depth_label = match app.ui.export_depth {
-            8 => "8 bits",
-            16 => "16 bits",
-            32 => "32 bits float",
-            _ => "Graph's format",
-        };
-        crate::widgets::combo(ui, tr("Bit depth"), tr(depth_label), |ui| {
-            for (d, l) in [(0u32, "Graph's format"), (8, "8 bits"), (16, "16 bits"), (32, "32 bits float")] {
-                ui.selectable_value(&mut app.ui.export_depth, d, tr(l));
-            }
-        });
-        let graph_size = app.session.graph().map_or(String::new(), |g| {
-            let [w, h] = g.size_px();
-            format!("{} ({w} x {h})", tr("Graph's size"))
-        });
-        let size_label = match app.ui.export_size {
-            0 => graph_size.clone(),
-            px => format!("{px} px"),
-        };
-        crate::widgets::combo(ui, tr("Resolution"), size_label, |ui| {
-            ui.selectable_value(&mut app.ui.export_size, 0, graph_size);
-            for px in [256u32, 512, 1024, 2048, 4096, 8192] {
-                ui.selectable_value(&mut app.ui.export_size, px, format!("{px} px"));
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(tr("File names"));
-            let r = ui.add(egui::TextEdit::singleline(&mut app.ui.export_pattern).desired_width(260.0));
-            crate::widgets::name(&r, egui::Role::TextInput, "File names");
-        });
-        ui.label(RichText::new("$(graph) $(identifier) $(usage)").size(10.5).color(tk.text_dim));
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.add(crate::widgets::primary_button(ui, tr("Export"))).clicked() {
-                go = true;
-            }
-            if ui.button(tr("Cancel")).clicked() {
-                app.ui.windows.export = false;
-            }
-        });
-    });
-    if go {
-        if app.ui.export_dir.trim().is_empty() && !cfg!(target_arch = "wasm32") {
-            app.toast(tr("Choose a folder to export to"), true);
-        } else {
-            let depth = if app.ui.export_depth == 0 { Value::Null } else { json!(app.ui.export_depth) };
-            let p = json!({"dir": app.ui.export_dir, "format": app.ui.export_format, "pattern": app.ui.export_pattern, "depth": depth, "size": if app.ui.export_size == 0 { Value::Null } else { json!(app.ui.export_size) }});
-            #[cfg(target_arch = "wasm32")]
-            {
-                crate::web_files::export(app, &p);
-                open = false;
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(r) = app.run("file.export", p) {
-                let n = r["files"].as_array().map_or(0, Vec::len);
-                app.toast(format!("{} {n} {}", tr("Exported"), tr("files")), false);
-                open = false;
-            }
-        }
-    }
-    if !open {
-        app.ui.windows.export = false;
     }
 }
 
@@ -358,18 +273,20 @@ fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
 fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let mut create: Option<(&str, &str)> = None;
+    let modality = Modality::capture(app, ctx);
+    let free = !modality.is_blocked();
     modal(ctx, "home", tr("Home"), &mut open, vec2(760.0, 470.0), |ui| {
         let tk = Tokens::get(ui.ctx());
         ui.horizontal_top(|ui| {
             // Left rail: actions and links
             ui.vertical(|ui| {
                 ui.set_width(150.0);
-                if ui.add(crate::widgets::primary_button(ui, tr("New graph"))).clicked() {
+                if ui.add_enabled(free, crate::widgets::primary_button(ui, tr("New graph"))).clicked() {
                     app.ui.windows.home = false;
                     app.ui.windows.new_graph = true;
                 }
                 ui.add_space(4.0);
-                if ui.button(format!("{}  {}", icon::FOLDER_OPEN, tr("Open package..."))).clicked() {
+                if ui.add_enabled(modality.allows("file.open"), egui::Button::new(format!("{}  {}", icon::FOLDER_OPEN, tr("Open package...")))).clicked() {
                     app.ui.windows.home = false;
                     crate::menus::invoke(app, ui.ctx(), "file.open");
                 }
@@ -392,10 +309,13 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 ui.label(RichText::new(tr("Samples")).strong());
                 ui.horizontal_wrapped(|ui| {
+                    if !free {
+                        ui.disable();
+                    }
                     for (id, label) in materialcraft_engine::samples::TEMPLATES.iter().filter(|(id, _)| !matches!(*id, "empty" | "pbr")) {
                         let (r, resp) = ui.allocate_exact_size(vec2(92.0, 116.0), egui::Sense::click());
                         crate::widgets::name(&resp, egui::Role::ListItem, label);
-                        if resp.hovered() {
+                        if free && resp.hovered() {
                             ui.painter().rect_filled(r, 6.0, tk.row_hover);
                         }
                         let img = egui::Rect::from_min_size(r.min + vec2(6.0, 4.0), vec2(80.0, 80.0));
@@ -409,7 +329,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                         }
                         let g = ui.painter().layout(tr(label).to_string(), egui::FontId::proportional(11.0), tk.text, 90.0);
                         ui.painter().galley(egui::pos2(r.center().x - g.size().x * 0.5, img.bottom() + 6.0), g, tk.text);
-                        if resp.clicked() {
+                        if free && resp.clicked() {
                             create = Some((id, label));
                         }
                     }
@@ -421,7 +341,7 @@ fn home(app: &mut MaterialCraftApp, ctx: &egui::Context) {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 for p in app.ui.recent.clone().into_iter().take(6) {
-                    if ui.link(&p).clicked() {
+                    if ui.add_enabled(free, egui::Link::new(&p)).clicked() {
                         open_path(app, &p);
                         app.ui.windows.home = false;
                     }
@@ -614,7 +534,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
                 true
             }
             "file.exportMaterial" => {
-                native_dialogs::export_material(app);
+                crate::export::open(app, crate::export::ExportTab::Mcmat);
                 true
             }
             "file.sendToTextureCraft" => {
@@ -644,7 +564,7 @@ pub fn file_action(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) ->
             "file.save" => crate::web_files::save(app),
             "file.saveAs" => crate::web_files::save_as(app, false),
             "file.saveCopyAs" => crate::web_files::save_copy(app),
-            "file.exportMaterial" => crate::web_files::export_material(app),
+            "file.exportMaterial" => crate::export::open(app, crate::export::ExportTab::Mcmat),
             _ => return false,
         }
         true

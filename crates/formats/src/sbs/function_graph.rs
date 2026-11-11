@@ -8,7 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 pub(super) fn read(element: XmlNode<'_, '_>) -> Result<FunctionGraph, String> {
-    let mut graph = FunctionGraph { output: child_value(element, "rootnode").and_then(|value| value.parse().ok()), nodes: Vec::new() };
+    let mut graph = FunctionGraph {
+        output: child_value(element, "rootnode").and_then(|value| value.parse().ok()),
+        nodes: Vec::new(),
+        annotations: super::canvas::read_embedded(element),
+    };
     let mut ids = BTreeSet::new();
     for element in child_element(element, "paramNodes").into_iter().flat_map(|nodes| children_named(nodes, "paramNode")) {
         if graph.nodes.len() >= 4096 {
@@ -153,27 +157,16 @@ pub(super) fn write(graph: &FunctionGraph, writer: &mut SbsWriter) -> Result<Str
         }
         output.push_str("</paramNode>");
     }
-    output.push_str("</paramNodes></dynamicValue>");
+    output.push_str("</paramNodes>");
+    if !graph.annotations.is_empty() {
+        super::canvas::write_items(&mut output, &graph.annotations.frames, &graph.annotations.comments, &graph.annotations.pins, writer);
+    }
+    output.push_str("</dynamicValue>");
     Ok(output)
 }
 
 pub(super) fn binding(identifier: &str, value: &Value) -> Result<FunctionGraph, String> {
-    use materialcraft_core::ValueType;
+    let value_type = materialcraft_core::ValueType::of(value).ok_or("only scalar and vector parameters can be exposed")?;
 
-    let operation = match ValueType::of(value).ok_or("only scalar and vector parameters can be exposed")? {
-        ValueType::Boolean => "get_bool",
-        ValueType::Integer => "get_integer1",
-        ValueType::Integer2 => "get_integer2",
-        ValueType::Integer3 => "get_integer3",
-        ValueType::Integer4 => "get_integer4",
-        ValueType::Float => "get_float1",
-        ValueType::Float2 => "get_float2",
-        ValueType::Float3 => "get_float3",
-        ValueType::Float4 => "get_float4",
-        ValueType::String => "get_string",
-    };
-
-    let mut graph = FunctionGraph::default();
-    graph.output = Some(graph.add(operation, &[], Some(Value::Text(identifier.into()))));
-    Ok(graph)
+    Ok(FunctionGraph::input(identifier, value_type))
 }

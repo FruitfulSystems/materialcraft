@@ -18,7 +18,7 @@ L2  eval      cooking: topological order, output sizes (relative to input / pare
               cap), parameter resolution (defaults, overrides, bindings to exposed inputs), the
               content-addressed LRU cache, graph instances (sub-graphs, recursion-guarded)
 L2  formats   native .sbs packages, .mcraft ZIP packages, .mcmat portable materials, bitmap/SVG decode,
-              texture encode (PNG/JPEG/TGA/TIFF/BMP/WEBP/EXR/HDR), atomic writes
+              texture encode (PNG/JPEG/TGA/BMP/WEBP/EXR/HDR), atomic writes
 L3  engine    Session (open packages, active graph, selection, 2D/3D view state, snapshot undo, cache),
               the command registry, inspect, sample materials and graph templates
 L3  render    the 3D view: BVH ray casts, the height output displacing a subdivided mesh, GGX PBR with
@@ -104,6 +104,15 @@ Resource paths resolve beside their owning package: `resources/tile.png` in
 `sbs://resources/tile.png`. Nested packages use their own adjacent `resources/` directory.
 Loaded resource bytes are embedded on save; unavailable files keep their reference and missing state.
 
+Every session loads the whole library folder once per process (`engine::node_library`, cached
+until `library.reload`). Each package joins every session's dependencies, so its graphs can be
+instanced, and the Library lists them: function graphs under Functions, sorted into its
+sub-categories by their folder (`Functions/Math/Pi` → Constant), other graphs under their attribute
+category. A package whose titled frames name Library categories ("Filters - Blurs") can also lay
+the tree out (`formats::sbs::read_layout`): each node inside a frame becomes an entry there, listed
+as missing until a package in the folder provides it. Installed and browser builds embed
+`functions.sbs`.
+
 Importing a user-supplied function package preserves its graph bodies, connections and positions;
 it does not replace them with the bundled library. Redundant legacy instance connectors are retained
 on save and evaluated only through the declared inputs. Conflicting obsolete connections remain
@@ -121,11 +130,22 @@ the static authoring defaults are zero. These values propagate through nested gr
 without becoming constants in saved functions. Relevant variable changes invalidate cached cooks.
 The normal-format integer is passed through without assigning a convention label to an unverified code.
 
+Numeric, Boolean, color, enum and text value parameters can own a Function graph, including
+inputs on material graph instances. The six base parameters store their functions separately from
+node-specific parameters so native identifiers cannot collide. Size and seed functions establish
+the evaluation context before other parameters run; downstream nodes inherit evaluated nominal
+sizes rather than capped previews. SBS writes these functions as native dynamic values, including
+incomplete graphs. Exposing a parameter creates a typed Get-node function. Properties offers the
+same function creation, editing and reset actions for base parameters and instance inputs.
+Only Specific Parameters offer exposure: a modal drafts the identifier, label, group, description,
+editor, default, limits, clamp and step before one undoable command creates the input and function.
+Inheritance buttons show distinct icons for input, parent and absolute modes.
+
 The local `assets/sbs/functions.sbs` is converted from a user-supplied package with
 `cargo run -p materialcraft-formats --release --example standard_function_library -- <source.sbs> assets/sbs/functions.sbs`.
 The converter preserves all 171 function bodies (2,334 nodes), folder paths, identifiers, inputs,
 defaults and internal references. It writes new interface-based descriptions, generates node
-positions and omits source annotations and icons. It rejects import warnings and functions that
+positions and omits source parameter descriptions, annotations and icons. It rejects import warnings and functions that
 cannot compile instead of substituting empty graphs. The source graph bodies are retained;
 rewritten metadata does not establish redistribution rights.
 Local tests compare every converted body and evaluate all 171 functions against the supplied
@@ -187,7 +207,7 @@ them. Alignment uses the same engine command for all three models, with explicit
 and an explicit Function target or FX-Map owner ID, so overlapping IDs cannot move the parent material nodes.
 Pixel Processor, Value Processor and parameter functions use that same main panel and function node
 catalog, with one target-aware availability rule shared by node creation, Library and Add node.
-Value Processor omits the two sampler entries; saved functions retain their existing operations.
+Both processor types accept Sample gray and Sample color to read their image inputs.
 A breadcrumb and parent action return from nested functions, FX-Maps and local graph instances
 while retaining the parent view and material preview.
 

@@ -1,10 +1,12 @@
 //! Menu actions and shortcuts share stable command ids
 
 use craft_keymap::{Active, Bindable, Binding, Chord, Keymap, Platform, Scope, Scopes};
+use egui::class::HasClasses as _;
 use serde_json::Value;
 
 use crate::MaterialCraftApp;
 use crate::i18n::tr;
+use crate::shell::modality::Modality;
 use crate::theme::Tokens;
 
 pub use crate::menu_item::MenuItem;
@@ -26,19 +28,61 @@ pub const TOP: [&str; 5] = ["File", "Edit", "Tools", "Windows", "Help"];
 pub(crate) const EXPLORER_NEW: &[(&str, &str)] = &[("Graph", "ui.newGraph"), ("Function Graph", "ui.newFunctionGraph"), ("Folder", "folder.create")];
 pub(crate) const EXPLORER_IMPORT: &[(&str, &str)] = &[("Bitmap", "file.importBitmap"), ("Vector graphics", "file.importVector")];
 pub(crate) const EXPLORER_RESOURCE: &[(&str, &str)] = &[("Add to graph", "graph.resource.add")];
-pub(crate) const EXPLORER_PACKAGE: &[(&str, &str)] = &[
-    ("Reload", "file.reload"),
-    ("Save", "file.save"),
-    ("Save As", "file.saveAs"),
-    ("Save A Copy As", "file.saveCopyAs"),
-    ("Copy", "explorer.copy"),
-    ("Paste", "explorer.paste"),
-    ("Close", "package.close"),
+pub(crate) use crate::explorer::explorer_row::ExplorerRow;
+use ExplorerRow::{Item, Separator, Sub};
+
+/// Linking keeps a resource outside the package; MaterialCraft only embeds resources so far
+pub(crate) const EXPLORER_LINK: &[(&str, &str)] = &[("Bitmap", ""), ("Vector graphics", "")];
+pub(crate) const EXPLORER_SEND_TO: &[(&str, &str)] = &[("TextureCraft", "file.sendToTextureCraft")];
+/// Explorer actions that wrap engine commands or the operating system: computing every output,
+/// showing the package file and opening the packages it depends on
+pub(crate) const EXPLORER_COMPUTE: &str = "ui.explorer.computeOutputs";
+pub(crate) const EXPLORER_SHOW_IN_FOLDER: &str = "ui.explorer.showInFolder";
+pub(crate) const EXPLORER_OPEN_DEPENDENCIES: &str = "ui.explorer.openDependencies";
+pub(crate) const EXPLORER_VIEW_OUTPUTS: &str = "ui.explorer.viewOutputs";
+pub(crate) const EXPLORER_EXPORT_OUTPUTS: &str = "ui.explorer.exportOutputs";
+pub(crate) const EXPLORER_EXPORT_MATERIAL: &str = "ui.explorer.exportMaterial";
+pub(crate) const EXPLORER_PACKAGE: &[ExplorerRow] = &[
+    Sub("New", EXPLORER_NEW),
+    Sub("Import", EXPLORER_IMPORT),
+    Sub("Link", EXPLORER_LINK),
+    Separator,
+    Item("Reload", "file.reload", None),
+    Item("Save", "file.save", Some("Ctrl+S")),
+    Item("Save as...", "file.saveAs", Some("Ctrl+Shift+S")),
+    Item("Save a copy as...", "file.saveCopyAs", None),
+    Separator,
+    Item("Export material...", "file.exportMaterial", None),
+    Item("Export with dependencies...", "", None),
+    Sub("Send to", EXPLORER_SEND_TO),
+    Separator,
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Close package", "package.close", None),
+    Separator,
+    Item("Compute outputs", EXPLORER_COMPUTE, None),
+    Item("Show in folder...", EXPLORER_SHOW_IN_FOLDER, None),
+    Item("Dependency manager...", "", None),
+    Item("Open dependencies", EXPLORER_OPEN_DEPENDENCIES, None),
 ];
-pub(crate) const EXPLORER_FOLDER: &[(&str, &str)] =
-    &[("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Rename", "folder.rename"), ("Remove", "folder.remove")];
-pub(crate) const EXPLORER_GRAPH: &[(&str, &str)] =
-    &[("Open", "graph.open"), ("Copy", "explorer.copy"), ("Paste", "explorer.paste"), ("Remove", "graph.delete"), ("Rename", "graph.rename")];
+pub(crate) const EXPLORER_FOLDER: &[ExplorerRow] = &[
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Remove", "folder.remove", Some("Delete")),
+    Item("Rename", "folder.rename", Some("F2")),
+];
+pub(crate) const EXPLORER_GRAPH: &[ExplorerRow] = &[
+    Item("Open", "graph.open", Some("Enter")),
+    Item("Copy", "explorer.copy", None),
+    Item("Paste", "explorer.paste", None),
+    Item("Remove", "graph.delete", Some("Delete")),
+    Item("Rename", "graph.rename", Some("F2")),
+    Separator,
+    Item("View outputs in 3D view", EXPLORER_VIEW_OUTPUTS, None),
+    Item("Compute outputs", EXPLORER_COMPUTE, None),
+    Item("Export outputs...", EXPLORER_EXPORT_OUTPUTS, None),
+    Item("Export material...", EXPLORER_EXPORT_MATERIAL, None),
+];
 
 /// The menu catalog (the target menu tree with our ids)
 pub const CATALOG: &[MenuItem] = &[
@@ -144,8 +188,12 @@ pub fn implemented(id: &str) -> bool {
     is_ui(id) || materialcraft_engine::find(id).is_some()
 }
 
-/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`)
+/// Invoke a menu item (menus, shortcuts, the control channel's `ui.menu.invoke`), unless a dialog or prompt blocks it
 pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
+    if !Modality::capture(app, ctx).allows(id) {
+        return;
+    }
+
     if crate::graph::editor_actions::invoke(app, id) {
         return;
     }
@@ -169,7 +217,7 @@ pub fn invoke(app: &mut MaterialCraftApp, ctx: &egui::Context, id: &str) {
                 if id == "ui.newFunctionGraph" { materialcraft_engine::core::GraphKind::Function } else { materialcraft_engine::core::GraphKind::Material };
             app.ui.windows.new_graph = true;
         }
-        "ui.export" => app.ui.windows.export = true,
+        "ui.export" => crate::export::open(app, crate::export::ExportTab::FromGraph),
         "ui.quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         "ui.preferences" => app.ui.windows.preferences = true,
         "ui.view.graph" => {}
@@ -241,44 +289,49 @@ pub fn shortcut_of(id: &str) -> Option<&'static str> {
     CATALOG.iter().find(|i| i.id == id).and_then(|i| i.shortcut).or_else(|| materialcraft_engine::find(id).and_then(|c| c.shortcut))
 }
 
+/// Draw menu bars with aligned labels and a separate gutter for checkmarks.
 pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
-    let tk = Tokens::get(ui.ctx());
-    egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(6, 0))).show(ui, |ui| {
+    let tokens = Tokens::get(ui.ctx());
+    egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(tokens.chrome).inner_margin(egui::Margin::symmetric(6, 0))).show(ui, |ui| {
         #[cfg(not(target_arch = "wasm32"))]
         let window_layout = app.window_layout.clone();
         #[cfg(not(target_arch = "wasm32"))]
         if window_layout.is_some() {
             craft_window::title_bar::empty_area(ui, ui.max_rect());
         }
+
         egui::MenuBar::new().ui(ui, |ui| {
-            let ctx = ui.ctx().clone();
+            let context = ui.ctx().clone();
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(layout) = &window_layout {
-                crate::window_controls::buttons(ui, &ctx, &layout.left);
+                crate::window_controls::buttons(ui, &context, &layout.left);
             }
             for top in TOP {
                 ui.menu_button(tr(top), |ui| {
                     ui.set_min_width(220.0);
-                    let mut current_sub: Option<&str> = None;
-                    let items: Vec<MenuItem> = CATALOG.iter().filter(|i| i.menu == top).copied().collect();
+                    let mut current_submenu: Option<&str> = None;
+                    let items: Vec<MenuItem> = CATALOG.iter().filter(|item| item.menu == top).copied().collect();
                     for item in &items {
-                        if let Some(s) = item.sub {
-                            if current_sub == Some(s) {
+                        if let Some(submenu) = item.sub {
+                            if current_submenu == Some(submenu) {
                                 continue;
                             }
-                            current_sub = Some(s);
-                            ui.menu_button(tr(s), |ui| {
-                                for x in items.iter().filter(|x| x.sub == Some(s)) {
-                                    menu_item(app, &ctx, ui, x);
+
+                            current_submenu = Some(submenu);
+                            ui.menu_button(menu_label(tr(submenu)), |ui| {
+                                for entry in items.iter().filter(|entry| entry.sub == Some(submenu)) {
+                                    menu_item(app, &context, ui, entry);
                                 }
                             });
                             continue;
                         }
+
                         if item.label == "-" {
                             ui.separator();
                             continue;
                         }
-                        menu_item(app, &ctx, ui, item);
+
+                        menu_item(app, &context, ui, item);
                     }
                 });
             }
@@ -287,45 +340,71 @@ pub fn menu_bar(app: &mut MaterialCraftApp, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut right = layout.right.clone();
                     right.reverse();
-                    crate::window_controls::buttons(ui, &ctx, &right);
+                    crate::window_controls::buttons(ui, &context, &right);
                 });
             }
         });
     });
 }
 
-fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
-    let on = enabled(app, item.id);
-    let mut b = egui::Button::new(tr(item.label));
-    if let Some(sc) = item.shortcut {
-        b = b.shortcut_text(shortcut_label(ctx, sc));
+/// Reserve the same checkmark gutter for commands, toggles and submenus.
+fn menu_label(label: &str) -> (egui::Atom<'_>, &str) {
+    (egui::Atom::custom(egui::IdSalt::new("menu-checkmark"), egui::vec2(12.0, 12.0)), label)
+}
+
+/// Draw a command with an optional checkmark and dispatch it when activated.
+fn menu_item(app: &mut MaterialCraftApp, context: &egui::Context, ui: &mut egui::Ui, item: &MenuItem) {
+    let modality = Modality::capture(app, context);
+    let is_enabled = modality.allows(item.id) && enabled(app, item.id);
+    let mut button = egui::Button::new(menu_label(tr(item.label)));
+    if let Some(shortcut) = item.shortcut {
+        button = button.shortcut_text(shortcut_label(context, shortcut));
     }
     let checked = match item.id {
         "ui.view.graph" => Some(true),
         "ui.graph.snapToGrid" => Some(app.ui.prefs.snap_to_grid),
-        id if id.starts_with("ui.preview.") => id.strip_prefix("ui.preview.").and_then(|s| s.parse::<u32>().ok()).map(|s| s == app.ui.prefs.preview_size),
-        id => crate::docking::view_panel(id).map(|p| app.ui.dock.is_open(p)),
+        id if id.starts_with("ui.preview.") => {
+            id.strip_prefix("ui.preview.").and_then(|size| size.parse::<u32>().ok()).map(|size| size == app.ui.prefs.preview_size)
+        }
+        id => crate::docking::view_panel(id).map(|panel| app.ui.dock.is_open(panel)),
     };
-
-    if let Some(c) = checked {
-        b = b.selected(c);
+    if let Some(checked) = checked {
+        // Keep the accessible toggle state without styling the entire row as selected
+        button = button.selected(checked);
+        button.remove_class(egui::Button::CLASS_SELECTED);
     }
-    if ui.add_enabled(on, b).clicked() {
-        invoke(app, ctx, item.id);
+
+    let response = ui.add_enabled(is_enabled, |ui: &mut egui::Ui| {
+        let response = button.atom_ui(ui);
+        if checked == Some(true)
+            && let Some(rect) = response.rect(egui::IdSalt::new("menu-checkmark"))
+        {
+            let center = rect.center();
+            let color = ui.style().interact(&response).fg_stroke.color;
+            ui.painter().add(egui::Shape::line(
+                vec![center + egui::vec2(-4.0, 0.0), center + egui::vec2(-1.0, 3.0), center + egui::vec2(4.0, -3.0)],
+                egui::Stroke::new(1.5, color),
+            ));
+        }
+        response.response
+    });
+    if response.clicked() {
+        invoke(app, context, item.id);
         ui.close();
     }
+
     #[cfg(not(target_arch = "wasm32"))]
     if item.id == "file.open" {
-        ui.add_enabled_ui(!app.ui.recent.is_empty(), |ui| {
-            ui.menu_button(tr("Recent packages"), |ui| {
+        ui.add_enabled_ui(!modality.is_blocked() && !app.ui.recent.is_empty(), |ui| {
+            ui.menu_button(menu_label(tr("Recent packages")), |ui| {
                 for path in app.ui.recent.clone() {
-                    if ui.button(&path).clicked() {
+                    if ui.button(menu_label(&path)).clicked() {
                         crate::windows::open_path(app, &path);
                         ui.close();
                     }
                 }
                 ui.separator();
-                if ui.button(tr("Clear recent packages")).clicked() {
+                if ui.button(menu_label(tr("Clear recent packages"))).clicked() {
                     app.ui.recent.clear();
                     ui.close();
                 }
@@ -334,20 +413,25 @@ fn menu_item(app: &mut MaterialCraftApp, ctx: &egui::Context, ui: &mut egui::Ui,
     }
 }
 
-/// Dispatch shortcuts unless a widget or popup owns the keyboard
+/// Dispatch shortcuts unless a widget, popup or dialog owns the keyboard
 pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    if crate::updates_ui::blocks_input(app) {
-        return;
-    }
-    if !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
+    // The desktop sends Copy, Cut and Paste events in place of their key presses
+    if !ctx
+        .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))))
+    {
         return;
     }
 
-    crate::graph::wire_actions::shortcuts(app, ctx);
+    let modality = Modality::capture(app, ctx);
+    if !modality.is_blocked() && crate::explorer::shortcuts(app, ctx) {
+        return;
+    }
+    if !modality.is_blocked() {
+        crate::graph::wire_actions::shortcuts(app, ctx);
+    }
 
     let platform = craft_keymap::egui::platform(ctx);
     if app.keymap.platform() != platform {
@@ -355,8 +439,13 @@ pub fn shortcuts(app: &mut MaterialCraftApp, ctx: &egui::Context) {
     }
     // Selected label text copies through egui's Copy and Cut events, which a hit would remove
     let label_selected = label_text_selected(ctx);
+    // A clipboard chord with nothing to copy or paste leaves its event to egui instead of reporting an error
+    let unavailable_clipboard_commands: Vec<&str> = ["edit.copy", "edit.cut", "edit.paste"].into_iter().filter(|id| !enabled(app, id)).collect();
     let hits = ctx.input_mut(|i| {
-        app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| !(label_selected && matches!(hit.command.id.as_str(), "edit.copy" | "edit.cut")))
+        app.dispatcher.dispatch_filtered(i, &app.keymap, &Active::NONE, |hit| {
+            let id = hit.command.id.as_str();
+            modality.allows(id) && !(label_selected && matches!(id, "edit.copy" | "edit.cut")) && !unavailable_clipboard_commands.contains(&id)
+        })
     });
     for hit in hits {
         if crate::graph::editor_actions::shortcut_enabled(app, &hit.command.id) {
@@ -370,14 +459,15 @@ fn label_text_selected(ctx: &egui::Context) -> bool {
 }
 
 /// Menu items for `ui.menu.list`
-pub fn list(app: &MaterialCraftApp) -> Value {
+pub fn list(app: &MaterialCraftApp, ctx: &egui::Context) -> Value {
+    let modality = Modality::capture(app, ctx);
     Value::Array(
         CATALOG
             .iter()
             .filter(|i| i.label != "-")
             .map(|i| {
                 serde_json::json!({"menu": i.menu, "submenu": i.sub, "label": i.label, "id": i.id, "shortcut": i.shortcut,
-                    "implemented": implemented(i.id), "enabled": enabled(app, i.id)})
+                    "implemented": implemented(i.id), "enabled": modality.allows(i.id) && enabled(app, i.id)})
             })
             .collect(),
     )
@@ -500,6 +590,177 @@ mod tests {
         assert!(!app.ui.windows.new_graph);
     }
 
+    #[test]
+    fn delete_waits_behind_the_unsaved_prompt() {
+        let mut app = app();
+        app.run("edit.selectAll", serde_json::json!({}));
+        let nodes = app.session.graph().unwrap().nodes.len();
+        assert!(nodes > 0);
+
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().nodes.len(), nodes, "Delete does not edit the package behind the prompt");
+
+        app.ui.windows.unsaved = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().nodes.len(), 0, "Delete works once the prompt is answered");
+    }
+
+    #[test]
+    fn wire_keys_wait_behind_the_unsaved_prompt() {
+        let mut app = app();
+        let wire = app.session.graph().unwrap().connections.first().map(|wire| (wire.to, wire.to_port.clone())).unwrap();
+        let wires = app.session.graph().unwrap().connections.len();
+        app.graph.selected_wires = vec![wire];
+
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().connections.len(), wires);
+
+        app.ui.windows.unsaved = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph().unwrap().connections.len(), wires - 1, "Delete works once the prompt is answered");
+    }
+
+    /// Whether a press is still in egui's input after `shortcuts`, where a shortcut that ran removes it
+    fn press_left_in_input(app: &mut MaterialCraftApp, key: egui::Key, modifiers: egui::Modifiers) -> bool {
+        let ctx = egui::Context::default();
+        let input =
+            egui::RawInput { events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }], ..Default::default() };
+        let mut left = false;
+        ctx.run_ui(input, |ui| {
+            shortcuts(app, ui.ctx());
+            left = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: pressed, .. } if *pressed == key)));
+        })
+        .textures_delta
+        .clear();
+        left
+    }
+
+    #[test]
+    fn behind_a_file_dialog_only_the_commands_that_show_one_run() {
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+
+        assert!(!press_left_in_input(&mut app, egui::Key::O, egui::Modifiers::COMMAND), "Ctrl+O reaches the open dialog");
+        assert!(press_left_in_input(&mut app, egui::Key::N, egui::Modifiers::COMMAND), "Ctrl+N waits");
+        assert!(!app.ui.windows.new_graph);
+        assert_eq!(app.dialogs.queued(), 1, "the dialog comes forward and no second one is asked for");
+    }
+
+    #[test]
+    fn invoke_waits_behind_a_file_dialog_except_for_the_commands_that_show_one() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(!app.ui.windows.export);
+        invoke(&mut app, &ctx, "file.open");
+        assert_eq!(app.dialogs.queued(), 1, "the dialog comes forward and no second one is asked for");
+    }
+
+    #[test]
+    fn invoke_runs_nothing_behind_a_prompt() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(!app.ui.windows.export);
+
+        app.ui.windows.unsaved = None;
+        invoke(&mut app, &ctx, "ui.export");
+        assert!(app.ui.windows.export);
+    }
+
+    /// Explorer shortcuts affect the hovered selection and leave graph shortcuts elsewhere.
+    #[test]
+    fn explorer_keys_act_on_its_selection_only_while_hovered() {
+        use crate::explorer::ExplorerTarget;
+        let mut app = app();
+        app.run("file.new", serde_json::json!({"template": "empty", "name": "Second"})).unwrap();
+        let graphs = app.session.pkg.graphs.len();
+        let document = app.session.document_id;
+        app.ui.explorer.selected = Some(ExplorerTarget::Graph { document, index: 0 });
+
+        // Away from the Explorer, F2 and Delete keep their graph shortcuts
+        dispatched(egui::Key::F2, egui::Modifiers::NONE, &mut app);
+        assert!(app.ui.explorer.rename.is_none());
+
+        app.ui.explorer.hovered = true;
+        dispatched(egui::Key::Enter, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.graph, 0);
+        dispatched(egui::Key::F2, egui::Modifiers::NONE, &mut app);
+        assert!(matches!(app.ui.explorer.rename, Some((ExplorerTarget::Graph { index: 0, .. }, _))));
+        app.ui.explorer.rename = None;
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+        assert_eq!(app.session.pkg.graphs.len(), graphs - 1);
+        dispatched(egui::Key::Z, egui::Modifiers::COMMAND, &mut app);
+        assert_eq!(app.session.pkg.graphs.len(), graphs, "removing a graph undoes");
+    }
+
+    /// Explorer menu actions resolve through their documented UI or engine handler.
+    #[test]
+    fn explorer_menus_name_only_actions_that_exist() {
+        for rows in [EXPLORER_PACKAGE, EXPLORER_FOLDER, EXPLORER_GRAPH] {
+            for row in rows {
+                let ids: Vec<&str> = match row {
+                    ExplorerRow::Item(_, id, _) => vec![id],
+                    ExplorerRow::Sub(_, entries) => entries.iter().map(|(_, id)| *id).collect(),
+                    ExplorerRow::Separator => Vec::new(),
+                };
+                for id in ids.into_iter().filter(|id| !id.is_empty()) {
+                    assert!(implemented(id) || id.starts_with("ui.explorer.") || id.starts_with("explorer."), "{id}");
+                }
+                if let ExplorerRow::Item(label, _, Some(shortcut)) = row {
+                    assert!(parse_shortcut(shortcut).is_some(), "{label}: {shortcut}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_shortcuts_list_leaves_shortcuts_running() {
+        let mut app = app();
+        app.ui.windows.shortcuts = true;
+        dispatched(egui::Key::N, egui::Modifiers::COMMAND, &mut app);
+        assert!(app.ui.windows.new_graph);
+    }
+
+    #[test]
+    fn menu_bar_items_gray_out_behind_a_prompt() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+
+        let mut app = app();
+        app.ui.recent.push("recent.sbs".into());
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(|ui, app: &mut MaterialCraftApp| menu_bar(app, ui), app);
+        harness.run_steps(2);
+        harness.get_by_label("File").click();
+        harness.run_steps(3);
+        let item = |label| By::new().role(egui::accesskit::Role::Button).label(label);
+        assert!(!harness.get(item("Close all")).accesskit_node().is_disabled());
+        assert!(!harness.get(item("Recent packages")).accesskit_node().is_disabled());
+
+        harness.state_mut().ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        harness.run_steps(3);
+        assert!(harness.get(item("Close all")).accesskit_node().is_disabled());
+        assert!(harness.get(item("Recent packages")).accesskit_node().is_disabled());
+    }
+
+    #[test]
+    fn open_stays_enabled_behind_a_file_dialog() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+
+        let mut app = app();
+        app.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(|ui, app: &mut MaterialCraftApp| menu_bar(app, ui), app);
+        harness.run_steps(2);
+        harness.get_by_label("File").click();
+        harness.run_steps(3);
+        let item = |label| By::new().role(egui::accesskit::Role::Button).label_contains(label);
+        assert!(!harness.get(item("Open...")).accesskit_node().is_disabled());
+        assert!(harness.get(item("Close all")).accesskit_node().is_disabled());
+    }
+
     fn press_c(events_after: Vec<egui::Event>) -> egui::RawInput {
         let mut events = vec![
             egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
@@ -539,13 +800,49 @@ mod tests {
     }
 
     #[test]
-    fn the_desktops_copy_event_stays_with_egui() {
+    fn the_desktops_copy_event_copies_the_selected_nodes() {
         let mut app = app();
         app.run("edit.selectAll", serde_json::json!({}));
         let ctx = egui::Context::default();
+
         let kept = copy_event_kept(&mut app, &ctx, egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() });
-        assert!(kept, "selected label text copies through this event");
-        assert!(app.session.clipboard.is_none(), "the desktop's Copy event does not run edit.copy");
+
+        assert!(!kept, "edit.copy takes the event");
+        assert!(app.session.clipboard.is_some());
+    }
+
+    #[test]
+    fn selected_label_text_keeps_the_desktops_copy_event() {
+        let mut app = app();
+        app.run("edit.selectAll", serde_json::json!({}));
+        let ctx = egui::Context::default();
+        select_label_text(&ctx);
+
+        let kept = copy_event_kept(&mut app, &ctx, egui::RawInput { events: vec![egui::Event::Copy], ..Default::default() });
+
+        assert!(kept, "egui copies the label's text from this event");
+        assert!(app.session.clipboard.is_none(), "the event does not also copy the selected nodes");
+    }
+
+    #[test]
+    fn clipboard_events_with_nothing_to_copy_or_paste_stay_with_egui() {
+        let mut app = app();
+        app.run("edit.selectNone", serde_json::json!({}));
+        app.session.clipboard = None;
+        let toasts = app.toasts.len();
+        let events = vec![egui::Event::Copy, egui::Event::Cut, egui::Event::Paste("text from another app".into())];
+        let ctx = egui::Context::default();
+
+        let mut left = Vec::new();
+        ctx.run_ui(egui::RawInput { events: events.clone(), ..Default::default() }, |ui| {
+            shortcuts(&mut app, ui.ctx());
+            left = ui.input(|i| i.events.clone());
+        })
+        .textures_delta
+        .clear();
+
+        assert_eq!(left, events);
+        assert_eq!(app.toasts.len(), toasts, "no error toast for a chord that runs nothing");
     }
 
     #[test]
@@ -594,5 +891,18 @@ mod tests {
         assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Cmd+Shift+E");
         ctx.set_os(egui::os::OperatingSystem::Windows);
         assert_eq!(shortcut_label(&ctx, "Ctrl+Shift+E"), "Ctrl+Shift+E");
+    }
+    /// A hidden Explorer must not delete its selection using stale hover state.
+    #[test]
+    fn review_hidden_explorer_ignores_delete() {
+        let mut app = app();
+        let graphs = app.session.pkg.graphs.len();
+        app.ui.explorer.selected = Some(crate::explorer::ExplorerTarget::Graph { document: app.session.document_id, index: 0 });
+        app.ui.explorer.hovered = true;
+        app.ui.dock.close(crate::docking::Panel::Explorer);
+
+        dispatched(egui::Key::Delete, egui::Modifiers::NONE, &mut app);
+
+        assert_eq!(app.session.pkg.graphs.len(), graphs);
     }
 }

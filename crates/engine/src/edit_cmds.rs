@@ -172,13 +172,16 @@ fn has_deletable_selection(session: &Session) -> std::result::Result<(), String>
 
 fn delete_annotation(session: &mut Session) -> Result<J> {
     let selection = session.annotation_selection;
+    let target = session.annotation_target.clone();
+    let mut items = target.items(session)?;
+    match selection {
+        Some(crate::AnnotationSelection::Frame(id)) => items.frames.retain(|frame| frame.id != id),
+        Some(crate::AnnotationSelection::Comment(id)) => items.comments.retain(|comment| comment.id != id),
+        Some(crate::AnnotationSelection::Pin(id)) => items.pins.retain(|pin| pin.id != id),
+        None => {}
+    }
     session.edit("Delete annotation", |session| {
-        let graph = session.graph_mut()?;
-        match selection {
-            Some(crate::AnnotationSelection::Frame(id)) => graph.frames.retain(|frame| frame.id != id),
-            Some(crate::AnnotationSelection::Comment(id)) => graph.comments.retain(|comment| comment.id != id),
-            None => {}
-        }
+        target.replace(session, items)?;
         session.annotation_selection = None;
         Ok(json!({"deleted": 1}))
     })

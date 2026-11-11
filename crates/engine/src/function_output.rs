@@ -6,8 +6,16 @@ pub fn expected_type(document: &Graph, target: &FunctionGraphTarget) -> Option<V
         FunctionGraphTarget::Graph => None,
         FunctionGraphTarget::Dynamic { node, parameter } => {
             let node = document.node(*node).ok()?;
-            ValueType::of(&materialcraft_nodes::find(&node.def)?.param(parameter)?.default)
+            let default = if node.def == "graph_instance" {
+                node.instance.as_ref()?.defaults.get(parameter)?
+            } else if node.def == "input_value" && parameter == "default" {
+                node.params.get(parameter).unwrap_or(&materialcraft_nodes::find(&node.def)?.param(parameter)?.default)
+            } else {
+                &materialcraft_nodes::find(&node.def)?.param(parameter)?.default
+            };
+            ValueType::of(default)
         }
+        FunctionGraphTarget::Base { parameter, .. } => Some(parameter.value_type()),
         FunctionGraphTarget::Parameter { node, parameter } => {
             let node = document.node(*node).ok()?;
             if node.def != "pixel_processor" || parameter != "function" {

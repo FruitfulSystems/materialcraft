@@ -301,3 +301,86 @@ fn saved_dependencies_reopen_without_source_files_in_explorer_and_missing_source
     assert!(missing.path.is_some());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+fn assert_instance_color(session: &mut Session, instance: NodeId, expected: [f32; 4]) {
+    let cooked = session.cook();
+    assert_eq!(cooked.nodes[&instance].error, None);
+    let actual = cooked.image(instance, 0).unwrap().get(0, 0, false);
+    assert!(actual.into_iter().zip(expected).all(|(actual, expected)| (actual - expected).abs() < 1e-6), "{actual:?} != {expected:?}");
+}
+
+#[test]
+fn instance_defaults_follow_current_source_inputs_before_and_after_save() {
+    for linked in [false, true] {
+        let directory = std::env::temp_dir().join(format!("materialcraft-current-inputs-{}-{linked}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let source_path = directory.join("source.sbs");
+        let target_path = directory.join("target.sbs");
+        let (package, value) = source();
+        let mut session = Session::new(package);
+        session.path = Some(source_path.to_string_lossy().into_owned());
+        execute(&mut session, "graph.exposed.add", &json!({"id": "tint", "bind": {"node": value, "param": "color"}})).unwrap();
+        execute(&mut session, "graph.exposed.set", &json!({"id": "tint", "value": [0.2, 0.3, 0.4, 1.0]})).unwrap();
+        let target_document = if linked {
+            let mut target = Package::new("Target");
+            target.graphs.push(Graph::new("Target"));
+            open(&mut session, &target, target_path.to_str().unwrap())
+        } else {
+            execute(&mut session, "file.new", &json!({"name": "Target", "template": "empty"})).unwrap();
+            session.document_id
+        };
+        let target_graph = session.graph;
+        let instance = NodeId(execute(&mut session, "graph.instance.add", &json!({"document": 0, "graph": "Source"})).unwrap()["id"].as_u64().unwrap());
+        session.preview_size = Some(16);
+
+        for expected in [[0.2, 0.3, 0.4, 1.0], [0.8, 0.6, 0.4, 1.0]] {
+            execute(&mut session, "package.activate", &json!({"document": 0})).unwrap();
+            session.graph = 0;
+            execute(&mut session, "graph.exposed.set", &json!({"id": "tint", "value": expected})).unwrap();
+            execute(&mut session, "package.activate", &json!({"document": target_document})).unwrap();
+            session.graph = target_graph;
+            let cooked = session.cook();
+
+            assert_eq!(cooked.nodes[&instance].error, None);
+            assert_eq!(cooked.nodes[&instance].parameters["tint"], Value::Color(expected));
+            assert_instance_color(&mut session, instance, expected);
+        }
+
+        let source_bytes = formats::sbs::write_sbs(session.open_packages().iter().find(|entry| entry.0 == 0).unwrap().1).unwrap();
+        std::fs::write(&source_path, source_bytes).unwrap();
+        std::fs::write(&target_path, file_cmds::save_bytes(&session).unwrap()).unwrap();
+        let mut reopened = Session::new(Package::new("Initial"));
+        file_cmds::open_file(&mut reopened, target_path.to_str().unwrap()).unwrap();
+        assert!(reopened.load_warnings.is_empty(), "{:?}", reopened.load_warnings);
+        reopened.graph = target_graph;
+        reopened.preview_size = Some(16);
+        let instance = reopened.graph().unwrap().nodes.iter().find(|node| node.def == "graph_instance").unwrap().id;
+        assert_instance_color(&mut reopened, instance, [0.8, 0.6, 0.4, 1.0]);
+
+        execute(&mut reopened, "graph.node.param", &json!({"id": instance, "param": "tint", "value": [0.1, 0.2, 0.3, 1.0]})).unwrap();
+        assert_instance_color(&mut reopened, instance, [0.1, 0.2, 0.3, 1.0]);
+        execute(&mut reopened, "graph.node.reset", &json!({"id": instance, "param": "tint"})).unwrap();
+        assert_instance_color(&mut reopened, instance, [0.8, 0.6, 0.4, 1.0]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn instance_constant_capture_uses_the_current_source_input_without_a_prior_cook() {
+    let (package, value) = source();
+    let mut session = Session::new(package);
+    execute(&mut session, "graph.exposed.add", &json!({"id": "tint", "bind": {"node": value, "param": "color"}})).unwrap();
+    execute(&mut session, "graph.exposed.set", &json!({"id": "tint", "value": [0.8, 0.6, 0.4, 1.0]})).unwrap();
+    execute(&mut session, "file.new", &json!({"name": "Target", "template": "empty"})).unwrap();
+    let instance = NodeId(execute(&mut session, "graph.instance.add", &json!({"document": 0, "graph": "Source"})).unwrap()["id"].as_u64().unwrap());
+
+    let info = execute(&mut session, "graph.node.parameterInfo", &json!({"id": instance, "param": "tint"})).unwrap();
+    assert_eq!(info["value"], json!(Value::Color([0.8, 0.6, 0.4, 1.0])));
+    execute(&mut session, "graph.node.function", &json!({"id": instance, "param": "tint", "mode": "constant"})).unwrap();
+    session.graph = 0;
+    execute(&mut session, "graph.exposed.set", &json!({"id": "tint", "value": [0.0, 0.0, 0.0, 1.0]})).unwrap();
+    session.graph = 1;
+    session.preview_size = Some(16);
+
+    assert_instance_color(&mut session, instance, [0.8, 0.6, 0.4, 1.0]);
+}

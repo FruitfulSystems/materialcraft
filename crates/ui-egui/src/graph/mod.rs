@@ -7,6 +7,8 @@ mod context_menu;
 pub(crate) mod frame_hit;
 #[cfg(test)]
 mod frames;
+#[cfg(test)]
+mod function_search_tests;
 mod graph_camera;
 mod graph_drag;
 pub(crate) mod graph_parent;
@@ -15,6 +17,8 @@ mod instance_context_menu;
 #[cfg(test)]
 mod interaction_tests;
 mod library_drag;
+#[cfg(test)]
+mod modality_tests;
 pub(crate) mod node_card;
 mod node_layout;
 mod node_search;
@@ -28,7 +32,7 @@ pub(crate) use graph_camera::GraphCamera;
 use graph_drag::GraphDrag;
 pub use graph_view::GraphView;
 pub use library_drag::LibraryDrag;
-pub use navigation::add_node_near_selection;
+pub use navigation::{add_entry_in_view, add_node_near_selection};
 use node_search::NodeSearch;
 pub use node_style::{NODE_W, header_color, node_label, node_rect, port_color};
 pub use port_hit::PortHit;

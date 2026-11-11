@@ -594,20 +594,19 @@ fn processor_node_availability_is_shared_and_preserves_existing_sampler_graphs()
         let target = FunctionGraphTarget::Parameter { node, parameter: "function".into() };
         let operations: Vec<_> = target.available_operations(&session).map(|operation| operation.id).collect();
         let full_catalog = materialcraft_engine::nodes::function::FUNCTIONS;
-        let sampling = definition == "pixel_processor";
-        assert_eq!(operations.len(), full_catalog.len() - if sampling { 0 } else { 2 });
+        assert_eq!(operations.len(), full_catalog.len());
         assert!(operations.contains(&"add"));
         for sampler in ["samplelum", "samplecol"] {
-            assert_eq!(operations.contains(&sampler), sampling);
+            assert!(operations.contains(&sampler));
             let original = session.pkg.clone();
-            let history = session.history();
-            let result =
-                execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": sampler, "at": [0, 0]}}));
-            assert_eq!(result.is_ok(), sampling);
-            if !sampling {
-                assert_eq!(session.pkg, original);
-                assert_eq!(session.history(), history);
-            }
+
+            execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "add", "operation": sampler, "at": [0, 0]}})).unwrap();
+
+            let inserted = session.pkg.clone();
+            session.undo().unwrap();
+            assert_eq!(session.pkg, original);
+            session.redo().unwrap();
+            assert_eq!(session.pkg, inserted);
         }
         let mut existing = FunctionGraph::default();
         existing.add("samplelum", &[], Some(Value::Int2([0, 1])));
@@ -617,5 +616,43 @@ fn processor_node_availability_is_shared_and_preserves_existing_sampler_graphs()
     for kind in ["graph", "pattern", "dynamic"] {
         let (session, target) = function_session(kind);
         assert_eq!(target.available_operations(&session).count(), materialcraft_engine::nodes::function::FUNCTIONS.len());
+    }
+}
+
+#[test]
+fn library_samplers_read_image_inputs_in_both_processors() {
+    for definition in ["pixel_processor", "value_processor"] {
+        for sampler in ["samplelum", "samplecol"] {
+            let mut session = new_session();
+            session.preview_size = Some(16);
+            let color = [0.25, 0.5, 0.75, 1.0];
+            let image = NodeId(
+                execute(&mut session, "graph.node.add", &json!({"def": "uniform", "params": {"color_mode": true, "color": color}})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap(),
+            );
+            let parameters = if definition == "pixel_processor" { json!({"color_mode": sampler == "samplecol"}) } else { json!({}) };
+            let owner = NodeId(execute(&mut session, "graph.node.add", &json!({"def": definition, "params": parameters})).unwrap()["id"].as_u64().unwrap());
+            session.graph_mut().unwrap().connect(image, "output", owner, "input0").unwrap();
+            let target = FunctionGraphTarget::Parameter { node: owner, parameter: "function".into() };
+            let mut function = FunctionGraph::default();
+            let position = function.add_constant(Value::Float2([0.5; 2]));
+            execute(&mut session, "graph.function.set", &json!({"target": target, "function": function})).unwrap();
+
+            let result = execute(&mut session, "library.add", &json!({"entry": format!("function:{sampler}"), "function": target, "at": [160, 0]})).unwrap();
+            let id = result["result"]["id"].as_u64().unwrap();
+            execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "connect", "from": position, "to": id, "input": 0}}))
+                .unwrap();
+            execute(&mut session, "graph.function.edit", &json!({"target": target, "edit": {"action": "output", "id": id}})).unwrap();
+            session.cook();
+
+            if definition == "value_processor" {
+                let expected = if sampler == "samplecol" { Value::Float4(color) } else { Value::Float(color[0]) };
+                assert_eq!(session.cooked.value(owner, 0), Some(&expected));
+            } else {
+                let expected = if sampler == "samplecol" { color } else { [color[0], color[0], color[0], 1.0] };
+                assert_eq!(session.cooked.image(owner, 0).unwrap().get(0, 0, false), expected);
+            }
+        }
     }
 }

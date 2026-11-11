@@ -30,6 +30,10 @@ pub(super) enum GraphDrag {
         resize: bool,
         contents: materialcraft_engine::FrameContents,
     },
+    Pin {
+        id: u64,
+        delta: Vec2,
+    },
     Comment {
         id: u64,
         delta: Vec2,

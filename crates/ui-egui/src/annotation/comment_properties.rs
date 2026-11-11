@@ -3,7 +3,13 @@ use egui::Ui;
 use serde_json::json;
 
 pub(super) fn show(app: &mut MaterialCraftApp, ui: &mut Ui, id: u64) {
-    let Some(mut text) = app.session.graph().ok().and_then(|graph| graph.comments.iter().find(|comment| comment.id == id)).map(|comment| comment.text.clone())
+    let Some(mut text) = app
+        .session
+        .annotation_target
+        .items(&app.session)
+        .ok()
+        .and_then(|items| items.comments.into_iter().find(|comment| comment.id == id))
+        .map(|comment| comment.text)
     else {
         return;
     };

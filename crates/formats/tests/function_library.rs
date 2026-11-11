@@ -109,10 +109,15 @@ fn supplied_function_package_round_trip() {
         let replacement = bundled.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
         assert_eq!(graph.function_type, replacement.function_type, "{}", graph.sbs_path());
         assert_eq!(graph.function_type, other.function_type, "{}", graph.sbs_path());
-        assert_eq!(graph.exposed, replacement.exposed, "{}", graph.sbs_path());
+        let mut expected_inputs = graph.exposed.clone();
+        for input in &mut expected_inputs {
+            input.description.clear();
+        }
+        assert_eq!(expected_inputs, replacement.exposed, "{}", graph.sbs_path());
         assert_ne!(graph.attributes.description, replacement.attributes.description, "{}", graph.sbs_path());
         assert!(replacement.attributes.author.is_empty());
-        assert!(replacement.attributes.tags.is_empty());
+        assert_eq!(replacement.attributes.category, graph.attributes.category);
+        assert_eq!(replacement.attributes.tags, graph.attributes.tags);
         assert!(replacement.frames.is_empty() && replacement.comments.is_empty() && replacement.pins.is_empty());
         assert_same_body(graph, replacement);
         assert_eq!(graph.name, other.name);
@@ -167,8 +172,18 @@ fn bundled_library_has_complete_bodies_and_current_export_metadata() {
         assert!(function.output.is_some(), "{}", graph.sbs_path());
         assert!(function.nodes.iter().all(|node| node.missing.is_none()), "{}", graph.sbs_path());
         assert!(!graph.attributes.description.is_empty());
-        assert!(graph.attributes.author.is_empty() && graph.attributes.tags.is_empty());
+        assert!(graph.attributes.author.is_empty());
         assert!(graph.frames.is_empty() && graph.comments.is_empty() && graph.pins.is_empty());
+    }
+    let pi = &read.pkg.graph_by_name("Functions/Math/Pi").unwrap().1.attributes;
+    assert!(pi.category.is_empty());
+    assert_eq!(pi.tags, "Constant");
+    let saved = write_sbs(&read.pkg).unwrap();
+    let reopened = read_sbs(&saved, "functions.sbs", &|_| None).unwrap();
+    for graph in &read.pkg.graphs {
+        let reloaded = reopened.pkg.graph_by_name(&graph.sbs_path()).unwrap().1;
+        assert_eq!(reloaded.attributes.category, graph.attributes.category);
+        assert_eq!(reloaded.attributes.tags, graph.attributes.tags);
     }
     assert!(!xml.descendants().any(|element| element.has_tag_name("icon")));
 }

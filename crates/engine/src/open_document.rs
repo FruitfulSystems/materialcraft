@@ -10,6 +10,7 @@ pub struct OpenDocument {
     pub modified: bool,
     selection: Vec<NodeId>,
     annotation_selection: Option<AnnotationSelection>,
+    annotation_target: crate::AnnotationTarget,
     view2d: View2d,
     view3d: View3d,
     material_preview: MaterialPreview,
@@ -26,6 +27,7 @@ impl OpenDocument {
             graph: self.graph,
             selection: self.selection.clone(),
             annotation_selection: self.annotation_selection,
+            annotation_target: self.annotation_target.clone(),
             material_preview: self.material_preview.clone(),
             label: label.into(),
             modified: self.modified,
@@ -40,6 +42,7 @@ impl OpenDocument {
         self.graph = snapshot.graph.min(self.pkg.graphs.len().saturating_sub(1));
         self.selection = snapshot.selection;
         self.annotation_selection = snapshot.annotation_selection;
+        self.annotation_target = snapshot.annotation_target;
         self.material_preview = snapshot.material_preview;
         self.modified = snapshot.modified;
     }
@@ -90,6 +93,7 @@ impl OpenDocument {
             modified: false,
             selection: Vec::new(),
             annotation_selection: None,
+            annotation_target: Default::default(),
             view2d: View2d::default(),
             view3d: View3d::default(),
             load_warnings: Vec::new(),
@@ -114,6 +118,7 @@ impl OpenDocument {
             modified,
             selection,
             annotation_selection,
+            annotation_target,
             view2d,
             view3d,
             material_preview,

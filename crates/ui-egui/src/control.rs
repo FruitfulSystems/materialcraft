@@ -7,7 +7,9 @@
 //! - `command.list {filter?}`: every command with params docs and enabled state.
 //! - `session.inspect`: package, graph, nodes, wires, parameters, cook results, views, history.
 //! - `ui.inspect`: the UI state (panels, windows, graph camera, node rectangles and ports on screen).
-//! - `ui.menu.list` / `ui.menu.invoke {id}`: the menu catalog; behave like a menu click.
+//! - `ui.menu.list` / `ui.menu.invoke {id}`: the menu catalog; behave like a menu click, so behind
+//!   a dialog or prompt an item lists as disabled and invoking it returns an error, except the
+//!   commands [`crate::shell::modality::Modality::allows`] lets through.
 //! - `ui.set {...}`: merge fields into the UI state (e.g. `{"prefs": {"thumbnails": false}}`).
 //! - `ui.input {events}`: synthetic pointer, wheel, key and text input (see [`parse_events`]).
 //! - `view.screenshot {view?: "3d"|"2d"}`: PNG of a view, base64.
@@ -309,6 +311,8 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                     crate::graph::editor_target::EditorTarget::Material => None,
                 },
                 "annotationSelection": app.session.annotation_selection,
+                "annotationTarget": app.session.annotation_target,
+                "pins": app.graph.pins.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "frames": app.graph.frames.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "comments": app.graph.comments.iter().map(|(id, bounds)| json!({"id": id, "rect": rect(*bounds)})).collect::<Vec<_>>(),
                 "nodes": nodes.iter().map(|(id, r)| json!({"id": id.0, "rect": rect(*r)})).collect::<Vec<_>>(),
@@ -326,11 +330,17 @@ fn handle_inner(app: &mut MaterialCraftApp, ctx: &egui::Context, method: &str, p
                 "toasts": app.toasts.iter().map(|t| json!({"text": t.text, "error": t.error})).collect::<Vec<_>>(),
             }))
         }
-        "ui.menu.list" => ok(crate::menus::list(app)),
+        "ui.menu.list" => ok(crate::menus::list(app, ctx)),
         "ui.menu.invoke" => {
             let Some(id) = p.get("id").and_then(Value::as_str) else { return err("`id` is required") };
             if !crate::menus::implemented(id) {
                 return err(format!("menu item `{id}` is not implemented"));
+            }
+            let modality = crate::shell::modality::Modality::capture(app, ctx);
+            if let crate::shell::modality::Modality::Blocked(blocker) = modality
+                && !modality.allows(id)
+            {
+                return err(format!("menu item `{id}` cannot run while {} is open", blocker.name()));
             }
 
             crate::menus::invoke(app, ctx, id);
@@ -398,6 +408,54 @@ mod tests {
 
     fn app() -> MaterialCraftApp {
         MaterialCraftApp::headless(materialcraft_engine::sample_session(), crate::state::UiState::default())
+    }
+
+    #[test]
+    fn a_menu_item_returns_an_error_behind_a_dialog() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+
+        let reply = handle(&mut app, &ctx, "ui.menu.invoke", &json!({"id": "ui.export"}));
+        assert_eq!(reply["ok"], json!(false), "{reply}");
+        assert_eq!(reply["error"], json!("menu item `ui.export` cannot run while the unsaved-changes prompt is open"), "{reply}");
+        assert!(!app.ui.windows.export);
+
+        let list = handle(&mut app, &ctx, "ui.menu.list", &json!({}));
+        assert!(list["result"].as_array().unwrap().iter().all(|item| item["enabled"] == json!(false)), "{list}");
+
+        app.ui.windows.unsaved = None;
+        let reply = handle(&mut app, &ctx, "ui.menu.invoke", &json!({"id": "ui.export"}));
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        assert!(app.ui.windows.export);
+    }
+
+    #[test]
+    fn a_menu_item_reports_the_blocker_behind_a_file_dialog_or_an_update_window() {
+        let ctx = egui::Context::default();
+        let mut behind_dialog = app();
+        behind_dialog.dialogs.ask(craft_dialogs::FileDialog::open(), crate::native_dialogs::Then::OpenPackage);
+        assert_eq!(handle(&mut behind_dialog, &ctx, "ui.menu.invoke", &json!({"id": "file.open"}))["ok"], json!(true));
+        let reply = handle(&mut behind_dialog, &ctx, "ui.menu.invoke", &json!({"id": "file.save"}));
+        assert_eq!(reply["error"], json!("menu item `file.save` cannot run while a file dialog is open"), "{reply}");
+        let list = handle(&mut behind_dialog, &ctx, "ui.menu.list", &json!({}));
+        let open = list["result"].as_array().unwrap().iter().find(|item| item["id"] == json!("file.open")).unwrap();
+        assert_eq!(open["enabled"], json!(true), "{list}");
+
+        let mut behind_update = app();
+        crate::updates_ui::open_prompt_for_test(&mut behind_update);
+        let reply = handle(&mut behind_update, &ctx, "ui.menu.invoke", &json!({"id": "ui.export"}));
+        assert_eq!(reply["error"], json!("menu item `ui.export` cannot run while an update window is open"), "{reply}");
+    }
+
+    #[test]
+    fn command_run_stays_available_behind_a_dialog() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.ui.windows.unsaved = Some(crate::unsaved::Guarded::Quit);
+        let reply = handle(&mut app, &ctx, "command.run", &json!({"id": "edit.selectAll"}));
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        assert_eq!(app.ui.windows.unsaved, Some(crate::unsaved::Guarded::Quit));
     }
 
     #[test]

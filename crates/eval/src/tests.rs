@@ -265,7 +265,11 @@ fn input_change_recooks_only_readers() {
         value: Some(Value::Text("a".into())),
         pos: [0.0; 2],
     };
-    p.graphs[0].node_mut(reader).unwrap().params.insert("function".into(), Value::Function(Box::new(FunctionGraph { nodes: vec![get_a], output: Some(1) })));
+    p.graphs[0]
+        .node_mut(reader)
+        .unwrap()
+        .params
+        .insert("function".into(), Value::Function(Box::new(FunctionGraph { nodes: vec![get_a], output: Some(1), ..Default::default() })));
     let cache = &Mutex::new(Cache::default());
     let mut opts = Options::new(&no_res);
     opts.overrides.insert("a".into(), Value::Float(0.25));
@@ -464,4 +468,106 @@ fn bound_input_image_linear_flag_change_recooks_instance() {
     assert!(!third.nodes[&inst].cached, "toggling input_images_linear must recook the instance");
     let third_value = third.image(inst, 0).unwrap().data[0];
     assert!((third_value - 0.5).abs() < 1e-4, "linear bound image should reach the instance, got {third_value}");
+}
+
+#[test]
+fn cooked_parameters_retain_values_without_processor_graph_copies() {
+    let mut graph = Graph::new("Parameter results");
+    graph.size = [4, 4];
+    for _ in 0..12 {
+        let owner = graph.add_node("value_processor", [0.0; 2]);
+        let mut function = materialcraft_core::FunctionGraph::constant(Value::Float(0.25));
+        let constant = function.output.unwrap();
+        for _ in 0..32 {
+            function.output = Some(function.add("add", &[function.output.unwrap(), constant], None));
+        }
+        graph.node_mut(owner).unwrap().params.insert("function".into(), Value::Function(Box::new(function)));
+    }
+    let scalar = graph.add_node("uniform", [0.0; 2]);
+    graph.node_mut(scalar).unwrap().functions.insert("color".into(), materialcraft_core::FunctionGraph::constant(Value::Color([0.5; 4])));
+    let mut package = Package::new("Parameter results");
+    package.graphs.push(graph);
+    let cache = Mutex::new(Cache::default());
+
+    let results = [cook(&package, 0, &Options::new(&no_res), &cache), cook(&package, 0, &Options::new(&no_res), &cache)];
+
+    assert!(results[1].nodes.values().all(|result| result.cached));
+    for result in results {
+        for (owner, node) in &result.nodes {
+            assert_eq!(node.error, None);
+            assert!(
+                node.parameters.values().all(|value| materialcraft_core::ValueType::of(value).is_some()),
+                "cooked previews must not retain authoring graphs"
+            );
+            if *owner != scalar {
+                assert_eq!(result.value(*owner, 0), Some(&Value::Float(8.25)));
+            }
+        }
+        assert_eq!(result.nodes[&scalar].parameters.get("color"), Some(&Value::Color([0.5; 4])));
+    }
+}
+
+#[test]
+fn enabled_generators_use_parent_size_and_inherit_other_input_base_parameters() {
+    use materialcraft_core::{BaseParameter, FunctionGraph, OutputFormat, ParameterInheritance, SizeMode, ValueType};
+
+    for definition in ["svg", "fx_map"] {
+        for dynamic in [false, true] {
+            let mut graph = Graph::new("Generator sizes");
+            graph.size = [6, 5];
+            let background = graph.add_node("uniform", [0.0; 2]);
+            let base = &mut graph.node_mut(background).unwrap().base;
+            base.size_mode = SizeMode::Absolute;
+            base.size = [5, 6];
+            base.seed = 17;
+            base.format = OutputFormat::F32;
+            base.tiling = [false, true];
+            base.tiling_mode = ParameterInheritance::Absolute;
+            base.pixel_ratio = 1;
+            base.pixel_ratio_mode = ParameterInheritance::Absolute;
+            base.pixel_size = [0.25, 0.5];
+            base.pixel_size_mode = ParameterInheritance::Absolute;
+            let generator = graph.add_node(definition, [200.0, 0.0]);
+            graph.node_mut(generator).unwrap().base.format_mode = ParameterInheritance::RelativeToInput;
+            if dynamic {
+                let mut function = FunctionGraph::input("$sizelog2", ValueType::Float2);
+                let size = function.output.unwrap();
+                let parent = function.add_constant(Value::Float2([6.0, 5.0]));
+                let difference = function.add("sub", &[size, parent], None);
+                function.output = Some(function.add("toint2", &[difference], None));
+                graph.node_mut(generator).unwrap().base.functions.insert(BaseParameter::OutputSize, function);
+            }
+            graph.connect(background, "output", generator, "background").unwrap();
+            let mut package = Package::new("Generator sizes");
+            package.graphs.push(graph);
+            let cache = Mutex::new(Cache::default());
+            let mut options = Options::new(&no_res);
+            options.max_size = Some(16);
+
+            let cooked = cook(&package, 0, &options, &cache);
+            let result = &cooked.nodes[&generator];
+
+            assert_eq!(result.error, None, "{definition}");
+            assert_eq!(result.base.size, [64, 32], "{definition}, dynamic: {dynamic}");
+            assert_eq!(cooked.image(generator, 0).map(|image| (image.w, image.h)), Some((16, 8)));
+            assert_eq!(result.base.seed, 17);
+            assert_eq!(result.base.format, OutputFormat::F32);
+            assert_eq!(result.base.tiling, [false, true]);
+            assert_eq!(result.base.pixel_ratio, 1);
+            assert_eq!(result.base.pixel_size, [0.25, 0.5]);
+            if !dynamic {
+                assert_eq!(
+                    node_size(&package.graphs[0], materialcraft_nodes::find(definition), package.graphs[0].node(generator).unwrap(), Some((32, 64)), Some(16)),
+                    (16, 8)
+                );
+            }
+
+            package.graphs[0].node_mut(generator).unwrap().disabled = true;
+            let cooked = cook(&package, 0, &options, &cache);
+
+            assert_eq!(cooked.nodes[&generator].error, None);
+            assert_eq!(cooked.nodes[&generator].base.size, cooked.nodes[&background].base.size);
+            assert_eq!(cooked.image(generator, 0).map(|image| (image.w, image.h)), Some((8, 16)));
+        }
+    }
 }

@@ -180,14 +180,7 @@ pub fn show(app: &mut MaterialCraftApp, ui: &mut Ui) {
     }
     // Info line: size, format, zoom and the pixel under the pointer.
     let info = Rect::from_min_size(pos2(rect.left(), rect.bottom()), vec2(rect.width(), 20.0));
-    let bits = app
-        .session
-        .graph()
-        .ok()
-        .and_then(|g| {
-            g.node(id).ok().map(|n| if n.base.format == materialcraft_engine::core::OutputFormat::Inherit { g.format.bits() } else { n.base.format.bits() })
-        })
-        .unwrap_or("16");
+    let bits = app.session.cooked.nodes.get(&id).map_or("16", |result| result.base.format.bits());
     let mut text = format!("{} x {} ({}, {}bpc)   {:.0}%", img.w, img.h, if img.is_gray() { "L" } else { "RGBA" }, bits, cam.zoom * 100.0);
     if let Some(ptr) = resp.hover_pos() {
         let local = (ptr - (center - size * 0.5)) / cam.zoom;

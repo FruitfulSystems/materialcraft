@@ -17,12 +17,12 @@ material artists exchange.
 
 | Format | Read | Write | Fidelity | Tests |
 |---|---|---|---|---|
-| `.sbs` package (XML), the main format | Yes: atomic filters, library nodes with a MaterialCraft node of the same name (88 of the 491 in `assets/sbs/all_nodes.sbs`), graph instances, graph inputs/outputs, exposed values, parameters linked to inputs, base parameters, frames, comments, embedded and linked bitmaps and SVGs. Anything else (missing nodes, curve points, gradient keys, function graphs, environment maps) is a Console warning; missing nodes stay as placeholders | Yes: SBS data with bitmaps embedded, plus MaterialCraft's exact copy | Lossless for files MaterialCraft saved (exact copy, guarded by a content hash); placeholders round-trip their SBS data | `formats::sbs::tests`, engine `sbs_is_the_default_save_format_and_mcraft_still_works`, `an_sbs_file_with_missing_nodes_opens_softly` |
+| `.sbs` package (XML), the main format | Yes: atomic filters, linked library graphs when their source SBS package is available, graph instances, graph inputs/outputs, exposed values, parameters linked to inputs, base parameters, frames, comments, embedded and linked bitmaps and SVGs. Anything else (missing nodes, curve points, gradient keys, function graphs, environment maps) is a Console warning; missing nodes stay as placeholders | Yes: SBS data with bitmaps embedded, plus MaterialCraft's exact copy | Lossless for files MaterialCraft saved (exact copy, guarded by a content hash); placeholders round-trip their SBS data | `formats::sbs::tests`, engine `sbs_is_the_default_save_format_and_mcraft_still_works`, `an_sbs_file_with_missing_nodes_opens_softly` |
 | `.mcraft` package (zip: `package.json` + `resources/`), older | Yes | Yes | Lossless (graphs, parameters, frames, comments, pins, exposed inputs, embedded bitmaps) | `formats::tests::package_round_trip`, engine `package_save_and_open_round_trip` |
 | PNG | Yes (8/16-bit, gray and color) | Yes (8/16-bit) | 16-bit gray round-trips within 1/65535 | `formats::tests::export_every_format` |
 | JPEG | Yes | Yes (8-bit) | Lossy | same |
 | TGA | Yes | Yes (8-bit) | Lossless | same |
-| TIFF | Yes | Yes (8/16-bit) | Lossless | same |
+| TIFF | Yes | No: import only | Lossless | — |
 | BMP | Yes | Yes (8-bit) | Lossless | same |
 | WEBP | Yes | Yes (8-bit lossless) | Lossless | same |
 | OpenEXR | Yes | Yes (32-bit float RGB) | Float | same |
@@ -41,3 +41,10 @@ roughness, metallic, height, ambient occlusion, opacity) linear.
 | 2026-11-04 | major | SBS packages become the main project format; `.mcraft` kept |
 | 2026-11-02 | minor | `.mcmat` portable materials replace the published-archive gap |
 | 2026-11-02 | major | First version |
+
+## Canvas annotations
+
+Frames, comments and navigation pins round-trip in material graphs, standalone functions,
+embedded functions and FX-Map graphs. Pin descriptions and positions are preserved. Pin
+attachment references (`GUIDependency`) are not modeled. Dynamic functions on unsupported base
+parameters, including `pixelsize`, are not imported, so annotations inside them are not retained.

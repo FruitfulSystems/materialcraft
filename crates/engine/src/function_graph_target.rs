@@ -1,5 +1,5 @@
 use crate::{Result, Session, commands::bad};
-use materialcraft_core::{FunctionGraph, NodeId, Value};
+use materialcraft_core::{BaseParameter, FunctionGraph, NodeId, Value};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +15,10 @@ pub enum FunctionGraphTarget {
         node: NodeId,
         parameter: String,
     },
+    Base {
+        node: NodeId,
+        parameter: BaseParameter,
+    },
     Pattern {
         owner: NodeId,
         node: u32,
@@ -27,10 +31,9 @@ impl FunctionGraphTarget {
         crate::function_variables::suggestions(self, session, id)
     }
 
-    pub fn available_operations(&self, session: &Session) -> impl Iterator<Item = &'static materialcraft_nodes::function::FunctionDefinition> + use<> {
-        let value_processor = matches!(self, Self::Parameter { node, parameter }
-            if parameter == "function" && session.graph().ok().and_then(|graph| graph.node(*node).ok()).is_some_and(|node| node.def == "value_processor"));
-        materialcraft_nodes::function::FUNCTIONS.iter().filter(move |operation| !value_processor || !matches!(operation.id, "samplelum" | "samplecol"))
+    /// All function targets accept the native catalog, including samplers for processor image inputs.
+    pub fn available_operations(&self, _session: &Session) -> impl Iterator<Item = &'static materialcraft_nodes::function::FunctionDefinition> + use<> {
+        materialcraft_nodes::function::FUNCTIONS.iter()
     }
 
     pub fn current<'a>(&self, session: &'a Session) -> Result<&'a FunctionGraph> {
@@ -39,6 +42,9 @@ impl FunctionGraphTarget {
             Self::Graph => return document.function.as_ref().ok_or_else(|| bad("graph.function.edit", "no Function Graph is open")),
             Self::Dynamic { node, parameter } => {
                 return document.node(*node)?.functions.get(parameter).ok_or_else(|| bad("graph.function.edit", "missing parameter function"));
+            }
+            Self::Base { node, parameter } => {
+                return document.node(*node)?.base.functions.get(parameter).ok_or_else(|| bad("graph.function.edit", "missing base parameter function"));
             }
             Self::Parameter { node, parameter } => {
                 let node = document.node(*node)?;
@@ -65,7 +71,12 @@ impl FunctionGraphTarget {
         match self {
             Self::Graph => document.function = Some(function),
             Self::Dynamic { node, parameter } => {
-                document.node_mut(*node)?.functions.insert(parameter.clone(), function);
+                let owner = document.node_mut(*node)?;
+                owner.bindings.remove(parameter);
+                owner.functions.insert(parameter.clone(), function);
+            }
+            Self::Base { node, parameter } => {
+                document.node_mut(*node)?.base.functions.insert(*parameter, function);
             }
             Self::Parameter { node, parameter } => {
                 document.node_mut(*node)?.params.insert(parameter.clone(), Value::Function(Box::new(function)));

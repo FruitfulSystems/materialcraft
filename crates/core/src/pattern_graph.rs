@@ -5,6 +5,8 @@ use crate::{PatternNode, PatternNodeKind};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PatternGraph {
+    #[serde(default, skip_serializing_if = "crate::CanvasAnnotations::is_empty")]
+    pub annotations: crate::CanvasAnnotations,
     pub nodes: Vec<PatternNode>,
     pub root: Option<u32>,
 }
@@ -12,6 +14,7 @@ pub struct PatternGraph {
 impl PatternGraph {
     pub fn with_root(kind: PatternNodeKind) -> Self {
         Self {
+            annotations: Default::default(),
             root: Some(1),
             nodes: vec![PatternNode { id: 1, kind, children: vec![None; kind.child_count()], parameters: BTreeMap::new(), position: [0.0; 2] }],
         }

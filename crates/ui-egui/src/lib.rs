@@ -6,6 +6,7 @@ pub mod control;
 pub mod cook;
 pub mod docking;
 pub mod explorer;
+pub mod export;
 pub mod fonts;
 pub mod function;
 pub mod graph;
@@ -20,6 +21,7 @@ pub mod menus;
 mod preview_resolution;
 #[path = "property/mod.rs"]
 pub mod properties;
+mod shell;
 pub mod state;
 pub mod theme;
 pub mod thumbs;

@@ -1,6 +1,6 @@
 use crate::commands::{CommandSpec, bad, boolp, has_graph, point, strp, u64p};
 use crate::graph_cmds::nodes_rect;
-use crate::{AnnotationSelection, FrameContents, Result, Session, cmd};
+use crate::{AnnotationSelection, Result, Session, cmd};
 use materialcraft_core::Frame;
 use serde_json::{Value as J, json};
 
@@ -32,6 +32,7 @@ fn color_of(parameters: &J) -> Option<[f32; 4]> {
 }
 
 fn frame_add(session: &mut Session, parameters: &J) -> Result<J> {
+    let target = crate::AnnotationTarget::resolve(session, parameters)?;
     let rect = match rect_of(parameters) {
         Some(rect) => rect,
         None => nodes_rect(session, &session.selection)
@@ -45,9 +46,11 @@ fn frame_add(session: &mut Session, parameters: &J) -> Result<J> {
     let description = strp(parameters, "description").unwrap_or("").to_string();
 
     session.edit("Add frame", |session| {
-        let graph = session.graph_mut()?;
-        let id = graph.alloc_id();
-        graph.frames.push(Frame { id, title, title_visible, description, rect, color });
+        let mut items = target.items(session)?;
+        let id = target.next_id(session, &items)?;
+        items.frames.push(Frame { id, title, title_visible, description, rect, color });
+        target.replace(session, items)?;
+        session.annotation_target = target;
         session.selection.clear();
         session.annotation_selection = Some(AnnotationSelection::Frame(id));
         Ok(json!({"id": id}))
@@ -55,10 +58,12 @@ fn frame_add(session: &mut Session, parameters: &J) -> Result<J> {
 }
 
 fn frame_edit(session: &mut Session, parameters: &J) -> Result<J> {
+    let target = crate::AnnotationTarget::resolve(session, parameters)?;
     let id = u64p(parameters, "id").ok_or_else(|| bad("graph.frame.edit", "`id` is required"))?;
 
-    session.edit_merged(&format!("frame{id}"), "Edit frame", |session| {
-        let frame = session.graph_mut()?.frames.iter_mut().find(|frame| frame.id == id).ok_or_else(|| bad("graph.frame.edit", format!("no frame {id}")))?;
+    session.edit_merged(&format!("frame:{target:?}:{id}"), "Edit frame", |session| {
+        let mut items = target.items(session)?;
+        let frame = items.frames.iter_mut().find(|frame| frame.id == id).ok_or_else(|| bad("graph.frame.edit", format!("no frame {id}")))?;
         if let Some(text) = strp(parameters, "title") {
             frame.title = text.into();
         }
@@ -75,35 +80,39 @@ fn frame_edit(session: &mut Session, parameters: &J) -> Result<J> {
             frame.color = color;
         }
 
+        target.replace(session, items)?;
         Ok(J::Null)
     })
 }
 
 fn frame_delete(session: &mut Session, parameters: &J) -> Result<J> {
+    let target = crate::AnnotationTarget::resolve(session, parameters)?;
     let id = u64p(parameters, "id").ok_or_else(|| bad("graph.frame.delete", "`id` is required"))?;
 
     session.edit("Delete frame", |session| {
-        let graph = session.graph_mut()?;
-        let previous_count = graph.frames.len();
-        graph.frames.retain(|frame| frame.id != id);
-        if previous_count == graph.frames.len() {
+        let mut items = target.items(session)?;
+        let previous_count = items.frames.len();
+        items.frames.retain(|frame| frame.id != id);
+        if previous_count == items.frames.len() {
             return Err(bad("graph.frame.delete", format!("no frame {id}")));
         }
 
+        target.replace(session, items)?;
         Ok(J::Null)
     })
 }
 
 fn frame_move(session: &mut Session, parameters: &J) -> Result<J> {
+    let target = crate::AnnotationTarget::resolve(session, parameters)?;
     let id = u64p(parameters, "id").ok_or_else(|| bad("graph.frame.move", "`id` is required"))?;
     let offset = point(parameters, "by").ok_or_else(|| bad("graph.frame.move", "`by` is required"))?;
     let offset = crate::graph_grid::snap_position(offset, boolp(parameters, "snapToGrid").unwrap_or(false));
-    let graph = session.graph()?;
-    let frame = graph.frames.iter().find(|frame| frame.id == id).ok_or_else(|| bad("graph.frame.move", "frame does not exist"))?;
-    let contents = FrameContents::capture(graph, frame);
+    let items = target.items(session)?;
+    let frame = items.frames.iter().find(|frame| frame.id == id).ok_or_else(|| bad("graph.frame.move", "frame does not exist"))?;
+    let contents = target.capture_frame(session, frame)?;
 
     session.edit("Move frame and contents", |session| {
-        contents.translate(session.graph_mut()?, offset);
+        target.move_contents(session, &contents, offset)?;
 
         Ok(J::Null)
     })

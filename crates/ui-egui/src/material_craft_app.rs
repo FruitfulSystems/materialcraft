@@ -25,6 +25,7 @@ pub struct MaterialCraftApp {
     pub(crate) inspected_graph: Option<materialcraft_engine::GraphTarget>,
     pub(crate) inspected_folder: Option<(u64, String)>,
     pub(crate) folder_property_draft: Option<crate::properties::FolderPropertyDraft>,
+    pub(crate) expose_parameter_dialog: Option<crate::properties::ExposeParameterDialog>,
     pub(crate) graph_property_draft: Option<crate::properties::GraphPropertyDraft>,
     pub(crate) graph_parents: Vec<graph::graph_parent::GraphParent>,
     /// Synthetic input from the control channel, fed to egui on the next frames
@@ -56,6 +57,8 @@ pub struct MaterialCraftApp {
     /// Keyboard shortcuts and their dispatch
     pub(crate) keymap: craft_keymap::Keymap,
     pub(crate) dispatcher: craft_keymap::egui::Dispatcher,
+    /// What Copy or Cut put on the clipboard this frame, for the system clipboard
+    pub(crate) system_clipboard: Option<String>,
     /// Fallback fonts for Arabic
     pub fonts: fonts::UiFonts,
     /// The icon font is installed (it takes effect on the frame after `set_fonts`)
@@ -98,6 +101,7 @@ impl MaterialCraftApp {
             inspected_folder: None,
             folder_property_draft: None,
             graph_property_draft: None,
+            expose_parameter_dialog: None,
             graph_parents: Vec::new(),
             pattern_editor: None,
             input_queue: VecDeque::new(),
@@ -118,8 +122,9 @@ impl MaterialCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             window_layout: None,
             keymap: menus::keymap(craft_keymap::Platform::current()),
-            // The web build sends a key press with each clipboard event, and the option lets that press run its command
-            dispatcher: craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(cfg!(target_arch = "wasm32")),
+            // The desktop sends Copy, Cut and Paste events in place of their key presses and the web sends both: the option lets them run their commands
+            dispatcher: craft_keymap::egui::Dispatcher::new().with_repeat(true).with_clipboard_events(true),
+            system_clipboard: None,
             fonts: fonts::UiFonts::default(),
             fonts_ready: false,
             ui_gesture_active: false,
@@ -147,6 +152,21 @@ impl MaterialCraftApp {
 
     /// Run an engine command, reporting errors as toasts. Returns the result on success
     pub fn run(&mut self, id: &str, mut params: Value) -> Option<Value> {
+        if id.starts_with("graph.annotation.")
+            || id.starts_with("graph.frame.")
+            || id.starts_with("graph.comment.")
+            || id.starts_with("graph.pin.")
+            || id == "library.add"
+        {
+            if params.is_null() {
+                params = serde_json::json!({});
+            }
+            if let (Some(parameters), Some(target)) = (params.as_object_mut(), self.graph.annotation_target.parameters().as_object()) {
+                for (name, value) in target {
+                    parameters.entry(name).or_insert_with(|| value.clone());
+                }
+            }
+        }
         if id.starts_with("file.")
             || id.starts_with("package.")
             || matches!(id, "graph.open" | "graph.delete" | "graph.duplicate" | "folder.remove" | "explorer.paste" | "edit.undo" | "edit.redo")
@@ -186,6 +206,20 @@ impl MaterialCraftApp {
 
         match cook::execute_guarded(&mut self.session, id, &params) {
             Ok(v) => {
+                // The desktop sends no Paste event while the system clipboard is empty, so Copy and Cut fill it
+                if matches!(id, "edit.copy" | "edit.cut")
+                    && let Some(clip) = v.get("clip")
+                {
+                    self.system_clipboard = Some(clip.to_string());
+                }
+                if matches!(id, "graph.pin.add" | "library.add")
+                    && let Some(materialcraft_engine::AnnotationSelection::Pin(pin)) = self.session.annotation_selection
+                {
+                    self.graph.pin_description_focus = Some(pin);
+                    self.inspected_folder = None;
+                    self.inspected_graph = None;
+                    self.ui.dock.focus(docking::Panel::Properties);
+                }
                 if id == "view.previewSize" {
                     self.ui.prefs.preview_size = self.session.preview_size.unwrap_or(0);
                 }
@@ -193,6 +227,18 @@ impl MaterialCraftApp {
                     self.ui.prefs.history = self.session.history_prefs;
                 }
                 self.close_subgraph_after(id);
+                if id == "graph.node.function.edit"
+                    && let Ok(target) = serde_json::from_value::<materialcraft_engine::FunctionGraphTarget>(v["target"].clone())
+                {
+                    let target = match target {
+                        materialcraft_engine::FunctionGraphTarget::Base { node, parameter } => Some((node, function::FunctionTarget::Base(parameter))),
+                        materialcraft_engine::FunctionGraphTarget::Dynamic { node, parameter } => Some((node, function::FunctionTarget::Dynamic(parameter))),
+                        _ => None,
+                    };
+                    if let Some((node, target)) = target {
+                        crate::graph::subgraph_navigation::open_function(self, node, target);
+                    }
+                }
                 if matches!(id, "view.3d.assign" | "view.3d.outputs") {
                     self.ui.dock.focus(docking::Panel::View3d);
                 }
@@ -363,8 +409,10 @@ impl MaterialCraftApp {
         web_files::poll(self);
         #[cfg(not(target_arch = "wasm32"))]
         crate::native_dialogs::poll(self);
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            web_files::dropped(self, ctx, &f);
+        if !crate::shell::modality::Modality::capture(self, ctx).is_blocked() {
+            for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+                web_files::dropped(self, ctx, &f);
+            }
         }
         self.apply_prefs();
         cook::drive(self, ctx);
@@ -374,14 +422,23 @@ impl MaterialCraftApp {
         crate::updates_ui::tick(self, ctx);
         self.reconcile_editors();
         menus::shortcuts(self, ctx);
+        self.publish_clipboard(ctx);
         self.toasts.retain(|t| t.until > now);
         if !self.input_queue.is_empty() {
             ctx.request_repaint();
         }
     }
 
+    /// Hand what Copy or Cut put on the clipboard to the system clipboard
+    fn publish_clipboard(&mut self, ctx: &egui::Context) {
+        if let Some(text) = self.system_clipboard.take() {
+            ctx.copy_text(text);
+        }
+    }
+
     /// Draw the whole window into `ui`
     pub fn draw(&mut self, ui: &mut egui::Ui) {
+        crate::annotation::activate(self, crate::annotation::target(self));
         if !self.fonts_ready {
             self.fonts_ready = true;
             return;
@@ -393,6 +450,7 @@ impl MaterialCraftApp {
         menus::menu_bar(self, ui);
         toolbar::main_toolbar(self, ui);
         toolbar::status_bar(self, ui);
+        self.ui.explorer.hovered = false;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::Tokens::get(&ctx).chrome)).show(ui, |ui| docking::show(self, ui));
         windows::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
@@ -404,6 +462,7 @@ impl MaterialCraftApp {
             self.session.finish_edit();
         }
         self.ui_gesture_active = gesture_active;
+        self.publish_clipboard(&ctx);
         crate::toast::show(self, &ctx);
         control::request_screenshots(self, &ctx);
         let dt = (now_ms() - t0) as f32;

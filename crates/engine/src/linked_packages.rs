@@ -37,6 +37,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
                 if node.def != "graph_instance" {
                     return None;
                 }
+
                 let materialcraft_core::Value::Text(name) = node.params.get("graph")? else { return None };
                 Some(GraphInstance {
                     label: String::new(),
@@ -52,7 +53,9 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             if graph.function.is_some() {
                 return None;
             }
+
             let (mut inputs, mut outputs) = materialcraft_nodes::graph_interface::graph_ports(graph);
+
             // Keep connected missing ports so saving cannot silently discard the user's wires
             for port in &instance.inputs {
                 if owner.connections.iter().any(|wire| wire.to == node.id && wire.to_port == port.identifier)
@@ -68,18 +71,23 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
                     outputs.push(port.clone());
                 }
             }
+
             instance.inputs = inputs;
             instance.outputs = outputs;
+            instance.defaults =
+                graph.exposed.iter().map(|parameter| (parameter.id.clone(), graph.input_value(&parameter.id).unwrap_or(&parameter.default).clone())).collect();
             instance.label = graph.display_name().into();
             (node.instance.as_ref() != Some(&instance)).then_some((graph_index, node_index, instance))
         })
         .collect();
+
     let mut changed = !updates.is_empty();
     for (graph, node, instance) in updates {
         if let Some(node) = package.graphs.get_mut(graph).and_then(|graph| graph.nodes.get_mut(node)) {
             node.instance = Some(instance);
         }
     }
+
     let local = package.clone();
     for function in package.graphs.iter_mut().flat_map(|graph| graph.functions_mut()) {
         if function.nodes.iter().any(|node| node.instance.is_some()) {
@@ -88,6 +96,7 @@ fn interfaces(package: &mut Package, sources: &BTreeMap<String, Arc<Package>>) -
             changed |= *function != previous;
         }
     }
+
     changed
 }
 
@@ -97,8 +106,15 @@ impl Session {
         self.refresh_links_from(BTreeSet::new());
     }
 
+    /// Refresh linked interfaces and retain ownership of installed library snapshots.
     pub(crate) fn refresh_links_from(&mut self, mut changed: BTreeSet<String>) {
+        // Replaced snapshots belong to the caller, even when their library alias is unchanged
+        self.library_sources.retain(|path, owned| self.linked_sources.get(path).is_some_and(|source| Arc::ptr_eq(source, owned)));
+        let open_paths: BTreeSet<_> = self.open_packages().into_iter().filter_map(|(_, _, path, _)| path.map(str::to_string)).collect();
+        self.library_sources.retain(|path, _| !open_paths.contains(path));
+
         let mut sources = self.linked_sources.clone();
+
         // Interface types can propagate through several files; the workspace has at most 64 open packages
         for _ in 0..64 {
             for (_, package, path, _) in self.open_packages() {
@@ -141,6 +157,13 @@ impl Session {
                 document.modified = true;
             }
             document.pkg.dependencies = sources.clone();
+        }
+
+        // Interface refreshes replace Arcs without changing who owns the source
+        for (path, owned) in &mut self.library_sources {
+            if let Some(source) = sources.get(path) {
+                *owned = source.clone();
+            }
         }
         self.linked_sources = sources;
     }

@@ -94,14 +94,19 @@ pub(crate) fn variable_key(node: &Node, parameters: &BTreeMap<String, Value>, va
                 let mut pending = vec![graph.as_ref()];
                 while let Some(graph) = pending.pop() {
                     serde_json::to_string(graph).unwrap_or_default().hash(&mut hasher);
-                    for function in &graph.nodes {
-                        match &function.source {
+                    for function_node in &graph.nodes {
+                        // Resolved call defaults are omitted from graph serialization
+                        if let Some(instance) = &function_node.instance {
+                            serde_json::to_string(&instance.defaults).unwrap_or_default().hash(&mut hasher);
+                        }
+
+                        match &function_node.source {
                             Some(Ok(source)) => pending.push(source.as_ref()),
                             Some(Err(error)) => error.hash(&mut hasher),
                             None => {}
                         }
-                        if (function.op.starts_with("get_") || function.op == "isdefined")
-                            && let Some(Value::Text(name)) = &function.value
+                        if (function_node.op.starts_with("get_") || function_node.op == "isdefined")
+                            && let Some(Value::Text(name)) = &function_node.value
                         {
                             names.insert(name.as_str());
                         }
@@ -124,5 +129,6 @@ pub(crate) fn variable_key(node: &Node, parameters: &BTreeMap<String, Value>, va
         name.hash(&mut hasher);
         variables.get(name).map(|value| serde_json::to_string(value).unwrap_or_default()).hash(&mut hasher);
     }
+
     hasher.finish()
 }

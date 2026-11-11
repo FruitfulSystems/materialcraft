@@ -1,5 +1,14 @@
+#[path = "snapshot/parameter_functions.rs"]
+mod parameter_functions;
+
+#[path = "snapshot/graph_items.rs"]
+mod graph_items;
+
 #[path = "snapshot/explorer.rs"]
 mod explorer;
+
+#[path = "snapshot/export.rs"]
+mod export;
 
 #[path = "snapshot/function_instances.rs"]
 mod function_instances;
@@ -12,6 +21,15 @@ mod function_variables;
 
 #[path = "snapshot/embedded_graphs.rs"]
 mod embedded_graphs;
+
+#[path = "snapshot/library.rs"]
+mod library;
+
+#[path = "snapshot/menu.rs"]
+mod menu;
+
+#[path = "snapshot/node_search.rs"]
+mod node_search;
 
 use std::time::Duration;
 
@@ -647,7 +665,9 @@ fn explorer_open_targets_the_clicked_graph() {
     settle(&mut h, 5);
     h.get_by_label("Export target").click_secondary();
     settle(&mut h, 3);
-    h.get(By::new().role(egui::accesskit::Role::Button).label("Open")).click();
+    // Explorer menu items name their shortcut after the label
+    let open = format!("Open {}", materialcraft_ui_egui::menus::shortcut_label(&h.ctx, "Enter"));
+    h.get(By::new().role(egui::accesskit::Role::Button).label(&open)).click();
     settle(&mut h, 3);
     assert_eq!(h.state().session.graph, 1);
     assert!(!h.state().ui.windows.export);
@@ -1374,19 +1394,29 @@ fn embedded_function_toolbar_and_panels_share_the_active_target() {
         save(&mut harness, &directory, &format!("{definition}-inline-function"));
         harness.state_mut().ui.library_search = "Sample".into();
         settle(&mut harness, 2);
-        for label in ["Sample gray", "Sample color"] {
-            assert_eq!(harness.query_all(By::new().label(label)).next().is_some(), definition == "pixel_processor");
+        for (label, operation) in [("Sample gray", "samplelum"), ("Sample color", "samplecol")] {
+            let tile = harness.get(By::new().role(egui::accesskit::Role::ListItem).label(label));
+            let position = tile.rect().center();
+
+            double_click(&mut harness, position);
+
+            assert!(target.current(&harness.state().session).unwrap().nodes.iter().any(|node| node.op == operation));
+            materialcraft_ui_egui::menus::invoke(harness.state_mut(), &context, "edit.undo");
+            settle(&mut harness, 2);
+            assert_eq!(harness.state().session.pkg, original);
         }
+        save(&mut harness, &directory, &format!("{definition}-library-samplers"));
+
         harness.get(By::new().role(egui::accesskit::Role::Canvas).label("Function Graph")).click_secondary();
         settle(&mut harness, 2);
         harness.get_by_label("Add node").click();
         settle(&mut harness, 2);
         for label in ["Sample gray", "Sample color"] {
-            assert_eq!(harness.query_all(query(label)).next().is_some(), definition == "pixel_processor");
+            assert!(harness.query_all(query(label)).next().is_some());
         }
         let labels: Vec<_> =
             target.available_operations(&harness.state().session).filter(|operation| operation.id != "passthrough").map(|operation| operation.label).collect();
-        assert_eq!(labels.len(), if definition == "pixel_processor" { 84 } else { 82 });
+        assert_eq!(labels.len(), materialcraft_engine::nodes::function::FUNCTIONS.iter().filter(|operation| operation.id != "passthrough").count());
         assert!(harness.query(query("Dot")).is_none());
         save(&mut harness, &directory, &format!("{definition}-node-menu"));
         assert_node_menu_order(&harness, &labels);
